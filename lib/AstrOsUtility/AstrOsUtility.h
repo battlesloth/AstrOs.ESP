@@ -59,8 +59,17 @@ bool saveServiceConfig(svc_config_t config);
 // load the service configuration from NVS
 bool loadServiceConfig(svc_config_t* config);
 
-// clear the serive configuration from NVS
+// clear the service configuration from NVS
 bool clearServiceConfig();
+
+// mount SD Card
+bool mountSd();
+
+// format the SD Card
+bool formatSd();
+
+// read the SD Card
+bool readSd();
 
 // decode url encoded strings
 int percentDecode(char* out, const char* in);

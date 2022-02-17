@@ -254,11 +254,6 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
     }
 
     return err;
-    const char *respStr = (const char *)req->user_ctx;
-
-    err = httpd_resp_send(req, respStr, strlen(respStr));
-    logError(TAG, __FUNCTION__, __LINE__, err);
-    return err;
 };
 
 const httpd_uri_t staClearSettings = {
@@ -268,6 +263,34 @@ const httpd_uri_t staClearSettings = {
     .user_ctx = NULL};
 
 
+esp_err_t staFormatSdHandler(httpd_req_t *req)
+{
+    esp_err_t err;
+
+    err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    if (formatSd())
+    {
+        const char *respStr = "{\"success\":\"true\"}";
+        err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+    else
+    {
+        const char *respStr = "{\"success\":\"false\"}";
+        err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+
+    return err;
+};
+
+const httpd_uri_t staFormatSd = {
+    .uri = "/formatsd",
+    .method = HTTP_GET,
+    .handler = staFormatSdHandler,
+    .user_ctx = NULL};
 
 
 /**************************************************************
@@ -281,7 +304,10 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, "/", HTTP_GET);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, "/clearsettings", HTTP_GET);
+    err = httpd_unregister_uri_handler(webServer, staClearSettings.uri, staClearSettings.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     ESP_LOGI(TAG, "server stopped");
@@ -306,6 +332,8 @@ bool AstrOsNetwork::startStaWebServer()
     err = httpd_register_uri_handler(webServer, &staIndex);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staClearSettings);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staFormatSd);
     logError(TAG, __FUNCTION__, __LINE__, err);
     return true;
 }

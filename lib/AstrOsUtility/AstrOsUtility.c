@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
+#include <string.h>
+
 
 static const char *TAG = "AstrOsUtility";
 
@@ -55,6 +57,11 @@ bool saveServiceConfig(svc_config_t config){
 
 bool loadServiceConfig(svc_config_t* config){
 
+    strncpy(config->networkSSID, "Interwebs", sizeof(config->networkSSID) - 1);
+    strncpy(config->networkPass, "Rubherducky21!", sizeof(config->networkPass) - 1);
+
+    return true;
+
     esp_err_t err;
     nvs_handle_t nvsHandle;
     size_t defaultSize = 0;
@@ -101,6 +108,16 @@ bool clearServiceConfig(){
     }
 
     nvs_commit(nvsHandle);
+    return true;
+}
+
+
+
+bool formatSd(){
+    return true;
+}
+
+bool readSd(){
     return true;
 }
 
