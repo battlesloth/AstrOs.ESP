@@ -53,24 +53,6 @@ typedef struct {
 // if the esp_err_t != ESP_OK, log the error with the function and line number
 bool logError(const char* tag, const char* function, int line, esp_err_t err);
 
-// save the service configuration to NVS
-bool saveServiceConfig(svc_config_t config);
-
-// load the service configuration from NVS
-bool loadServiceConfig(svc_config_t* config);
-
-// clear the service configuration from NVS
-bool clearServiceConfig();
-
-// mount SD Card
-bool mountSd();
-
-// format the SD Card
-bool formatSd();
-
-// read the SD Card
-bool readSd();
-
 // decode url encoded strings
 int percentDecode(char* out, const char* in);
 

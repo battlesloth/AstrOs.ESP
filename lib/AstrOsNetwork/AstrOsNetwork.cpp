@@ -1,6 +1,7 @@
 #include "AstrOsNetwork.h"
 #include "AstrOsConstants.h"
 #include "AstrOsHtml.h"
+#include "StorageManager.h"
 
 #include <stdio.h>
 #include <functional>
@@ -138,7 +139,7 @@ esp_err_t credentialsHandler(httpd_req_t *req)
         free(buf);
     }
 
-    if (saveServiceConfig(svcConfig))
+    if (Storage.saveServiceConfig(svcConfig))
     {
         const char *respStr = AstrOsHtml::SavedHtml;
         err = httpd_resp_send(req, respStr, strlen(respStr));
@@ -237,7 +238,7 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    if (clearServiceConfig())
+    if (Storage.clearServiceConfig())
     {
         const char *respStr = "{\"success\":\"true\"}";
         err = httpd_resp_send(req, respStr, strlen(respStr));
@@ -270,7 +271,7 @@ esp_err_t staFormatSdHandler(httpd_req_t *req)
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    if (formatSd())
+    if (Storage.formatSdCard())
     {
         const char *respStr = "{\"success\":\"true\"}";
         err = httpd_resp_send(req, respStr, strlen(respStr));
