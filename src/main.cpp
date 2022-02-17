@@ -90,17 +90,7 @@ void init(void)
     kangarooQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_cmd_t));
 
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
-        ESP_LOGI(TAG, "Erasing flash");
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    } 
-    ESP_ERROR_CHECK( err );
-
-    err = mountSdCard();
+    ESP_ERROR_CHECK(Storage.Init());
 
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
