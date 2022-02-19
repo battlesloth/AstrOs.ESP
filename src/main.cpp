@@ -59,8 +59,8 @@ static esp_timer_handle_t animationTimer;
  * Kangaroo Interface
  **********************************/
 
-#define KI_TX_PIN (GPIO_NUM_23)
-#define KI_RX_PIN (GPIO_NUM_22)
+#define KI_TX_PIN (GPIO_NUM_12)
+#define KI_RX_PIN (GPIO_NUM_13)
 #define KI_BAUD_RATE (9600)
 
 /**********************************

@@ -12,9 +12,11 @@
 #include <esp_netif.h>
 #include <lwip/inet.h>
 #include <mdns.h>
+#include "cJSON.h"
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
+#define POST_BUFFER_SIZE 2000
 
 static const char *TAG = "AstrOsNetwork";
 static bool intentionalDisconnect = false;
@@ -24,7 +26,9 @@ AstrOsNetwork astrOsNetwork;
 EventGroupHandle_t AstrOsNetwork::wifiEvenGroup;
 QueueHandle_t AstrOsNetwork::serviceQueue;
 
-
+typedef struct rest_server_context {
+    char scratch[POST_BUFFER_SIZE];
+} rest_server_context_t;
 
 AstrOsNetwork::AstrOsNetwork() {}
 
@@ -233,6 +237,8 @@ const httpd_uri_t staIndex = {
 
 esp_err_t staClearSettingsHandler(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "clearsettings called");
+
     esp_err_t err;
 
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
@@ -266,6 +272,8 @@ const httpd_uri_t staClearSettings = {
 
 esp_err_t staFormatSdHandler(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "formatsd called");
+
     esp_err_t err;
 
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
@@ -294,6 +302,97 @@ const httpd_uri_t staFormatSd = {
     .user_ctx = NULL};
 
 
+esp_err_t staListScriptsHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "listscripts called");
+
+    esp_err_t err;
+
+    err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    if (Storage.listFiles("scripts"))
+    {
+        const char *respStr = "{\"success\":\"true\"}";
+        err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+    else
+    {
+        const char *respStr = "{\"success\":\"false\"}";
+        err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+
+    return err;
+};
+
+const httpd_uri_t staListScripts = {
+    .uri = "/listscripts",
+    .method = HTTP_GET,
+    .handler = staListScriptsHandler,
+    .user_ctx = NULL};
+
+esp_err_t staUploadScriptHandler(httpd_req_t *req){
+
+    ESP_LOGI(TAG, "uploadscript called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    char* filenameTemp = cJSON_GetObjectItem(root, "scriptId")->valuestring;
+
+    char* scriptTemp = cJSON_GetObjectItem(root, "script")->valuestring;
+
+    char filename[strlen(filenameTemp) + 1];
+    char script[strlen(scriptTemp) + 1];
+
+    strncpy(filename, filenameTemp, strlen(filenameTemp) + 1);
+    strncpy(script, scriptTemp, strlen(scriptTemp) + 1);
+
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "ID: %s, DATA: %s", filenameTemp, scriptTemp);
+    ESP_LOGI(TAG, "ID: %s, DATA: %s", filename, script);
+
+    bool result = Storage.saveFile(filename, script);
+
+    if (!result){
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save script");
+        return ESP_FAIL;
+    }
+        
+    httpd_resp_sendstr(req, "Script saved");
+    return ESP_OK;
+}
+
+const httpd_uri_t staUploadScript = {
+    .uri = "/uploadscript",
+    .method = HTTP_POST,
+    .handler = staUploadScriptHandler,
+    .user_ctx = NULL};
+
 /**************************************************************
 * STA Webserver functions
 ***************************************************************/
@@ -311,6 +410,12 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staUploadScript.uri, staUploadScript.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
     ESP_LOGI(TAG, "server stopped");
     return (err == ESP_OK);
 }
@@ -320,6 +425,8 @@ bool AstrOsNetwork::startStaWebServer()
     esp_err_t err;
     webServer = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    config.stack_size=20480;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -336,6 +443,11 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staFormatSd);
     logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staListScripts);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staUploadScript);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    
     return true;
 }
 
@@ -352,6 +464,7 @@ esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    
     esp_err_t err = esp_wifi_init(&cfg);
     logError(TAG, __FUNCTION__, __LINE__, err);
 

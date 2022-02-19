@@ -16,8 +16,13 @@ class StorageManager{
     bool saveServiceConfig(svc_config_t config);
     bool clearServiceConfig();
     
+    bool saveFile(char* filename, char* data);
+    bool deleteFile(char* filename);
+    char* readFile(char* filename);
+    bool listFiles(char* folder);
+
     bool formatSdCard();
-    bool readSdCard();
+    
 };
 
 extern StorageManager Storage;

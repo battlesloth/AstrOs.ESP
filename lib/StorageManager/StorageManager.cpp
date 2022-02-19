@@ -10,6 +10,7 @@
 
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
+#include "vfs_fat_internal.h"
 #include "sdmmc_cmd.h"
 
 /**********************************
@@ -48,6 +49,8 @@ StorageManager::~StorageManager()
 esp_err_t StorageManager::Init()
 {
 
+    ESP_LOGI(TAG, "Initalizing Flash");
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
@@ -60,8 +63,10 @@ esp_err_t StorageManager::Init()
     else
     {
         logError(TAG, __FUNCTION__, __LINE__, err);
-        return err;
     }
+
+    ESP_LOGI(TAG, "Mounting SD Card");
+    
 
     return StorageManager::mountSdCard();
 }
@@ -81,27 +86,104 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
-bool StorageManager::formatSdCard()
-{
+bool StorageManager::saveFile(char* filename, char* data ){
+
+    UBaseType_t test = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI(TAG, "%d", test);
+
+    FILE *fd = NULL;
+    // "/sdcard/scripts/" + GUID
+    char path[100];
+    strcpy(path, "/sdcard/scripts/");
+    strcat(path, filename);
+    ESP_LOGI(TAG, "Saving %s", path);
+
+    if( access( path, F_OK ) == 0 ) {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path);
+        unlink(path);
+    }
+
+    fd = fopen(path, "w");
+    if (!fd){
+        ESP_LOGE(TAG, "Failed to create file : %s", path); 
+        return false;
+    }
+
+    fwrite(data, 1, sizeof(data), fd);
+
+    fclose(fd);
+
+    ESP_LOGI(TAG, "Saved %s", path);
+    
     return true;
 }
 
-bool StorageManager::readSdCard()
-{
+bool StorageManager::deleteFile(char* filename){
 
-    char entryPath[] = "/sdcard/";
-    char entrysize[16];
+    return true;
+}
+
+char* StorageManager::readFile(char* filename){
+
+    return "test";
+}
+
+bool StorageManager::formatSdCard()
+{
+    char drv[3] = {'0', ':', 0};
+    const size_t workbuf_size = 4096;
+    void* workbuf = NULL;
+    ESP_LOGI(TAG, "Formatting the SD card");
+
+    size_t allocation_unit_size = 16 * 1024;
+
+    workbuf = ff_memalloc(workbuf_size);
+    if (workbuf == NULL) {
+        ESP_LOGE(TAG, "Error formatting SD card: ESP_ERR_NO_MEM");
+        return false;
+    }
+
+    size_t alloc_unit_size = esp_vfs_fat_get_allocation_unit_size(
+                card->csd.sector_size,
+                allocation_unit_size);
+
+    FRESULT res = f_mkfs(drv, FM_ANY, alloc_unit_size, workbuf, workbuf_size);
+    if (res != FR_OK) {
+        ESP_LOGE(TAG, "Error formatting SD card: f_mkfs failed (%d)", res);
+        return false;
+    }
+
+    free(workbuf);
+
+    mkdir("/sdcard/scripts", 0777);
+
+    ESP_LOGI(TAG, "Successfully formatted the SD card");
+
+    return true;
+}
+
+bool StorageManager::listFiles(char* folder)
+{
+    char entrysize[37];
     const char *entrytype;
 
     struct dirent *entry;
     struct stat entry_stat;
 
-    DIR *dir = opendir(entryPath);
-    const size_t dirpath_len = strlen(entryPath);
+    
+    // "/sdcard/" + GUID
+    char entryPath[8 + strlen(folder) + 1];
 
+    strcpy(entryPath, "/sdcard/");
+    strcat(entryPath, folder);
+    //strcat(entryPath, "/");
+
+    const size_t dirpath_len = strlen(entryPath);
+    DIR *dir = opendir(entryPath);
+    
     if (!dir)
     {
-        ESP_LOGE(TAG, "Failed to open dir");
+        ESP_LOGE(TAG, "Failed to open dir %s", entryPath);
         return false;
     }
 
@@ -119,6 +201,7 @@ bool StorageManager::readSdCard()
         ESP_LOGI(TAG, "Found %s : %s (%s bytes)", entrytype, entry->d_name, entrysize);
     }
 
+   
     closedir(dir);
 
     return true;
