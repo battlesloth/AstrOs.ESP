@@ -62,15 +62,11 @@ void AnimationController::loadNextScript(){
 
     ESP_LOGI(TAG, "Loading script %s", scriptQueue[queueFront]);
 
-    char path[8 + COMMAND_NAME_SIZE + 1];
-    memset(path, 0, sizeof(path));
+    std::string path = "scripts/" + std::string(scriptQueue[queueFront]); 
 
-    strcpy(path, "scripts/");
-    strcat(path, scriptQueue[queueFront]);
+    std::string script = Storage.readFile(path);
 
-    char* script = Storage.readFile(path);
-
-    ESP_LOGI(TAG, "Loaded: %s", script);
+    ESP_LOGI(TAG, "Loaded: %s", script.c_str());
     //LoadFromMemory(scriptQueue[queueFront]);
 
     /*****************************************

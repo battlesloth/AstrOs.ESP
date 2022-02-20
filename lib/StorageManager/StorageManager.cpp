@@ -91,64 +91,78 @@ bool StorageManager::saveFile(std::string filename, std::string data ){
 
     FILE *fd = NULL;
     
-    char* path = StorageManager::setFilePath(filename);
+    std::string path = StorageManager::setFilePath(filename);
 
-    ESP_LOGI(TAG, "Saving %s", path);
+    ESP_LOGI(TAG, "Saving %s", path.c_str());
 
-    if( access( path, F_OK ) == 0 ) {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path);
-        unlink(path);
+    if( access( path.c_str(), F_OK ) == 0 ) {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        unlink(path.c_str());
     }
 
-    fd = fopen(path, "w");
+    fd = fopen(path.c_str(), "w");
     if (!fd){
-        ESP_LOGE(TAG, "Failed to create file : %s", path); 
+        ESP_LOGE(TAG, "Failed to create file : %s", path.c_str()); 
         return false;
     }
 
-    fwrite(data, sizeof(char), strlen(data) + 1, fd);
+    fwrite(data.c_str(), sizeof(char), strlen(data.c_str()) + 1, fd);
 
     fclose(fd);
 
-    ESP_LOGI(TAG, "Saved %s", path);
+    ESP_LOGI(TAG, "Saved %s", path.c_str());
     
     return true;
 }
 
-bool StorageManager::deleteFile(char* filename){
+bool StorageManager::deleteFile(std::string filename){
 
-    char* path = StorageManager::setFilePath(filename);
+    std::string path = StorageManager::setFilePath(filename);
         
-    if( access( path, F_OK ) == 0 ) {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path);
-        unlink(path);
+    if( access( path.c_str(), F_OK ) == 0 ) {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        unlink(path.c_str());
     }
 
     return true; 
 }
 
-char* StorageManager::readFile(char* filename){
+std::string StorageManager::readFile(std::string filename){
 
-    ESP_LOGI(TAG, "%s", filename);
-    char* path = StorageManager::setFilePath(filename);
-    ESP_LOGI(TAG, "%s", path);
-    if ( access( path, F_OK ) == 0){
-        ESP_LOGE(TAG, "File does not exist: %s", filename);
+    std::string path = StorageManager::setFilePath(filename);
+    
+    if ( access( path.c_str(), F_OK ) != 0){
+        ESP_LOGE(TAG, "File does not exist: %s", path.c_str());
         return "";
     }
 
-    return "test";
+    FILE *f = fopen(path.c_str(), "r");
+    if (f == NULL) {
+        ESP_LOGE(TAG, "Failed to open %s for reading", path.c_str());
+        return "";
+    }
+
+    std::string result = "";
+
+    char segment[100];
+    
+    while(fgets(segment, sizeof(segment), f)){
+        result.append(segment);
+    }
+
+    fclose(f);
+
+    return result;
 }
 
-bool StorageManager::fileExists(char* filename){
+bool StorageManager::fileExists(std::string filename){
 
-    ESP_LOGI(TAG, "%s", filename);
-    char* path = StorageManager::setFilePath(filename);
+    std::string path = StorageManager::setFilePath(filename);
 
-    return access( path, F_OK ) == 0;
+    return access( path.c_str(), F_OK ) == 0;
 }
 
-bool StorageManager::listFiles(char* folder)
+bool StorageManager::listFiles(std::string folder)
 {
     char entrysize[37];
     const char *entrytype;
@@ -156,15 +170,13 @@ bool StorageManager::listFiles(char* folder)
     struct dirent *entry;
     struct stat entry_stat;
   
-    char* entryPath = StorageManager::setFilePath(folder);
-
-    const size_t dirpath_len = strlen(entryPath);
+    std::string entryPath = StorageManager::setFilePath(folder);
     
-    DIR *dir = opendir(entryPath);
+    DIR *dir = opendir(entryPath.c_str());
     
     if (!dir)
     {
-        ESP_LOGE(TAG, "Failed to open dir %s", entryPath);
+        ESP_LOGE(TAG, "Failed to open dir %s", entryPath.c_str());
         return false;
     }
 
@@ -172,8 +184,9 @@ bool StorageManager::listFiles(char* folder)
     {
         entrytype = (entry->d_type == DT_DIR ? "directory" : "file");
 
-        strlcpy(entryPath + dirpath_len, entry->d_name, sizeof(entryPath) - dirpath_len);
-        if (stat(entryPath, &entry_stat) == -1)
+        const char * ep = entryPath.c_str();
+
+        if (stat(ep, &entry_stat) == -1)
         {
             ESP_LOGE(TAG, "Failed to stat %s : %s", entrytype, entry->d_name);
             continue;
@@ -181,7 +194,6 @@ bool StorageManager::listFiles(char* folder)
         sprintf(entrysize, "%ld", entry_stat.st_size);
         ESP_LOGI(TAG, "Found %s : %s (%s bytes)", entrytype, entry->d_name, entrysize);
     }
-
    
     closedir(dir);
 
@@ -287,20 +299,9 @@ esp_err_t StorageManager::mountSdCard()
 * Utility methods
 ***************************************************************/
 
-char* StorageManager::setFilePath(char* filename){
+std::string StorageManager::setFilePath(std::string filename){
 
-    ESP_LOGI(TAG, "%s", filename);
-    ESP_LOGI(TAG, "%s", MOUNT_POINT);
-
-    char* path = new char[strlen(MOUNT_POINT) + 1 + strlen(filename) + 1];
-    memset(path, 0, sizeof(path));
-
-    strcpy(path, MOUNT_POINT);
-
-    ESP_LOGI(TAG, "%s", path);
-    strcat(path, "/");
-    strcat(path, filename); 
-
-     ESP_LOGI(TAG, "%s", path);
-    return path;
+    std::string out = MOUNT_POINT + std::string("/") + filename;
+    
+    return out;
 }

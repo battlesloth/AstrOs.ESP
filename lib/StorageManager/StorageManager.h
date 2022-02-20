@@ -2,13 +2,14 @@
 #define STORAGEMANAGER_H
 
 #include <esp_log.h>
+#include <string>
 
 #include <AstrOsUtility.h>
 
 class StorageManager{
     private:
         esp_err_t mountSdCard();
-        char* setFilePath(char* filename);
+        std::string setFilePath(std::string filename);
     public:
     StorageManager();
     ~StorageManager();
@@ -18,12 +19,12 @@ class StorageManager{
     bool clearServiceConfig();
     
     
-    bool saveFile(char* filename, char* data);
-    bool deleteFile(char* filename);
-    bool fileExists(char* filename);
+    bool saveFile(std::string filename, std::string data);
+    bool deleteFile(std::string filename);
+    bool fileExists(std::string filename);
 
-    char* readFile(char* filename);
-    bool listFiles(char* folder);
+    std::string readFile(std::string filename);
+    bool listFiles(std::string folder);
 
     bool formatSdCard();
     

@@ -48,6 +48,7 @@ static const int RX_BUF_SIZE = 1024;
  * timers
  **********************************/
 
+static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
 
 /**********************************
@@ -68,6 +69,7 @@ static esp_timer_handle_t animationTimer;
  *********************************/
 static void initTimers(void);
 static void animationTimerCallback(void *arg);
+static void maintenanceTimerCallback(void *arg);
 
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
@@ -122,7 +124,7 @@ void app_main()
     init();
 
     xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 2048, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
     xTaskCreate(&kangarooQueueTask, "kangaroo_queue_task", 2048, (void *)kangarooQueue, 10, NULL);
 
     xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
@@ -138,14 +140,29 @@ void app_main()
 
 static void initTimers(void)
 {
-    const esp_timer_create_args_t timerArgs = {
+    const esp_timer_create_args_t aTimerArgs = {
         .callback = &animationTimerCallback,
         .name = "animation",
         .skip_unhandled_events = true};
 
-    ESP_ERROR_CHECK(esp_timer_create(&timerArgs, &animationTimer));
+    const esp_timer_create_args_t mTimerArgs = {
+        .callback = &maintenanceTimerCallback,
+        .name = "maintenance",
+        .skip_unhandled_events = true};
+
+    ESP_ERROR_CHECK(esp_timer_create(&aTimerArgs, &animationTimer));
     ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5000 * 1000));
     ESP_LOGI("init_timer", "Started animation timer");
+
+    ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
+    ESP_ERROR_CHECK(esp_timer_start_once(maintenanceTimer, 10 * 1000 * 1000));
+    ESP_LOGI("init_timer", "Started animation timer");
+}
+
+static void maintenanceTimerCallback(void *arg){
+    esp_timer_stop(maintenanceTimer);
+    ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
+    ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
 }
 
 static void animationTimerCallback(void *arg)

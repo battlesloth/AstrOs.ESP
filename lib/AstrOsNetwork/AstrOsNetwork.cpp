@@ -356,14 +356,8 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
         free(buf);
     }
 
-    char path[8 + strlen(scriptId) + 1];
-    memset(path, 0, sizeof(path));
-
-    strcpy(path, "scripts/");
-    strcat(path, scriptId);
-
-    ESP_LOGI(TAG, "%s", path);
-
+    std::string path = "scripts/" + std::string(scriptId);
+ 
     if (Storage.fileExists(path)){
         const char *respStr = "{\"result\":\"true\"}";
         esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
@@ -490,25 +484,14 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req){
 
     cJSON *root = cJSON_Parse(buf);
 
-    char* filenameTemp = cJSON_GetObjectItem(root, "scriptId")->valuestring;
+    char* filename = cJSON_GetObjectItem(root, "scriptId")->valuestring;
 
     char* scriptTemp = cJSON_GetObjectItem(root, "script")->valuestring;
 
-    char filename[strlen(filenameTemp) + 1];
-    char script[strlen(scriptTemp) + 1];
-
-    strncpy(filename, filenameTemp, strlen(filenameTemp) + 1);
-    strncpy(script, scriptTemp, strlen(scriptTemp) + 1);
-
+    std::string path = "scripts/" + std::string(filename);
+    std::string script = std::string(scriptTemp);
+    
     cJSON_Delete(root);
-
-    ESP_LOGI(TAG, "ID: %s, DATA: %s", filename, script);
-
-    char path[8 + strlen(filename) + 1];
-    memset(path, 0, sizeof(path));
-
-    strcpy(path, "scripts/");
-    strcat(path, filename);
 
     bool result = Storage.saveFile(path, script);
 
