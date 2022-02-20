@@ -6,7 +6,7 @@ extern "C" {
 
 #include "esp_system.h"
 
-esp_err_t init_kangaroo_interface(int baud_rate, int rx_pi, int tx_pin);
+esp_err_t init_kangaroo_interface(int baud_rate, int rx_pin, int tx_pin);
 
 void kangaroo_tx_task(void *arg);
 

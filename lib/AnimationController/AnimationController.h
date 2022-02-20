@@ -9,7 +9,8 @@
 
 
 #define QUEUE_CAPACITY 30
-#define COMMAND_NAME_SIZE 30
+//GUIDs are 36 char
+#define COMMAND_NAME_SIZE 36
 #define SCRIPT_CAPACITY 30
 
 typedef struct {
@@ -53,6 +54,7 @@ private:
 public:
     AnimationController(int lowerLimit);
     ~AnimationController();    
+    void panicStop();
     bool queueScript(char scriptName[]);
     bool servoScriptIsLoaded();
     char* getNextServoCommand();

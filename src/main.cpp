@@ -15,8 +15,11 @@
 #include <AstrOsUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
+#include <StorageManager.h>
+
 
 static const char *TAG = AstrOsConstants::ModuleName;
+
 
 /**********************************
  * network
@@ -45,6 +48,7 @@ static const int RX_BUF_SIZE = 1024;
  * timers
  **********************************/
 
+static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
 
 /**********************************
@@ -56,8 +60,8 @@ static esp_timer_handle_t animationTimer;
  * Kangaroo Interface
  **********************************/
 
-#define KI_TX_PIN (GPIO_NUM_23)
-#define KI_RX_PIN (GPIO_NUM_22)
+#define KI_TX_PIN (GPIO_NUM_12)
+#define KI_RX_PIN (GPIO_NUM_13)
 #define KI_BAUD_RATE (9600)
 
 /**********************************
@@ -65,11 +69,14 @@ static esp_timer_handle_t animationTimer;
  *********************************/
 static void initTimers(void);
 static void animationTimerCallback(void *arg);
+static void maintenanceTimerCallback(void *arg);
 
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void kangarooQueueTask(void *arg);
+
+esp_err_t mountSdCard(void);
 
 
 extern "C"
@@ -81,19 +88,11 @@ void init(void)
 {
     ESP_LOGI(TAG, "init called");
 
-    animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     kangarooQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_cmd_t));
+    serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
 
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
-        // Retry nvs_flash_init
-        ESP_LOGI(TAG, "Erasing flash");
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    } 
-    ESP_ERROR_CHECK( err );
+    ESP_ERROR_CHECK(Storage.Init());
 
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
@@ -109,11 +108,11 @@ void init(void)
 
     initTimers();
 
-    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue));
+    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue));
 
     svc_config_t config;
     
-    if (loadServiceConfig(&config)){
+    if (Storage.loadServiceConfig(&config)){
         astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
     } else{
         astrOsNetwork.startWifiAp();
@@ -125,7 +124,7 @@ void app_main()
     init();
 
     xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 2048, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
     xTaskCreate(&kangarooQueueTask, "kangaroo_queue_task", 2048, (void *)kangarooQueue, 10, NULL);
 
     xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
@@ -141,14 +140,29 @@ void app_main()
 
 static void initTimers(void)
 {
-    const esp_timer_create_args_t timerArgs = {
+    const esp_timer_create_args_t aTimerArgs = {
         .callback = &animationTimerCallback,
         .name = "animation",
         .skip_unhandled_events = true};
 
-    ESP_ERROR_CHECK(esp_timer_create(&timerArgs, &animationTimer));
+    const esp_timer_create_args_t mTimerArgs = {
+        .callback = &maintenanceTimerCallback,
+        .name = "maintenance",
+        .skip_unhandled_events = true};
+
+    ESP_ERROR_CHECK(esp_timer_create(&aTimerArgs, &animationTimer));
     ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5000 * 1000));
     ESP_LOGI("init_timer", "Started animation timer");
+
+    ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
+    ESP_ERROR_CHECK(esp_timer_start_once(maintenanceTimer, 10 * 1000 * 1000));
+    ESP_LOGI("init_timer", "Started animation timer");
+}
+
+static void maintenanceTimerCallback(void *arg){
+    esp_timer_stop(maintenanceTimer);
+    ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
+    ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
 }
 
 static void animationTimerCallback(void *arg)
@@ -200,7 +214,7 @@ void serviceQueueTask(void *arg)
     QueueHandle_t svcQueue;
 
     svcQueue = (QueueHandle_t)arg;
-    queue_cmd_t msg;
+    queue_svc_cmd_t msg;
     while (1)
     {
         if (xQueueReceive(svcQueue, &(msg), 0))
@@ -223,7 +237,7 @@ void serviceQueueTask(void *arg)
             {
                 svc_config_t config;
 
-                if (!loadServiceConfig(&config)){
+                if (!Storage.loadServiceConfig(&config)){
                     ESP_LOGI(TAG, "Switch to network requested, but configuration couldn't load");
                     break;
                 }
@@ -278,13 +292,23 @@ void animationQueueTask(void *arg)
     QueueHandle_t animationQueue;
 
     animationQueue = (QueueHandle_t)arg;
-    queue_msg_t msg;
+    queue_ani_cmd_t msg;
 
     while (1)
     {
         if (xQueueReceive(animationQueue, &(msg), 0))
         {
-            AnimationCtrl.queueScript(msg.data);
+            switch (msg.cmd)
+            {
+                case ANIMATION_COMMAND::PANIC_STOP:
+                    AnimationCtrl.panicStop();
+                    break;
+                case ANIMATION_COMMAND::RUN_ANIMATION:
+                    AnimationCtrl.queueScript(msg.data);
+                    break;
+                default:
+                    break;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -307,3 +331,5 @@ void kangarooQueueTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
+

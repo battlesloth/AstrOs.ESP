@@ -17,6 +17,23 @@ typedef enum {
     SWITCH_TO_WIFI_AP
 } SERVICE_COMMAND;
 
+typedef struct {
+    SERVICE_COMMAND cmd;
+    char *data;
+} queue_svc_cmd_t;
+
+
+
+typedef enum {
+    PANIC_STOP,
+    RUN_ANIMATION
+} ANIMATION_COMMAND;
+
+typedef struct {
+    ANIMATION_COMMAND cmd;
+    char *data;
+} queue_ani_cmd_t;
+
 
 typedef enum {
     CONFIG,
@@ -26,12 +43,6 @@ typedef enum {
     SERVO,
 } ASTROS_COMMAND;
 
-
-typedef struct {
-    char networkSSID[33];
-    char networkPass[65];
-} svc_config_t;
-
 typedef struct {
     ASTROS_COMMAND command;
     uint8_t *body;
@@ -39,9 +50,9 @@ typedef struct {
 
 
 typedef struct {
-    SERVICE_COMMAND cmd;
-    char *data;
-} queue_cmd_t;
+    char networkSSID[33];
+    char networkPass[65];
+} svc_config_t;
 
 
 typedef struct {
@@ -52,15 +63,6 @@ typedef struct {
 
 // if the esp_err_t != ESP_OK, log the error with the function and line number
 bool logError(const char* tag, const char* function, int line, esp_err_t err);
-
-// save the service configuration to NVS
-bool saveServiceConfig(svc_config_t config);
-
-// load the service configuration from NVS
-bool loadServiceConfig(svc_config_t* config);
-
-// clear the serive configuration from NVS
-bool clearServiceConfig();
 
 // decode url encoded strings
 int percentDecode(char* out, const char* in);
