@@ -14,8 +14,8 @@ void AstrOsInterface::Init(QueueHandle_t animationQueue){
 
 void AstrOsInterface::handleMessage(char *data){
 
-            queue_msg_t msg = {1, data};
-            xQueueSend(animationQueue, &msg, 0);
+           // queue_msg_t msg = {1, data};
+           // xQueueSend(animationQueue, &msg, 0);
 }
 //static int sendData(const char *logName, const char *data)
 //{

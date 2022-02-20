@@ -17,6 +17,23 @@ typedef enum {
     SWITCH_TO_WIFI_AP
 } SERVICE_COMMAND;
 
+typedef struct {
+    SERVICE_COMMAND cmd;
+    char *data;
+} queue_svc_cmd_t;
+
+
+
+typedef enum {
+    PANIC_STOP,
+    RUN_ANIMATION
+} ANIMATION_COMMAND;
+
+typedef struct {
+    ANIMATION_COMMAND cmd;
+    char *data;
+} queue_ani_cmd_t;
+
 
 typedef enum {
     CONFIG,
@@ -26,12 +43,6 @@ typedef enum {
     SERVO,
 } ASTROS_COMMAND;
 
-
-typedef struct {
-    char networkSSID[33];
-    char networkPass[65];
-} svc_config_t;
-
 typedef struct {
     ASTROS_COMMAND command;
     uint8_t *body;
@@ -39,9 +50,9 @@ typedef struct {
 
 
 typedef struct {
-    SERVICE_COMMAND cmd;
-    char *data;
-} queue_cmd_t;
+    char networkSSID[33];
+    char networkPass[65];
+} svc_config_t;
 
 
 typedef struct {

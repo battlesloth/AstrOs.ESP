@@ -86,9 +86,9 @@ void init(void)
 {
     ESP_LOGI(TAG, "init called");
 
-    animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     kangarooQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_cmd_t));
+    serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
 
     ESP_ERROR_CHECK(Storage.Init());
 
@@ -106,7 +106,7 @@ void init(void)
 
     initTimers();
 
-    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue));
+    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue));
 
     svc_config_t config;
     
@@ -197,7 +197,7 @@ void serviceQueueTask(void *arg)
     QueueHandle_t svcQueue;
 
     svcQueue = (QueueHandle_t)arg;
-    queue_cmd_t msg;
+    queue_svc_cmd_t msg;
     while (1)
     {
         if (xQueueReceive(svcQueue, &(msg), 0))
@@ -275,13 +275,23 @@ void animationQueueTask(void *arg)
     QueueHandle_t animationQueue;
 
     animationQueue = (QueueHandle_t)arg;
-    queue_msg_t msg;
+    queue_ani_cmd_t msg;
 
     while (1)
     {
         if (xQueueReceive(animationQueue, &(msg), 0))
         {
-            AnimationCtrl.queueScript(msg.data);
+            switch (msg.cmd)
+            {
+                case ANIMATION_COMMAND::PANIC_STOP:
+                    AnimationCtrl.panicStop();
+                    break;
+                case ANIMATION_COMMAND::RUN_ANIMATION:
+                    AnimationCtrl.queueScript(msg.data);
+                    break;
+                default:
+                    break;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

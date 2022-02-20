@@ -25,8 +25,9 @@ public:
     AstrOsNetwork();
     ~AstrOsNetwork();
     static QueueHandle_t serviceQueue;
+    static QueueHandle_t animationQueue;
     static EventGroupHandle_t wifiEvenGroup;
-    esp_err_t init(const char *ssid, const char *password, QueueHandle_t serviceQueue);
+    esp_err_t init(const char *ssid, const char *password, QueueHandle_t serviceQueue, QueueHandle_t animationQueue);
     bool startWifiAp();
     bool stopWifiAp();
     bool connectToNetwork(const char *ssid, const char *password);

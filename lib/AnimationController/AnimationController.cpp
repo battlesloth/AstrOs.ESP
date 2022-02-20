@@ -1,6 +1,10 @@
 #include <string.h>
+#include <esp_log.h>
 
 #include <AnimationController.h>
+#include <StorageManager.h>
+
+static const char *TAG = "AnimationController";
 
 AnimationController AnimationCtrl(5);
 
@@ -11,8 +15,15 @@ AnimationController::AnimationController(int l) :
 
 AnimationController::~AnimationController() {}
 
+void AnimationController::panicStop(){
+    ESP_LOGI(TAG, "Panicing!");
+    //TODO
+}
 
 bool AnimationController::queueScript(char scriptName[]){
+
+    ESP_LOGI(TAG, "Queueing %s", scriptName);
+
     if (queueIsFull()){
         return false;
     }
@@ -49,6 +60,17 @@ void AnimationController::loadNextScript(){
         return;
     }
 
+    ESP_LOGI(TAG, "Loading script %s", scriptQueue[queueFront]);
+
+    char path[8 + COMMAND_NAME_SIZE + 1];
+    memset(path, 0, sizeof(path));
+
+    strcpy(path, "scripts/");
+    strcat(path, scriptQueue[queueFront]);
+
+    char* script = Storage.readFile(path);
+
+    ESP_LOGI(TAG, "Loaded: %s", script);
     //LoadFromMemory(scriptQueue[queueFront]);
 
     /*****************************************

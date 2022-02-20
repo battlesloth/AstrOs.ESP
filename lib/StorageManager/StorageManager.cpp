@@ -6,7 +6,8 @@
 #include <stdbool.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
-#include <string.h>
+
+#include <string>
 
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
@@ -86,16 +87,12 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
-bool StorageManager::saveFile(char* filename, char* data ){
-
-    UBaseType_t test = uxTaskGetStackHighWaterMark(NULL);
-    ESP_LOGI(TAG, "%d", test);
+bool StorageManager::saveFile(std::string filename, std::string data ){
 
     FILE *fd = NULL;
-    // "/sdcard/scripts/" + GUID
-    char path[100];
-    strcpy(path, "/sdcard/scripts/");
-    strcat(path, filename);
+    
+    char* path = StorageManager::setFilePath(filename);
+
     ESP_LOGI(TAG, "Saving %s", path);
 
     if( access( path, F_OK ) == 0 ) {
@@ -109,7 +106,7 @@ bool StorageManager::saveFile(char* filename, char* data ){
         return false;
     }
 
-    fwrite(data, 1, sizeof(data), fd);
+    fwrite(data, sizeof(char), strlen(data) + 1, fd);
 
     fclose(fd);
 
@@ -120,13 +117,80 @@ bool StorageManager::saveFile(char* filename, char* data ){
 
 bool StorageManager::deleteFile(char* filename){
 
-    return true;
+    char* path = StorageManager::setFilePath(filename);
+        
+    if( access( path, F_OK ) == 0 ) {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path);
+        unlink(path);
+    }
+
+    return true; 
 }
 
 char* StorageManager::readFile(char* filename){
 
+    ESP_LOGI(TAG, "%s", filename);
+    char* path = StorageManager::setFilePath(filename);
+    ESP_LOGI(TAG, "%s", path);
+    if ( access( path, F_OK ) == 0){
+        ESP_LOGE(TAG, "File does not exist: %s", filename);
+        return "";
+    }
+
     return "test";
 }
+
+bool StorageManager::fileExists(char* filename){
+
+    ESP_LOGI(TAG, "%s", filename);
+    char* path = StorageManager::setFilePath(filename);
+
+    return access( path, F_OK ) == 0;
+}
+
+bool StorageManager::listFiles(char* folder)
+{
+    char entrysize[37];
+    const char *entrytype;
+
+    struct dirent *entry;
+    struct stat entry_stat;
+  
+    char* entryPath = StorageManager::setFilePath(folder);
+
+    const size_t dirpath_len = strlen(entryPath);
+    
+    DIR *dir = opendir(entryPath);
+    
+    if (!dir)
+    {
+        ESP_LOGE(TAG, "Failed to open dir %s", entryPath);
+        return false;
+    }
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        entrytype = (entry->d_type == DT_DIR ? "directory" : "file");
+
+        strlcpy(entryPath + dirpath_len, entry->d_name, sizeof(entryPath) - dirpath_len);
+        if (stat(entryPath, &entry_stat) == -1)
+        {
+            ESP_LOGE(TAG, "Failed to stat %s : %s", entrytype, entry->d_name);
+            continue;
+        }
+        sprintf(entrysize, "%ld", entry_stat.st_size);
+        ESP_LOGI(TAG, "Found %s : %s (%s bytes)", entrytype, entry->d_name, entrysize);
+    }
+
+   
+    closedir(dir);
+
+    return true;
+}
+
+/**************************************************************
+* SD Card methods
+***************************************************************/
 
 bool StorageManager::formatSdCard()
 {
@@ -162,50 +226,7 @@ bool StorageManager::formatSdCard()
     return true;
 }
 
-bool StorageManager::listFiles(char* folder)
-{
-    char entrysize[37];
-    const char *entrytype;
 
-    struct dirent *entry;
-    struct stat entry_stat;
-
-    
-    // "/sdcard/" + GUID
-    char entryPath[8 + strlen(folder) + 1];
-
-    strcpy(entryPath, "/sdcard/");
-    strcat(entryPath, folder);
-    //strcat(entryPath, "/");
-
-    const size_t dirpath_len = strlen(entryPath);
-    DIR *dir = opendir(entryPath);
-    
-    if (!dir)
-    {
-        ESP_LOGE(TAG, "Failed to open dir %s", entryPath);
-        return false;
-    }
-
-    while ((entry = readdir(dir)) != NULL)
-    {
-        entrytype = (entry->d_type == DT_DIR ? "directory" : "file");
-
-        strlcpy(entryPath + dirpath_len, entry->d_name, sizeof(entryPath) - dirpath_len);
-        if (stat(entryPath, &entry_stat) == -1)
-        {
-            ESP_LOGE(TAG, "Failed to stat %s : %s", entrytype, entry->d_name);
-            continue;
-        }
-        sprintf(entrysize, "%ld", entry_stat.st_size);
-        ESP_LOGI(TAG, "Found %s : %s (%s bytes)", entrytype, entry->d_name, entrysize);
-    }
-
-   
-    closedir(dir);
-
-    return true;
-}
 
 esp_err_t StorageManager::mountSdCard()
 {
@@ -260,4 +281,26 @@ esp_err_t StorageManager::mountSdCard()
     sdmmc_card_print_info(stdout, card);
 
     return err;
+}
+
+/**************************************************************
+* Utility methods
+***************************************************************/
+
+char* StorageManager::setFilePath(char* filename){
+
+    ESP_LOGI(TAG, "%s", filename);
+    ESP_LOGI(TAG, "%s", MOUNT_POINT);
+
+    char* path = new char[strlen(MOUNT_POINT) + 1 + strlen(filename) + 1];
+    memset(path, 0, sizeof(path));
+
+    strcpy(path, MOUNT_POINT);
+
+    ESP_LOGI(TAG, "%s", path);
+    strcat(path, "/");
+    strcat(path, filename); 
+
+     ESP_LOGI(TAG, "%s", path);
+    return path;
 }

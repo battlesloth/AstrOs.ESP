@@ -25,6 +25,7 @@ AstrOsNetwork astrOsNetwork;
 
 EventGroupHandle_t AstrOsNetwork::wifiEvenGroup;
 QueueHandle_t AstrOsNetwork::serviceQueue;
+QueueHandle_t AstrOsNetwork::animationQueue;
 
 typedef struct rest_server_context {
     char scratch[POST_BUFFER_SIZE];
@@ -149,7 +150,7 @@ esp_err_t credentialsHandler(httpd_req_t *req)
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
 
-        queue_msg_t msg = {SERVICE_COMMAND::SWITCH_TO_NETWORK, NULL};
+        queue_svc_cmd_t msg = {SERVICE_COMMAND::SWITCH_TO_NETWORK, NULL};
         xQueueSend(AstrOsNetwork::serviceQueue, &msg, pdMS_TO_TICKS(2000));
     }
     else
@@ -215,7 +216,7 @@ bool AstrOsNetwork::startApWebServer()
 
 
 /**************************************************************
-* STA URI definitions
+* Service Endpoints
 ***************************************************************/
 esp_err_t staIndexHandler(httpd_req_t *req)
 {
@@ -250,7 +251,7 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
 
-        queue_msg_t msg = {SERVICE_COMMAND::SWITCH_TO_WIFI_AP, NULL};
+        queue_svc_cmd_t msg = {SERVICE_COMMAND::SWITCH_TO_WIFI_AP, NULL};
         xQueueSend(AstrOsNetwork::serviceQueue, &msg, pdMS_TO_TICKS(2000));
     }
     else
@@ -299,6 +300,134 @@ const httpd_uri_t staFormatSd = {
     .uri = "/formatsd",
     .method = HTTP_GET,
     .handler = staFormatSdHandler,
+    .user_ctx = NULL};
+
+/**************************************************************
+* Script endpoints
+***************************************************************/
+
+esp_err_t staPanicStopHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "panicstop called");
+
+    queue_ani_cmd_t msg = {ANIMATION_COMMAND::PANIC_STOP, NULL};
+    xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
+
+    const char *respStr = "{\"result\":\"panic stop sent\"}";
+    esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return err;
+};
+
+const httpd_uri_t staPanicStop = {
+    .uri = "/panicstop",
+    .method = HTTP_GET,
+    .handler = staPanicStopHandler,
+    .user_ctx = NULL};
+
+
+esp_err_t staScriptExistsHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "scriptexists called");
+
+    char *buf;
+    size_t bufLen;
+    esp_err_t err = ESP_OK;
+    char scriptId[37];
+    
+    /* Read URL query string length and allocate memory for length + 1,
+     * extra byte for null termination */
+    bufLen = httpd_req_get_url_query_len(req) + 1;
+    if (bufLen > 1)
+    {
+        buf = (char *)malloc(bufLen);
+        err = httpd_req_get_url_query_str(req, buf, bufLen);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            ESP_LOGI(TAG, "%s: Query string missing!", __FUNCTION__);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "Found URL query => %s", buf);        
+            err = httpd_query_key_value(buf, "scriptId", scriptId, 37);
+            logError(TAG, __FUNCTION__, __LINE__, err);
+        }
+        free(buf);
+    }
+
+    char path[8 + strlen(scriptId) + 1];
+    memset(path, 0, sizeof(path));
+
+    strcpy(path, "scripts/");
+    strcat(path, scriptId);
+
+    ESP_LOGI(TAG, "%s", path);
+
+    if (Storage.fileExists(path)){
+        const char *respStr = "{\"result\":\"true\"}";
+        esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    } else {
+        const char *respStr = "{\"result\":\"false\"}";
+        esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+    
+    return err;
+};
+
+const httpd_uri_t staScriptExists = {
+    .uri = "/scriptexists",
+    .method = HTTP_GET,
+    .handler = staScriptExistsHandler,
+    .user_ctx = NULL};
+
+
+esp_err_t staRunScriptHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "runscript called");
+
+    char *buf;
+    size_t bufLen;
+    esp_err_t err;
+    char scriptId[37];
+    
+    /* Read URL query string length and allocate memory for length + 1,
+     * extra byte for null termination */
+    bufLen = httpd_req_get_url_query_len(req) + 1;
+    if (bufLen > 1)
+    {
+        buf = (char *)malloc(bufLen);
+        err = httpd_req_get_url_query_str(req, buf, bufLen);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            ESP_LOGI(TAG, "%s: Query string missing!", __FUNCTION__);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "Found URL query => %s", buf);        
+            err = httpd_query_key_value(buf, "scriptId", scriptId, 37);
+            logError(TAG, __FUNCTION__, __LINE__, err);
+        }
+        free(buf);
+    }
+
+    queue_ani_cmd_t msg = {ANIMATION_COMMAND::RUN_ANIMATION, NULL};
+    msg.data = scriptId;
+    xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
+
+    const char *respStr = "{\"result\":\"script queued\"}";
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return err;
+};
+
+const httpd_uri_t staRunScript = {
+    .uri = "/runscript",
+    .method = HTTP_GET,
+    .handler = staRunScriptHandler,
     .user_ctx = NULL};
 
 
@@ -373,10 +502,15 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req){
 
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "ID: %s, DATA: %s", filenameTemp, scriptTemp);
     ESP_LOGI(TAG, "ID: %s, DATA: %s", filename, script);
 
-    bool result = Storage.saveFile(filename, script);
+    char path[8 + strlen(filename) + 1];
+    memset(path, 0, sizeof(path));
+
+    strcpy(path, "scripts/");
+    strcat(path, filename);
+
+    bool result = Storage.saveFile(path, script);
 
     if (!result){
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save script");
@@ -416,6 +550,15 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staUploadScript.uri, staUploadScript.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = httpd_unregister_uri_handler(webServer, staRunScript.uri, staRunScript.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staPanicStop.uri, staPanicStop.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staScriptExists.uri, staScriptExists.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
     ESP_LOGI(TAG, "server stopped");
     return (err == ESP_OK);
 }
@@ -447,6 +590,12 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staUploadScript);
     logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staRunScript);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staPanicStop);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staScriptExists);
+    logError(TAG, __FUNCTION__, __LINE__, err);
     
     return true;
 }
@@ -454,9 +603,10 @@ bool AstrOsNetwork::startStaWebServer()
 /**************************************************************
 * 
 ***************************************************************/
-esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle_t queue)
+esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle_t sQueue, QueueHandle_t aQueue)
 {
-    serviceQueue = queue;
+    serviceQueue = sQueue;
+    animationQueue = aQueue;
     ssid = network;
     password = pass;
 
