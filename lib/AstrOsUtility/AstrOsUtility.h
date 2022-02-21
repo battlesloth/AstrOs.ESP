@@ -39,7 +39,6 @@ typedef enum {
     CONFIG,
     FUNCTION,
     SCRIPT,
-    I2C,
     SERVO,
 } ASTROS_COMMAND;
 

@@ -12,6 +12,7 @@
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
 #include <AnimationController.h>
+#include <AnimationCommand.h>
 #include <AstrOsUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
@@ -169,12 +170,14 @@ static void animationTimerCallback(void *arg)
 {
     esp_timer_stop(animationTimer);
 
-    if (AnimationCtrl.servoScriptIsLoaded())
+    if (AnimationCtrl.scriptIsLoaded())
     {
-        char *cmd = AnimationCtrl.getNextServoCommand();
+        BaseCommand* cmd = AnimationCtrl.getNextCommandPtr();
 
-        ESP_LOGI("animation_callback", "cmd: %s", cmd);
+        ESP_LOGI("animation_callback", "cmd: %d", (int) cmd->commandType);
 
+        delete(cmd);
+        
         ESP_ERROR_CHECK(esp_timer_start_periodic(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
     }
     else

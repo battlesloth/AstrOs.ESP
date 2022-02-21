@@ -1,176 +1,191 @@
 #include <string.h>
 #include <esp_log.h>
+#include <algorithm>
 
 #include <AnimationController.h>
+#include <AnimationCommand.h>
 #include <StorageManager.h>
 
 static const char *TAG = "AnimationController";
 
-AnimationController AnimationCtrl(5);
+AnimationController AnimationCtrl;
 
-AnimationController::AnimationController(int l) :
-    lowerLimit(l) {
-        queueRear = -1;
-    }
+AnimationController::AnimationController()
+{
+    queueRear = -1;
+}
 
 AnimationController::~AnimationController() {}
 
-void AnimationController::panicStop(){
+void AnimationController::panicStop()
+{
     ESP_LOGI(TAG, "Panicing!");
-    //TODO
+    // TODO
 }
 
-bool AnimationController::queueScript(char scriptName[]){
+bool AnimationController::queueScript(std::string scriptId)
+{
 
-    ESP_LOGI(TAG, "Queueing %s", scriptName);
+    ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
 
-    if (queueIsFull()){
+    if (queueIsFull())
+    {
+        ESP_LOGI(TAG, "Queue is full");
         return false;
     }
 
-    bool loadServoScript = !servoScriptLoaded;
+    bool loadScript = !scriptLoaded;
 
     queueRear = (queueRear + 1) % queueCapacity;
 
-    strncpy(scriptQueue[queueRear], scriptName, commandSize);
-
-    scriptQueue[queueRear][commandSize - 1] = '\0';
+    scriptQueue[queueRear] = scriptId;
 
     queueSize++;
 
-    if (loadServoScript){
+    if (loadScript)
+    {
         loadNextScript();
     }
 
     return true;
 }
 
-
-bool AnimationController::queueIsFull(){
-    return (queueSize == queueCapacity); 
+bool AnimationController::queueIsFull()
+{
+    return (queueSize == queueCapacity);
 }
 
-bool AnimationController::queueIsEmpty(){
-    return (queueSize == 0); 
+bool AnimationController::queueIsEmpty()
+{
+    return (queueSize == 0);
 }
 
-void AnimationController::loadNextScript(){
+void AnimationController::loadNextScript()
+{
 
-    if (queueIsEmpty()){
+    if (queueIsEmpty())
+    {
+        scriptLoaded = false;
         return;
     }
 
-    ESP_LOGI(TAG, "Loading script %s", scriptQueue[queueFront]);
+    ESP_LOGI(TAG, "Loading script %s", scriptQueue[queueFront].c_str());
 
-    std::string path = "scripts/" + std::string(scriptQueue[queueFront]); 
+    std::string path = "scripts/" + std::string(scriptQueue[queueFront]);
 
     std::string script = Storage.readFile(path);
 
+    AnimationController::parseScript(script);
+
     ESP_LOGI(TAG, "Loaded: %s", script.c_str());
-    //LoadFromMemory(scriptQueue[queueFront]);
+    // LoadFromMemory(scriptQueue[queueFront]);
 
     /*****************************************
      * Test script
      *****************************************/
-    if (strncmp(scriptQueue[queueFront], "#start", strlen("#home")) == 0){
-        servoScript[0].setValues(Spinner, Start, 0, 0, 500);
-        servoScript[1].setValues(Lifter, Start, 0, 0, 500);
-        servoEvents = 2;
-    } 
-    if (strncmp(scriptQueue[queueFront], "#home", strlen("#home")) == 0){
-        servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-        servoScript[1].setValues(Lifter, Home, 0, 0, 2000);
-        servoEvents = 2;
-    } 
-    if (strncmp(scriptQueue[queueFront], "#stow", strlen("#stow")) == 0){
-        servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-        servoScript[1].setValues(Lifter, Position, -15, 0, 2000);
-        servoEvents = 2;
-    } 
-    else if (strncmp(scriptQueue[queueFront], "#deploy", strlen("#deploy")) == 0) {
-        servoScript[0].setValues(Lifter, Position, 780, 0, 1000);
-        servoEvents = 1;
-    }
-    else if (strncmp(scriptQueue[queueFront], "#sneaky", strlen("#sneaky")) == 0) {
-        servoScript[0].setValues(Lifter, Position, 780, 100, 12000);
-        servoScript[1].setValues(Lifter, Position, 350, 100, 6000);
-        servoScript[2].setValues(Lifter, Position, 690, 100, 4000);
-        servoScript[3].setValues(Spinner, Position, -350, 700, 5000);
-        servoScript[4].setValues(Spinner, Position, 700, 2000, 3000);
-        servoScript[5].setValues(Lifter, Position, 790, 100, 2000);
-        servoScript[6].setValues(Spinner, Position, 350, 400, 5000);
-        servoScript[7].setValues(Spinner, Home, 0, 0, 1000);
-        servoScript[8].setValues(Lifter, Position, -15, 200, 12000);    
-        servoEvents = 9;
-    }
+    // if (strncmp(scriptQueue[queueFront], "#start", strlen("#home")) == 0){
+    //     servoScript[0].setValues(Spinner, Start, 0, 0, 500);
+    //     servoScript[1].setValues(Lifter, Start, 0, 0, 500);
+    //     servoEvents = 2;
+    // }
+    // if (strncmp(scriptQueue[queueFront], "#home", strlen("#home")) == 0){
+    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
+    //     servoScript[1].setValues(Lifter, Home, 0, 0, 2000);
+    //     servoEvents = 2;
+    // }
+    // if (strncmp(scriptQueue[queueFront], "#stow", strlen("#stow")) == 0){
+    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
+    //     servoScript[1].setValues(Lifter, Position, -15, 0, 2000);
+    //     servoEvents = 2;
+    // }
+    // else if (strncmp(scriptQueue[queueFront], "#deploy", strlen("#deploy")) == 0) {
+    //     servoScript[0].setValues(Lifter, Position, 780, 0, 1000);
+    //     servoEvents = 1;
+    // }
+    // else if (strncmp(scriptQueue[queueFront], "#sneaky", strlen("#sneaky")) == 0) {
+    //     servoScript[0].setValues(Lifter, Position, 780, 100, 12000);
+    //     servoScript[1].setValues(Lifter, Position, 350, 100, 6000);
+    //     servoScript[2].setValues(Lifter, Position, 690, 100, 4000);
+    //     servoScript[3].setValues(Spinner, Position, -350, 700, 5000);
+    //     servoScript[4].setValues(Spinner, Position, 700, 2000, 3000);
+    //     servoScript[5].setValues(Lifter, Position, 790, 100, 2000);
+    //     servoScript[6].setValues(Spinner, Position, 350, 400, 5000);
+    //     servoScript[7].setValues(Spinner, Home, 0, 0, 1000);
+    //     servoScript[8].setValues(Lifter, Position, -15, 200, 12000);
+    //     servoEvents = 9;
+    // }
     /*****************************************
      * End Test Script
      *****************************************/
 
     queueFront = (queueFront + 1) % queueCapacity;
     queueSize--;
-    servoEventsFired = 0;
-    servoScriptLoaded = true;
+    scriptLoaded = true;
 }
 
-bool AnimationController::servoScriptIsLoaded(){
-    
-    if (!servoScriptLoaded && !queueIsEmpty()){
+bool AnimationController::scriptIsLoaded()
+{
+
+    if (!scriptLoaded && !queueIsEmpty())
+    {
         loadNextScript();
     }
 
-    return servoScriptLoaded;
+    return scriptLoaded;
 }
 
-char* AnimationController::getNextServoCommand(){
+BaseCommand* AnimationController::getNextCommandPtr()
+{
 
-    if (!servoScriptLoaded){
-        handleLastServoEvent();
-        char *str = (char*)malloc(2); 
-        snprintf(str, 2, " ");
-        return str;
-    } else if (servoEventsFired == servoEvents){
-        handleLastServoEvent();
-        char *str = (char*)malloc(2); 
-        snprintf(str, 2, " ");
-        return str;
-    } else {
+    if (scriptEvents.empty())
+    {
+        return new BaseCommand;
+    }
+    else if (scriptEvents.size() == 1)
+    {
+
+        BaseCommand* lastCmd = scriptEvents.back().toCommandPtr();
+        scriptEvents.pop_back();
         
-        //if home lifter, then home spinner first
-        //if move lifter to position below threshold, unless home, default to theshold
+        AnimationController::loadNextScript();
 
-        int nextEventIndex = servoEventsFired;
-        servoEventsFired++;
+        return lastCmd;
+    }
+    else
+    {
+        delayTillNextEvent = scriptEvents.back().duration;
 
-        if (servoEventsFired == servoEvents){
-            handleLastServoEvent();
-        }
-
-        delayTillNextServoEvent = servoScript[nextEventIndex].getDuration();
         // 10 milliseconds minimum between events?
-        if (delayTillNextServoEvent < 10){
-                delayTillNextServoEvent = 10;
+        if (delayTillNextEvent < 10)
+        {
+            delayTillNextEvent = 10;
         }
-        
-        return servoScript[nextEventIndex].toCommand();
+
+        BaseCommand* cmd = scriptEvents.back().toCommandPtr();
+        scriptEvents.pop_back();
+        return cmd;
     }
 }
 
-int AnimationController::msTillNextServoCommand(){
-    return delayTillNextServoEvent;
+int AnimationController::msTillNextServoCommand()
+{
+    return delayTillNextEvent;
 }
 
-void setLifterP(int p, bool isMoving){
-    //TODO
-}
+void AnimationController::parseScript(std::string script){
+  
+    scriptEvents.clear();
 
-void setSpinnerP(int s, bool isMoving){
-    //TODO
-}
+    auto start = 0U;
+    auto end = script.find(";");
+    while (end != std::string::npos)
+    {
+        AnimationCommand cmd = AnimationCommand(script.substr(start, end - start));
+        scriptEvents.push_back(cmd);
+        start = end + 1;
+        end = script.find(";", start);
+    }
 
-void AnimationController::handleLastServoEvent(){
-    servoScriptLoaded = false;
-    servoEvents = 0;
-    servoEventsFired = 0;
+    std::reverse(scriptEvents.begin(), scriptEvents.end());
 }
 
