@@ -408,7 +408,8 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
     }
 
     queue_ani_cmd_t msg = {ANIMATION_COMMAND::RUN_ANIMATION, NULL};
-    msg.data = scriptId;
+    strncpy(msg.data, scriptId, sizeof(msg.data));
+    msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"script queued\"}";

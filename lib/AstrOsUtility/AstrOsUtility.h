@@ -19,7 +19,7 @@ typedef enum {
 
 typedef struct {
     SERVICE_COMMAND cmd;
-    char *data;
+    char data[100];
 } queue_svc_cmd_t;
 
 
@@ -31,7 +31,7 @@ typedef enum {
 
 typedef struct {
     ANIMATION_COMMAND cmd;
-    char *data;
+    char data[100];
 } queue_ani_cmd_t;
 
 
