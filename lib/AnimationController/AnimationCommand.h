@@ -9,10 +9,10 @@ typedef std::vector<std::string> str_vec_t;
 
 enum CommandType{
     None,
-    GenericSerial,
-    Kangaroo,
     PWM,
-    I2C
+    I2C,
+    GenericSerial,
+    Kangaroo
 };
 
 class BaseCommand
@@ -20,6 +20,7 @@ class BaseCommand
     public:
         BaseCommand();
         ~BaseCommand();
+        str_vec_t SplitTemplate(std::string val);
         CommandType commandType;
 };
 
@@ -48,8 +49,13 @@ class GenericSerialCommand: public BaseCommand
 
 class KangarooCommand: public BaseCommand 
 {
+    private:
+        int ch;
+        int cmd;
+        int spd;
+        int pos;
     public:
-        KangarooCommand();
+        KangarooCommand(std::string val);
         ~KangarooCommand();
 };
 

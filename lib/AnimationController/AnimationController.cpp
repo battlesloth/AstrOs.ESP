@@ -12,6 +12,7 @@ AnimationController AnimationCtrl;
 
 AnimationController::AnimationController()
 {
+    queueing = false;
     queueRear = -1;
 }
 
@@ -26,6 +27,8 @@ void AnimationController::panicStop()
 bool AnimationController::queueScript(std::string scriptId)
 {
 
+    queueing = true;
+
     ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
 
     if (queueIsFull())
@@ -34,7 +37,7 @@ bool AnimationController::queueScript(std::string scriptId)
         return false;
     }
 
-    bool loadScript = !scriptLoaded;
+    //bool loadScript = !scriptLoaded;
 
     queueRear = (queueRear + 1) % queueCapacity;
 
@@ -42,11 +45,12 @@ bool AnimationController::queueScript(std::string scriptId)
 
     queueSize++;
 
-    if (loadScript)
-    {
-        loadNextScript();
-    }
+   // if (loadScript)
+   // {
+   //     loadNextScript();
+   // }
 
+    queueing = false;
     return true;
 }
 
@@ -63,7 +67,7 @@ bool AnimationController::queueIsEmpty()
 void AnimationController::loadNextScript()
 {
 
-    if (queueIsEmpty())
+    if (queueIsEmpty() || queueing)
     {
         scriptLoaded = false;
         return;
@@ -75,9 +79,20 @@ void AnimationController::loadNextScript()
 
     std::string script = Storage.readFile(path);
 
-    AnimationController::parseScript(script);
+    queueFront = (queueFront + 1) % queueCapacity;
+    queueSize--;
 
-    ESP_LOGI(TAG, "Loaded: %s", script.c_str());
+    if (script == "error"){
+        ESP_LOGI(TAG, "Script not loaded");
+        scriptLoaded = false;
+    } else{
+
+        AnimationController::parseScript(script);
+
+        ESP_LOGI(TAG, "Loaded: %s", script.c_str());
+
+        scriptLoaded = true;
+    }
     // LoadFromMemory(scriptQueue[queueFront]);
 
     /*****************************************
@@ -118,9 +133,8 @@ void AnimationController::loadNextScript()
      * End Test Script
      *****************************************/
 
-    queueFront = (queueFront + 1) % queueCapacity;
-    queueSize--;
-    scriptLoaded = true;
+
+
 }
 
 bool AnimationController::scriptIsLoaded()
@@ -139,6 +153,7 @@ BaseCommand* AnimationController::getNextCommandPtr()
 
     if (scriptEvents.empty())
     {
+        scriptLoaded = false;
         return new BaseCommand;
     }
     else if (scriptEvents.size() == 1)
@@ -146,9 +161,8 @@ BaseCommand* AnimationController::getNextCommandPtr()
 
         BaseCommand* lastCmd = scriptEvents.back().toCommandPtr();
         scriptEvents.pop_back();
-        
-        AnimationController::loadNextScript();
 
+        scriptLoaded = false;
         return lastCmd;
     }
     else

@@ -24,6 +24,7 @@ class AnimationController
 private:
     
     // script queue
+    bool queueing;
     int queueFront;
     int queueRear;
     int queueSize;

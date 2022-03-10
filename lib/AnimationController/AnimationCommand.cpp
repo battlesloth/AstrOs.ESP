@@ -2,6 +2,10 @@
 #include <string>
 #include <vector>
 
+#include <esp_log.h>
+
+static const char *TAG = "AnimationCommand";
+
 AnimationCommand::AnimationCommand(std::string val)
 {
     commandTemplate = val;
@@ -23,7 +27,7 @@ BaseCommand* AnimationCommand::toCommandPtr()
         cmd = new GenericSerialCommand;
         break;
     case Kangaroo:
-        cmd = new KangarooCommand;
+        cmd = new KangarooCommand(commandTemplate);
         break;
     case PWM:
         cmd = new PwmCommand;
@@ -41,10 +45,14 @@ BaseCommand* AnimationCommand::toCommandPtr()
 
 void AnimationCommand::parseCommandType()
 {
-
     str_vec_t script = AnimationCommand::splitTemplate();
     commandType = static_cast<CommandType>(std::stoi(script.at(0)));
     duration = std::stoi(script.at(1));
+
+    ESP_LOGI(TAG, "Template: %s", commandTemplate.c_str());
+    ESP_LOGI(TAG, "CommandType: %d", commandType);
+    ESP_LOGI(TAG, "Duration: %d", duration);
+    
 }
 
 str_vec_t AnimationCommand::splitTemplate()
@@ -52,25 +60,54 @@ str_vec_t AnimationCommand::splitTemplate()
 
     str_vec_t result;
 
+    // we just need the first 2 spots
     auto start = 0U;
     auto end = commandTemplate.find("|");
-    while (end != std::string::npos)
-    {
-        result.push_back(commandTemplate.substr(start, end - start));
-        start = end + 1;
-        end = commandTemplate.find("|", start);
-    }
 
+    result.push_back(commandTemplate.substr(start, end - start));
+    start = end + 1;
+    end = commandTemplate.find("|", start);
+    
+    result.push_back(commandTemplate.substr(start, end));
+    
     return result;
 }
 
 BaseCommand::BaseCommand() {}
 BaseCommand::~BaseCommand() {}
 
+str_vec_t BaseCommand::SplitTemplate(std::string val){
+    
+    str_vec_t parts;
+
+    auto start = 0U;
+    auto end = val.find("|");
+    while (end != std::string::npos)
+    {
+        parts.push_back(val.substr(start, end - start));
+        start = end + 1;
+        end = val.find("|", start);
+    }
+
+    parts.push_back(val.substr(start, end));
+
+    return parts;
+}
+
 GenericSerialCommand::GenericSerialCommand() {}
 GenericSerialCommand::~GenericSerialCommand() {}
 
-KangarooCommand::KangarooCommand() {}
+KangarooCommand::KangarooCommand(std::string val) {
+
+    str_vec_t parts = SplitTemplate(val);
+
+    commandType = static_cast<CommandType>(std::stoi(parts.at(0)));
+    ch = std::stoi(parts.at(2));
+    cmd = std::stoi(parts.at(3));
+    spd = std::stoi(parts.at(4));
+    pos = std::stoi(parts.at(5));
+}
+
 KangarooCommand::~KangarooCommand() {}
 
 PwmCommand::PwmCommand() {}

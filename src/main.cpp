@@ -156,14 +156,12 @@ static void initTimers(void)
     ESP_LOGI("init_timer", "Started animation timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(maintenanceTimer, 10 * 1000 * 1000));
-    ESP_LOGI("init_timer", "Started animation timer");
+    ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
+    ESP_LOGI("init_timer", "Started maintenance timer");
 }
 
-static void maintenanceTimerCallback(void *arg){
-    esp_timer_stop(maintenanceTimer);
+static void maintenanceTimerCallback(void *arg){    
     ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
-    ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
 }
 
 static void animationTimerCallback(void *arg)
@@ -174,15 +172,16 @@ static void animationTimerCallback(void *arg)
     {
         BaseCommand* cmd = AnimationCtrl.getNextCommandPtr();
 
-        ESP_LOGI("animation_callback", "cmd: %d", (int) cmd->commandType);
+        CommandType ct = cmd->commandType;
+        ESP_LOGI("animation_callback", "cmd: %d", ct);
 
         delete(cmd);
         
-        ESP_ERROR_CHECK(esp_timer_start_periodic(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
+        ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
     }
     else
     {
-        ESP_ERROR_CHECK(esp_timer_start_periodic(animationTimer, 250 * 1000));
+        ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 250 * 1000));
     }
 }
 
@@ -307,7 +306,7 @@ void animationQueueTask(void *arg)
                     AnimationCtrl.panicStop();
                     break;
                 case ANIMATION_COMMAND::RUN_ANIMATION:
-                    AnimationCtrl.queueScript(msg.data);
+                    AnimationCtrl.queueScript(std::string(msg.data));
                     break;
                 default:
                     break;

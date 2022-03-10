@@ -133,13 +133,13 @@ std::string StorageManager::readFile(std::string filename){
     
     if ( access( path.c_str(), F_OK ) != 0){
         ESP_LOGE(TAG, "File does not exist: %s", path.c_str());
-        return "";
+        return "error";
     }
 
     FILE *f = fopen(path.c_str(), "r");
     if (f == NULL) {
         ESP_LOGE(TAG, "Failed to open %s for reading", path.c_str());
-        return "";
+        return "error";
     }
 
     std::string result = "";
