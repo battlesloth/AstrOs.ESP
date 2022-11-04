@@ -15,19 +15,17 @@ enum CommandType{
     Kangaroo
 };
 
-class BaseCommand
-{
+class CommandTemplate{
     public:
-        BaseCommand();
-        ~BaseCommand();
-        str_vec_t SplitTemplate(std::string val);
-        CommandType commandType;
+        CommandTemplate(CommandType type, std::string val);
+        ~CommandTemplate();
+        CommandType type;
+        std::string val;
 };
 
 class AnimationCommand
 {
 private:
-    std::string commandTemplate;
     void parseCommandType();
     str_vec_t splitTemplate();
 public:
@@ -35,28 +33,39 @@ public:
     ~AnimationCommand();
 
     CommandType commandType;
-    int duration;
+    std::string commandTemplate;
 
-    BaseCommand* toCommandPtr();
+    CommandTemplate* GetCommandTemplatePtr();
+
+    int duration;
 };
 
-class GenericSerialCommand: public BaseCommand
+
+class BaseCommand
 {
     public:
-        GenericSerialCommand();
-        ~GenericSerialCommand();
+        BaseCommand();
+        virtual ~BaseCommand();
+        str_vec_t SplitTemplate(std::string val);
+        template <typename ...Args>
+        std::string stringFormat(const std::string& format, Args && ...args);
+        CommandType type;
 };
 
-class KangarooCommand: public BaseCommand 
+class SerialCommand: public BaseCommand
 {
     private:
+        std::string value;
         int ch;
         int cmd;
         int spd;
         int pos;
+        std::string ToKangarooCommand();
     public:
-        KangarooCommand(std::string val);
-        ~KangarooCommand();
+        SerialCommand(std::string val);
+        SerialCommand();
+        ~SerialCommand();
+        std::string GetValue();
 };
 
 class PwmCommand: public BaseCommand

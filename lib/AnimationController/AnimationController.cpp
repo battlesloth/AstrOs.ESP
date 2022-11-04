@@ -148,18 +148,18 @@ bool AnimationController::scriptIsLoaded()
     return scriptLoaded;
 }
 
-BaseCommand* AnimationController::getNextCommandPtr()
+CommandTemplate* AnimationController::getNextCommandPtr()
 {
 
     if (scriptEvents.empty())
     {
         scriptLoaded = false;
-        return new BaseCommand;
+        return new CommandTemplate(CommandType::None, "");
     }
     else if (scriptEvents.size() == 1)
     {
 
-        BaseCommand* lastCmd = scriptEvents.back().toCommandPtr();
+        CommandTemplate* lastCmd = scriptEvents.back().GetCommandTemplatePtr();
         scriptEvents.pop_back();
 
         scriptLoaded = false;
@@ -175,7 +175,7 @@ BaseCommand* AnimationController::getNextCommandPtr()
             delayTillNextEvent = 10;
         }
 
-        BaseCommand* cmd = scriptEvents.back().toCommandPtr();
+        CommandTemplate* cmd = scriptEvents.back().GetCommandTemplatePtr();
         scriptEvents.pop_back();
         return cmd;
     }

@@ -48,7 +48,7 @@ public:
     void panicStop();
     bool queueScript(std::string script);
     bool scriptIsLoaded();
-    BaseCommand* getNextCommandPtr();
+    CommandTemplate* getNextCommandPtr();
     int msTillNextServoCommand();
 };
 

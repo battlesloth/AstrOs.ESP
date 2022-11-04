@@ -1,4 +1,5 @@
 #include <AnimationCommand.h>
+#include <AnimationCommon.h>
 #include <string>
 #include <vector>
 
@@ -6,9 +7,14 @@
 
 static const char *TAG = "AnimationCommand";
 
-AnimationCommand::AnimationCommand(std::string val)
+CommandTemplate::CommandTemplate(CommandType type, std::string val):val(std::move(val)){
+    CommandTemplate::type = type;
+}
+
+CommandTemplate::~CommandTemplate(){}
+
+AnimationCommand::AnimationCommand(std::string val):commandTemplate(std::move(val))
 {
-    commandTemplate = val;
     AnimationCommand::parseCommandType();
 }
 
@@ -16,31 +22,10 @@ AnimationCommand::~AnimationCommand()
 {
 }
 
-BaseCommand* AnimationCommand::toCommandPtr()
+CommandTemplate* AnimationCommand::GetCommandTemplatePtr()
 {
-
-    BaseCommand* cmd;
-
-    switch (commandType)
-    {
-    case GenericSerial:
-        cmd = new GenericSerialCommand;
-        break;
-    case Kangaroo:
-        cmd = new KangarooCommand(commandTemplate);
-        break;
-    case PWM:
-        cmd = new PwmCommand;
-        break;
-    case I2C:
-        cmd = new I2cCommand;
-        break;
-    default:
-        cmd = new BaseCommand;
-        break;
-    }
-
-    return cmd;
+    CommandTemplate* ct = new CommandTemplate(commandType, commandTemplate);
+    return ct;
 }
 
 void AnimationCommand::parseCommandType()
@@ -48,16 +33,11 @@ void AnimationCommand::parseCommandType()
     str_vec_t script = AnimationCommand::splitTemplate();
     commandType = static_cast<CommandType>(std::stoi(script.at(0)));
     duration = std::stoi(script.at(1));
-
-    ESP_LOGI(TAG, "Template: %s", commandTemplate.c_str());
-    ESP_LOGI(TAG, "CommandType: %d", commandType);
-    ESP_LOGI(TAG, "Duration: %d", duration);
-    
+   
 }
 
 str_vec_t AnimationCommand::splitTemplate()
 {
-
     str_vec_t result;
 
     // we just need the first 2 spots
@@ -94,21 +74,71 @@ str_vec_t BaseCommand::SplitTemplate(std::string val){
     return parts;
 }
 
-GenericSerialCommand::GenericSerialCommand() {}
-GenericSerialCommand::~GenericSerialCommand() {}
+template <typename ...Args>
+std::string BaseCommand::stringFormat(const std::string& format, Args && ...args)
+{
+    auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
+    std::string output(size + 1, '\0');
+    std::sprintf(&output[0], format.c_str(), std::forward<Args>(args)...);
+    return output;
+}
 
-KangarooCommand::KangarooCommand(std::string val) {
+SerialCommand::SerialCommand(std::string val) {
 
     str_vec_t parts = SplitTemplate(val);
 
-    commandType = static_cast<CommandType>(std::stoi(parts.at(0)));
-    ch = std::stoi(parts.at(2));
-    cmd = std::stoi(parts.at(3));
-    spd = std::stoi(parts.at(4));
-    pos = std::stoi(parts.at(5));
+    type = static_cast<CommandType>(std::stoi(parts.at(0)));
+    
+    if (type == CommandType::Kangaroo){
+        ch = std::stoi(parts.at(2));
+        cmd = std::stoi(parts.at(3));
+        spd = std::stoi(parts.at(4));
+        pos = std::stoi(parts.at(5));
+    } else {
+        SerialCommand::value = parts.at(2);
+    }
 }
 
-KangarooCommand::~KangarooCommand() {}
+SerialCommand::SerialCommand(){}
+
+SerialCommand::~SerialCommand() {}
+
+std::string SerialCommand::GetValue(){
+
+    if (type == CommandType::Kangaroo){
+        return ToKangarooCommand();
+    } else {
+        return value;
+    } 
+}
+
+std::string SerialCommand::ToKangarooCommand() {
+    switch (cmd)
+    {
+    case KANGAROO_ACTION::START:
+        return stringFormat("%d,start%c", ch, '\n');
+    case KANGAROO_ACTION::HOME:
+        return stringFormat("%d,home%c", ch, '\n');
+    case KANGAROO_ACTION::SPEED:
+        return stringFormat("%d,s%d%c", ch, spd, '\n');
+    case KANGAROO_ACTION::POSITION:
+        if (spd > 0){
+            return stringFormat("%d,p%d s%d%c", ch, pos, spd, '\n');
+        } else {
+            return stringFormat("%d,p%d%c", ch, pos, '\n');
+        }
+    case KANGAROO_ACTION::SPEED_INCREMENTAL:
+        return stringFormat("%d,si%d%c", ch, spd, '\n');
+    case KANGAROO_ACTION::POSITION_INCREMENTAL:
+        if (spd > 0){
+            return stringFormat("%d,pi%d s%d%c", ch, pos, spd, '\n');
+        } else {
+            return stringFormat("%d,pi%d%c", ch, pos, '\n');
+        }
+    default:
+        return value;
+    }
+}
 
 PwmCommand::PwmCommand() {}
 PwmCommand::~PwmCommand() {}

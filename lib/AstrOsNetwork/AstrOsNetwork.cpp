@@ -463,6 +463,11 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req){
 
     int total_len = req->content_len;
     ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
     int cur_len = 0;
     char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
     memset(buf, 0, sizeof(buf));

@@ -13,6 +13,7 @@
 #include <KangarooInterface.h>
 #include <AnimationController.h>
 #include <AnimationCommand.h>
+#include <SerialModule.h>
 #include <AstrOsUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
@@ -33,7 +34,7 @@ static const char *WIFI_AP_PASS = AstrOsConstants::Password;
  **********************************/
 
 static QueueHandle_t animationQueue;
-static QueueHandle_t kangarooQueue;
+static QueueHandle_t serialQueue;
 static QueueHandle_t serviceQueue;
 
 /**********************************
@@ -75,7 +76,7 @@ static void maintenanceTimerCallback(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void animationQueueTask(void *arg);
-void kangarooQueueTask(void *arg);
+void serialQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
 
@@ -90,7 +91,7 @@ void init(void)
     ESP_LOGI(TAG, "init called");
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
-    kangarooQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
 
     ESP_ERROR_CHECK(Storage.Init());
@@ -104,8 +105,9 @@ void init(void)
 
     AstrOs.Init(animationQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
-    ESP_ERROR_CHECK(init_kangaroo_interface(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
-    ESP_LOGI(TAG, "Kangaroo Interface initiated");
+     
+    ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
+    ESP_LOGI(TAG, "Serial Module initiated");
 
     initTimers();
 
@@ -126,12 +128,9 @@ void app_main()
 
     xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&kangarooQueueTask, "kangaroo_queue_task", 2048, (void *)kangarooQueue, 10, NULL);
+    xTaskCreate(&serialQueueTask, "serial_queue_task", 2048, (void *)serialQueue, 10, NULL);
 
     xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
-
-    xTaskCreate(&kangaroo_rx_task, "kangaroo_rx_task", 2048, (void *)kangarooQueue, 5, NULL);
-    xTaskCreate(&kangaroo_tx_task, "kangaroo_tx_task", 2048, (void *)kangarooQueue, 9, NULL);
 }
 
 
@@ -170,10 +169,27 @@ static void animationTimerCallback(void *arg)
 
     if (AnimationCtrl.scriptIsLoaded())
     {
-        BaseCommand* cmd = AnimationCtrl.getNextCommandPtr();
+        CommandTemplate* cmd = AnimationCtrl.getNextCommandPtr();
 
-        CommandType ct = cmd->commandType;
-        ESP_LOGI("animation_callback", "cmd: %d", ct);
+        CommandType ct = cmd->type;
+        std::string val = cmd->val;
+
+        switch (ct)
+        {
+            case CommandType::Kangaroo:
+            case CommandType::GenericSerial:
+            {
+                SerialCommand scd = SerialCommand(val);
+                ESP_LOGI(TAG, "val: %s", scd.GetValue().c_str());
+                queue_msg_t msg = {0, 0};
+                strncpy(msg.data, scd.GetValue().c_str(), sizeof(msg.data));
+                msg.data[sizeof(msg.data) - 1] = '\0';
+                xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
+                break;
+            }
+            default:
+                break;
+        }
 
         delete(cmd);
         
@@ -316,19 +332,20 @@ void animationQueueTask(void *arg)
     }
 }
 
-void kangarooQueueTask(void *arg)
+void serialQueueTask(void *arg)
 {
 
-    QueueHandle_t kangarooQueue;
+    QueueHandle_t serialQueue;
 
-    kangarooQueue = (QueueHandle_t)arg;
+    serialQueue = (QueueHandle_t)arg;
     queue_msg_t msg;
 
     while (1)
     {
-        if (xQueueReceive(kangarooQueue, &(msg), 0))
+        if (xQueueReceive(serialQueue, &(msg), 0))
         {
-            ESP_LOGI("kagaroo queue", "message: %s", msg.data);
+            ESP_LOGI(TAG, "Serial command received on queue => %s", msg.data);
+            SerialMod.SendCommand(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

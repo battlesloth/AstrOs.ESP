@@ -56,7 +56,7 @@ typedef struct {
 
 typedef struct {
     int message_id;
-    char *data;
+    char data[100];
 } queue_msg_t;
 
 
