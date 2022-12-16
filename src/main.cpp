@@ -14,6 +14,8 @@
 #include <AnimationController.h>
 #include <AnimationCommand.h>
 #include <SerialModule.h>
+#include <PwmModule.h>
+#include <I2cModule.h>
 #include <AstrOsUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
@@ -34,8 +36,10 @@ static const char *WIFI_AP_PASS = AstrOsConstants::Password;
  **********************************/
 
 static QueueHandle_t animationQueue;
-static QueueHandle_t serialQueue;
 static QueueHandle_t serviceQueue;
+static QueueHandle_t serialQueue;
+static QueueHandle_t pwmQueue;
+static QueueHandle_t i2cQueue;
 
 /**********************************
  * UART
@@ -67,6 +71,16 @@ static esp_timer_handle_t animationTimer;
 #define KI_BAUD_RATE (9600)
 
 /**********************************
+ * PWM Module Settings
+ **********************************/
+#define PWM_FREQUENCY 50
+#define PWM_I2C_PORT 0
+#define PWM_SDA_PIN (GPIO_NUM_21)
+#define PWM_SCL_PIN (GPIO_NUM_22)
+
+
+
+/**********************************
  * Method definitions
  *********************************/
 static void initTimers(void);
@@ -77,9 +91,10 @@ void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
+void pwmQueueTask(void *arg);
+void i2cQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
-
 
 extern "C"
 {
@@ -91,9 +106,12 @@ void init(void)
     ESP_LOGI(TAG, "init called");
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
-    serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
+    serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    pwmQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
 
+    
     ESP_ERROR_CHECK(Storage.Init());
 
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
@@ -108,6 +126,12 @@ void init(void)
      
     ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
     ESP_LOGI(TAG, "Serial Module initiated");
+
+    ESP_ERROR_CHECK(PwmMod.Init(PWM_I2C_PORT, PWM_SDA_PIN, PWM_SCL_PIN, PWM_FREQUENCY));
+    ESP_LOGI(TAG, "PWM Module initiated");
+
+    ESP_ERROR_CHECK(I2cMod.Init());
+    ESP_LOGI(TAG, "I2C Module initiated");
 
     initTimers();
 
@@ -129,7 +153,9 @@ void app_main()
     xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
     xTaskCreate(&serialQueueTask, "serial_queue_task", 2048, (void *)serialQueue, 10, NULL);
-
+    xTaskCreate(&pwmQueueTask, "pwm_queue_task", 2048, (void *)pwmQueue, 10, NULL);
+    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 2048, (void *)i2cQueue, 10, NULL);
+    
     xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
 }
 
@@ -351,4 +377,39 @@ void serialQueueTask(void *arg)
     }
 }
 
+void pwmQueueTask(void *arg)
+{
+    QueueHandle_t pwmQueue;
+
+    pwmQueue = (QueueHandle_t)arg;
+    queue_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(pwmQueue, &(msg), 0))
+        {
+            ESP_LOGI(TAG, "PWM Command received on queue => %s", msg.data);
+
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void i2cQueueTask(void *arg)
+{
+    QueueHandle_t i2cQueue;
+
+    i2cQueue = (QueueHandle_t)arg;
+    queue_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(i2cQueue, &(msg), 0))
+        {
+            ESP_LOGI(TAG, "I2C Command received on queue => %s", msg.data);
+
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 

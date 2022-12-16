@@ -303,6 +303,64 @@ const httpd_uri_t staFormatSd = {
     .user_ctx = NULL};
 
 /**************************************************************
+* Hardware Control endpoints
+***************************************************************/
+
+esp_err_t staMoveServoHandler(httpd_req_t *req)
+{
+ ESP_LOGI(TAG, "move servo called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    char* servoId = cJSON_GetObjectItem(root, "servoId")->valuestring;
+
+    char* endPosition = cJSON_GetObjectItem(root, "endPosition")->valuestring;
+
+    char* time = cJSON_GetObjectItem(root, "time")->valuestring;
+
+    std::string id = std::string(servoId);
+    std::string pos = std::string(endPosition);
+    std::string time = std::string(time);
+        
+    cJSON_Delete(root);
+
+    return ESP_OK;
+};
+
+const httpd_uri_t staMoveServo = {
+    .uri = "/movesero",
+    .method = HTTP_POST,
+    .handler = staMoveServoHandler,
+    .user_ctx = NULL};
+
+/**************************************************************
 * Script endpoints
 ***************************************************************/
 
@@ -533,6 +591,9 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
     err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -574,6 +635,8 @@ bool AstrOsNetwork::startStaWebServer()
     err = httpd_register_uri_handler(webServer, &staClearSettings);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staFormatSd);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staMoveServo);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staListScripts);
     logError(TAG, __FUNCTION__, __LINE__, err);

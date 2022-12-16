@@ -1,5 +1,10 @@
-#ifndef SERIALMODULE_H
-#define SERIALMODULE_H
+#ifndef I2CMODULE_H
+#define I2CMODULE_H
+
+#include <AnimationCommand.h>
+
+#include "esp_system.h"
+#include <string>
 
 class I2cModule
 {
@@ -8,6 +13,8 @@ private:
 public:
     I2cModule(/* args */);
     ~I2cModule();
+    esp_err_t Init();
+    void SendCommand(const char* cmd);
 };
 
 

@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "pca9685.h": "c",
+        "*.ipp": "cpp"
+    }
+}
