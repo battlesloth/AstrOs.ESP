@@ -26,8 +26,10 @@ AstrOsNetwork astrOsNetwork;
 EventGroupHandle_t AstrOsNetwork::wifiEvenGroup;
 QueueHandle_t AstrOsNetwork::serviceQueue;
 QueueHandle_t AstrOsNetwork::animationQueue;
+QueueHandle_t AstrOsNetwork::hardwareQueue;
 
-typedef struct rest_server_context {
+typedef struct rest_server_context
+{
     char scratch[POST_BUFFER_SIZE];
 } rest_server_context_t;
 
@@ -38,27 +40,29 @@ AstrOsNetwork::~AstrOsNetwork() {}
 esp_err_t initializemDns()
 {
     esp_err_t err = mdns_init();
-    if (logError(TAG, __FUNCTION__, __LINE__, err)){
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
         return err;
     }
 
     err = mdns_hostname_set(AstrOsConstants::ModuleName);
-    if (logError(TAG, __FUNCTION__, __LINE__, err)){
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
         return err;
     }
 
     err = mdns_instance_name_set("AstrOs");
-    if (logError(TAG, __FUNCTION__, __LINE__, err)){
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
         return err;
     }
-    //structure with TXT records
+    // structure with TXT records
     mdns_txt_item_t serviceTxtData[3] = {
         {"board", "esp32"},
         {"u", "user"},
-        {"p", "password"}
-    };
+        {"p", "password"}};
 
-    //initialize service
+    // initialize service
     err = mdns_service_add("ESP32-WebServer", "_http", "_tcp", 80, serviceTxtData, 3);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -74,11 +78,12 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
     }
     else if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_DISCONNECTED)
     {
-        if (intentionalDisconnect){
+        if (intentionalDisconnect)
+        {
             ESP_LOGI(TAG, "WIFI STA disconnected");
             intentionalDisconnect = false;
-        } 
-        else 
+        }
+        else
         {
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)eventData;
             ESP_LOGI(TAG, "WIFI STA disconnected, Reason:%d. Attempting to reconnect in 30 seconds", event->reason);
@@ -97,8 +102,8 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
 }
 
 /**************************************************************
-* AP URI definitions
-***************************************************************/
+ * AP URI definitions
+ ***************************************************************/
 esp_err_t apIndexHandler(httpd_req_t *req)
 {
     esp_err_t err;
@@ -176,8 +181,8 @@ const httpd_uri_t apIndex = {
     .user_ctx = (void *)AstrOsHtml::CredentialHtml};
 
 /**************************************************************
-* Access Point Webserver functions
-***************************************************************/
+ * Access Point Webserver functions
+ ***************************************************************/
 bool AstrOsNetwork::stopApWebServer()
 {
     esp_err_t err = httpd_stop(webServer);
@@ -214,17 +219,16 @@ bool AstrOsNetwork::startApWebServer()
     return true;
 }
 
-
 /**************************************************************
-* Service Endpoints
-***************************************************************/
+ * Service Endpoints
+ ***************************************************************/
 esp_err_t staIndexHandler(httpd_req_t *req)
 {
     esp_err_t err;
     const char *respStr = (const char *)req->user_ctx;
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     logError(TAG, __FUNCTION__, __LINE__, err);
-    
+
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
     return err;
@@ -270,7 +274,6 @@ const httpd_uri_t staClearSettings = {
     .handler = staClearSettingsHandler,
     .user_ctx = NULL};
 
-
 esp_err_t staFormatSdHandler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "formatsd called");
@@ -303,8 +306,172 @@ const httpd_uri_t staFormatSd = {
     .user_ctx = NULL};
 
 /**************************************************************
-* Script endpoints
-***************************************************************/
+ * Hardware Control endpoints
+ ***************************************************************/
+
+esp_err_t staSetServoConfigHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Set Servo Config called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len)
+    {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0)
+        {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post servo config");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    servo_channel config[16];
+
+    cJSON *root = cJSON_Parse(buf);
+
+    cJSON *channels = NULL;
+    channels = cJSON_GetObjectItem(root, "channels");
+
+    int id;
+    int minPos;
+    int maxPos;
+    bool set;
+
+    const cJSON *channel = NULL;
+
+    cJSON_ArrayForEach(channel, channels)
+    {
+        id = cJSON_GetObjectItem(channel, "id")->valueint;
+        minPos = cJSON_GetObjectItem(channel, "minPos")->valueint;
+        maxPos = cJSON_GetObjectItem(channel, "maxPos")->valueint;
+        set = cJSON_GetObjectItem(channel, "set")->valueint;
+
+        servo_channel ch;
+
+        ch.id = id;
+        ch.minPos = minPos;
+        ch.maxPos = maxPos;
+        ch.set = set;
+
+        config[id] = ch;
+        ESP_LOGI(TAG, "Servo Config: ch: %d, minPos: %d, maxPos: %d, set: %d", config[id].id, config[id].minPos, config[id].maxPos, config[id].set);  
+    }
+
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "Saving Servo Config...");
+
+    if (!Storage.saveServoConfig(config, 16))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Servo Config saved!");
+    
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::LOAD_SERVO_CONFIG, NULL};
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+
+    esp_err_t err;
+    const char *respStr = "{\"result\":\"config saved\"}";
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return ESP_OK;
+}
+
+const httpd_uri_t staSetServoConfig = {
+    .uri = "/setservoconfig",
+    .method = HTTP_POST,
+    .handler = staSetServoConfigHandler,
+    .user_ctx = NULL};
+
+esp_err_t staMoveServoHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "move servo called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len)
+    {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0)
+        {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    int servoId = cJSON_GetObjectItem(root, "id")->valueint;
+
+    int position = cJSON_GetObjectItem(root, "position")->valueint;
+
+    int speed = cJSON_GetObjectItem(root, "speed")->valueint;
+
+    cJSON_Delete(root);
+
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::MOVE_SERVO, NULL};
+    snprintf(msg.data, sizeof(msg.data), "%d|%d|%d", servoId, position, speed);
+    msg.data[sizeof(msg.data) - 1] = '\0';
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+
+    esp_err_t err;
+    const char *respStr = "{\"result\":\"script queued\"}";
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return ESP_OK;
+};
+
+const httpd_uri_t staMoveServo = {
+    .uri = "/moveservo",
+    .method = HTTP_POST,
+    .handler = staMoveServoHandler,
+    .user_ctx = NULL};
+
+/**************************************************************
+ * Script endpoints
+ ***************************************************************/
 
 esp_err_t staPanicStopHandler(httpd_req_t *req)
 {
@@ -314,7 +481,7 @@ esp_err_t staPanicStopHandler(httpd_req_t *req)
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"panic stop sent\"}";
-    esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
+    esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     return err;
@@ -326,7 +493,6 @@ const httpd_uri_t staPanicStop = {
     .handler = staPanicStopHandler,
     .user_ctx = NULL};
 
-
 esp_err_t staScriptExistsHandler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "scriptexists called");
@@ -335,7 +501,7 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
     size_t bufLen;
     esp_err_t err = ESP_OK;
     char scriptId[37];
-    
+
     /* Read URL query string length and allocate memory for length + 1,
      * extra byte for null termination */
     bufLen = httpd_req_get_url_query_len(req) + 1;
@@ -349,7 +515,7 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
         }
         else
         {
-            ESP_LOGI(TAG, "Found URL query => %s", buf);        
+            ESP_LOGI(TAG, "Found URL query => %s", buf);
             err = httpd_query_key_value(buf, "scriptId", scriptId, 37);
             logError(TAG, __FUNCTION__, __LINE__, err);
         }
@@ -357,17 +523,20 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
     }
 
     std::string path = "scripts/" + std::string(scriptId);
- 
-    if (Storage.fileExists(path)){
+
+    if (Storage.fileExists(path))
+    {
         const char *respStr = "{\"result\":\"true\"}";
-        esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
-        logError(TAG, __FUNCTION__, __LINE__, err);
-    } else {
-        const char *respStr = "{\"result\":\"false\"}";
-        esp_err_t  err = httpd_resp_send(req, respStr, strlen(respStr));
+        esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
-    
+    else
+    {
+        const char *respStr = "{\"result\":\"false\"}";
+        esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+
     return err;
 };
 
@@ -377,7 +546,6 @@ const httpd_uri_t staScriptExists = {
     .handler = staScriptExistsHandler,
     .user_ctx = NULL};
 
-
 esp_err_t staRunScriptHandler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "runscript called");
@@ -386,7 +554,7 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
     size_t bufLen;
     esp_err_t err;
     char scriptId[37];
-    
+
     /* Read URL query string length and allocate memory for length + 1,
      * extra byte for null termination */
     bufLen = httpd_req_get_url_query_len(req) + 1;
@@ -400,7 +568,7 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
         }
         else
         {
-            ESP_LOGI(TAG, "Found URL query => %s", buf);        
+            ESP_LOGI(TAG, "Found URL query => %s", buf);
             err = httpd_query_key_value(buf, "scriptId", scriptId, 37);
             logError(TAG, __FUNCTION__, __LINE__, err);
         }
@@ -408,7 +576,8 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
     }
 
     queue_ani_cmd_t msg = {ANIMATION_COMMAND::RUN_ANIMATION, NULL};
-    msg.data = scriptId;
+    strncpy(msg.data, scriptId, sizeof(msg.data));
+    msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"script queued\"}";
@@ -423,7 +592,6 @@ const httpd_uri_t staRunScript = {
     .method = HTTP_GET,
     .handler = staRunScriptHandler,
     .user_ctx = NULL};
-
 
 esp_err_t staListScriptsHandler(httpd_req_t *req)
 {
@@ -456,24 +624,34 @@ const httpd_uri_t staListScripts = {
     .handler = staListScriptsHandler,
     .user_ctx = NULL};
 
-esp_err_t staUploadScriptHandler(httpd_req_t *req){
+esp_err_t staUploadScriptHandler(httpd_req_t *req)
+{
 
     ESP_LOGI(TAG, "uploadscript called");
 
     int total_len = req->content_len;
     ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
     int cur_len = 0;
     char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
     memset(buf, 0, sizeof(buf));
     int received = 0;
-    if (total_len >= POST_BUFFER_SIZE) {
+    if (total_len >= POST_BUFFER_SIZE)
+    {
         /* Respond with 500 Internal Server Error */
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
         return ESP_FAIL;
     }
-    while (cur_len < total_len) {
+    while (cur_len < total_len)
+    {
         received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
+        if (received <= 0)
+        {
             /* Respond with 500 Internal Server Error */
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
             return ESP_FAIL;
@@ -484,22 +662,23 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req){
 
     cJSON *root = cJSON_Parse(buf);
 
-    char* filename = cJSON_GetObjectItem(root, "scriptId")->valuestring;
+    char *filename = cJSON_GetObjectItem(root, "scriptId")->valuestring;
 
-    char* scriptTemp = cJSON_GetObjectItem(root, "script")->valuestring;
+    char *scriptTemp = cJSON_GetObjectItem(root, "script")->valuestring;
 
     std::string path = "scripts/" + std::string(filename);
     std::string script = std::string(scriptTemp);
-    
+
     cJSON_Delete(root);
 
     bool result = Storage.saveFile(path, script);
 
-    if (!result){
+    if (!result)
+    {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save script");
         return ESP_FAIL;
     }
-        
+
     httpd_resp_sendstr(req, "Script saved");
     return ESP_OK;
 }
@@ -511,8 +690,8 @@ const httpd_uri_t staUploadScript = {
     .user_ctx = NULL};
 
 /**************************************************************
-* STA Webserver functions
-***************************************************************/
+ * STA Webserver functions
+ ***************************************************************/
 
 bool AstrOsNetwork::stopStaWebServer()
 {
@@ -525,6 +704,12 @@ bool AstrOsNetwork::stopStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staSetServoConfig.uri, staSetServoConfig.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
@@ -552,7 +737,8 @@ bool AstrOsNetwork::startStaWebServer()
     webServer = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 
-    config.stack_size=20480;
+    config.stack_size = 20480;
+    config.max_uri_handlers = 12;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -569,6 +755,10 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staFormatSd);
     logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staSetServoConfig);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staMoveServo);
+    logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staListScripts);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staUploadScript);
@@ -579,17 +769,18 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staScriptExists);
     logError(TAG, __FUNCTION__, __LINE__, err);
-    
+
     return true;
 }
 
 /**************************************************************
-* 
-***************************************************************/
-esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle_t sQueue, QueueHandle_t aQueue)
+ *
+ ***************************************************************/
+esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle_t sQueue, QueueHandle_t aQueue, QueueHandle_t hQueue)
 {
     serviceQueue = sQueue;
     animationQueue = aQueue;
+    hardwareQueue = hQueue;
     ssid = network;
     password = pass;
 
@@ -597,7 +788,7 @@ esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    
+
     esp_err_t err = esp_wifi_init(&cfg);
     logError(TAG, __FUNCTION__, __LINE__, err);
 

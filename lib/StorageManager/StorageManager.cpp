@@ -87,6 +87,14 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
+bool StorageManager::saveServoConfig(servo_channel* servos, int arraySize){
+    return nvsSaveServoConfig(servos, arraySize);
+}
+
+bool StorageManager::loadServoConfig(servo_channel* servos, int arraySize){
+    return nvsLoadServoConfig(servos, arraySize);
+}
+
 bool StorageManager::saveFile(std::string filename, std::string data ){
 
     FILE *fd = NULL;
@@ -133,13 +141,13 @@ std::string StorageManager::readFile(std::string filename){
     
     if ( access( path.c_str(), F_OK ) != 0){
         ESP_LOGE(TAG, "File does not exist: %s", path.c_str());
-        return "";
+        return "error";
     }
 
     FILE *f = fopen(path.c_str(), "r");
     if (f == NULL) {
         ESP_LOGE(TAG, "Failed to open %s for reading", path.c_str());
-        return "";
+        return "error";
     }
 
     std::string result = "";

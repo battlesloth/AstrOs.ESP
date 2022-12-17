@@ -1,17 +1,16 @@
 #ifndef ANIMATIONCONTROLLER_H
 #define ANIMATIONCONTROLLER_H
 
-#include <ServoCommand.h>
+#include <AnimationCommand.h>
+
+#include <string>
+
 
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-
 #define QUEUE_CAPACITY 30
-//GUIDs are 36 char
-#define COMMAND_NAME_SIZE 36
-#define SCRIPT_CAPACITY 30
 
 typedef struct {
     int domeLimit;
@@ -24,44 +23,33 @@ class AnimationController
 {
 private:
     
-    // servo states
-    int lowerLimit;
-    int spinnerP;
-    bool spinnerMoving;
-    int lifterP;
-    bool lifterMoving;
-    
     // script queue
+    bool queueing;
     int queueFront;
     int queueRear;
     int queueSize;
     int queueCapacity = QUEUE_CAPACITY;
-    int commandSize = COMMAND_NAME_SIZE + 1;
-    char scriptQueue[QUEUE_CAPACITY][COMMAND_NAME_SIZE + 1];
+    std::string scriptQueue[QUEUE_CAPACITY];
 
-    // servo script
-    bool servoScriptLoaded;
-    int servoEvents;
-    int servoEventsFired;
-    int delayTillNextServoEvent;
-    ServoCommand servoScript[SCRIPT_CAPACITY];
+    // script
+    bool scriptLoaded;
+    int delayTillNextEvent;
+    std::vector<AnimationCommand> scriptEvents;
   
     // functions
     bool queueIsEmpty();
     bool queueIsFull();
     void handleLastServoEvent();
     void loadNextScript();
+    void parseScript(std::string script);
 public:
-    AnimationController(int lowerLimit);
+    AnimationController();
     ~AnimationController();    
     void panicStop();
-    bool queueScript(char scriptName[]);
-    bool servoScriptIsLoaded();
-    char* getNextServoCommand();
+    bool queueScript(std::string script);
+    bool scriptIsLoaded();
+    CommandTemplate* getNextCommandPtr();
     int msTillNextServoCommand();
-    void setLifterP(int p, bool isMoving);
-    void setSpinnerP(int s, bool isMoving);
- 
 };
 
 extern AnimationController AnimationCtrl;
