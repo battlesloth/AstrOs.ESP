@@ -8,22 +8,19 @@
 #include <nvs_flash.h>
 #include <esp_event.h>
 
-
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
 #include <AnimationController.h>
 #include <AnimationCommand.h>
 #include <SerialModule.h>
-#include <PwmModule.h>
+#include <ServoModule.h>
 #include <I2cModule.h>
 #include <AstrOsUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <StorageManager.h>
 
-
 static const char *TAG = AstrOsConstants::ModuleName;
-
 
 /**********************************
  * network
@@ -36,9 +33,10 @@ static const char *WIFI_AP_PASS = AstrOsConstants::Password;
  **********************************/
 
 static QueueHandle_t animationQueue;
+static QueueHandle_t hardwareQueue;
 static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
-static QueueHandle_t pwmQueue;
+static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
 
 /**********************************
@@ -71,14 +69,12 @@ static esp_timer_handle_t animationTimer;
 #define KI_BAUD_RATE (9600)
 
 /**********************************
- * PWM Module Settings
+ * Servo Module Settings
  **********************************/
-#define PWM_FREQUENCY 50
-#define PWM_I2C_PORT 0
-#define PWM_SDA_PIN (GPIO_NUM_21)
-#define PWM_SCL_PIN (GPIO_NUM_22)
-
-
+#define SERVO_FREQUENCY 50
+#define SERVO_I2C_PORT 0
+#define SERVO_SDA_PIN (GPIO_NUM_21)
+#define SERVO_SCL_PIN (GPIO_NUM_22)
 
 /**********************************
  * Method definitions
@@ -89,9 +85,10 @@ static void maintenanceTimerCallback(void *arg);
 
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
+void hardwareQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
-void pwmQueueTask(void *arg);
+void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
@@ -107,41 +104,44 @@ void init(void)
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
+    hardwareQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_hw_cmd_t));
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    pwmQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
 
-    
     ESP_ERROR_CHECK(Storage.Init());
 
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    //init TCP/IP stack
+    // init TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_init());
     // init defult background loop
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     AstrOs.Init(animationQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
-     
+
     ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
     ESP_LOGI(TAG, "Serial Module initiated");
 
-    ESP_ERROR_CHECK(PwmMod.Init(PWM_I2C_PORT, PWM_SDA_PIN, PWM_SCL_PIN, PWM_FREQUENCY));
-    ESP_LOGI(TAG, "PWM Module initiated");
+    ESP_ERROR_CHECK(ServoMod.Init(SERVO_I2C_PORT, SERVO_SDA_PIN, SERVO_SCL_PIN, SERVO_FREQUENCY));
+    ESP_LOGI(TAG, "Servo Module initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
 
     initTimers();
 
-    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue));
+    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue, hardwareQueue));
 
     svc_config_t config;
-    
-    if (Storage.loadServiceConfig(&config)){
+
+    if (Storage.loadServiceConfig(&config))
+    {
         astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
-    } else{
+    }
+    else
+    {
         astrOsNetwork.startWifiAp();
     }
 }
@@ -152,13 +152,13 @@ void app_main()
 
     xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
     xTaskCreate(&serialQueueTask, "serial_queue_task", 2048, (void *)serialQueue, 10, NULL);
-    xTaskCreate(&pwmQueueTask, "pwm_queue_task", 2048, (void *)pwmQueue, 10, NULL);
+    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
     xTaskCreate(&i2cQueueTask, "i2c_queue_task", 2048, (void *)i2cQueue, 10, NULL);
-    
+
     xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
 }
-
 
 /******************************************
  * timers
@@ -185,7 +185,9 @@ static void initTimers(void)
     ESP_LOGI("init_timer", "Started maintenance timer");
 }
 
-static void maintenanceTimerCallback(void *arg){    
+static void maintenanceTimerCallback(void *arg)
+{
+   
     ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
 }
 
@@ -195,30 +197,30 @@ static void animationTimerCallback(void *arg)
 
     if (AnimationCtrl.scriptIsLoaded())
     {
-        CommandTemplate* cmd = AnimationCtrl.getNextCommandPtr();
+        CommandTemplate *cmd = AnimationCtrl.getNextCommandPtr();
 
         CommandType ct = cmd->type;
         std::string val = cmd->val;
 
         switch (ct)
         {
-            case CommandType::Kangaroo:
-            case CommandType::GenericSerial:
-            {
-                SerialCommand scd = SerialCommand(val);
-                ESP_LOGI(TAG, "val: %s", scd.GetValue().c_str());
-                queue_msg_t msg = {0, 0};
-                strncpy(msg.data, scd.GetValue().c_str(), sizeof(msg.data));
-                msg.data[sizeof(msg.data) - 1] = '\0';
-                xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
-                break;
-            }
-            default:
-                break;
+        case CommandType::Kangaroo:
+        case CommandType::GenericSerial:
+        {
+            SerialCommand scd = SerialCommand(val);
+            ESP_LOGI(TAG, "val: %s", scd.GetValue().c_str());
+            queue_msg_t msg = {0, 0};
+            strncpy(msg.data, scd.GetValue().c_str(), sizeof(msg.data));
+            msg.data[sizeof(msg.data) - 1] = '\0';
+            xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
+            break;
+        }
+        default:
+            break;
         }
 
-        delete(cmd);
-        
+        delete (cmd);
+
         ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
     }
     else
@@ -241,6 +243,8 @@ void astrosRxTask(void *arg)
 
         if (rxBytes > 0)
         {
+            ESP_LOGI(TAG, "AstrOs RX Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+           
             data[rxBytes] = '\0';
             ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", rxBytes, data);
 
@@ -263,6 +267,8 @@ void serviceQueueTask(void *arg)
     {
         if (xQueueReceive(svcQueue, &(msg), 0))
         {
+            ESP_LOGI(TAG, "Service Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+           
             switch (msg.cmd)
             {
             case SERVICE_COMMAND::START_WIFI_AP:
@@ -281,11 +287,12 @@ void serviceQueueTask(void *arg)
             {
                 svc_config_t config;
 
-                if (!Storage.loadServiceConfig(&config)){
+                if (!Storage.loadServiceConfig(&config))
+                {
                     ESP_LOGI(TAG, "Switch to network requested, but configuration couldn't load");
                     break;
                 }
-                
+
                 bool wifiConnected = false;
                 bool wifiStopped = astrOsNetwork.stopWifiAp();
                 if (wifiStopped)
@@ -342,16 +349,64 @@ void animationQueueTask(void *arg)
     {
         if (xQueueReceive(animationQueue, &(msg), 0))
         {
+            ESP_LOGI(TAG, "Animation Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
             switch (msg.cmd)
             {
-                case ANIMATION_COMMAND::PANIC_STOP:
-                    AnimationCtrl.panicStop();
-                    break;
-                case ANIMATION_COMMAND::RUN_ANIMATION:
-                    AnimationCtrl.queueScript(std::string(msg.data));
-                    break;
-                default:
-                    break;
+            case ANIMATION_COMMAND::PANIC_STOP:
+                AnimationCtrl.panicStop();
+                break;
+            case ANIMATION_COMMAND::RUN_ANIMATION:
+                AnimationCtrl.queueScript(std::string(msg.data));
+                break;
+            default:
+                break;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void hardwareQueueTask(void *arg)
+{
+
+    QueueHandle_t hardwareQueue;
+
+    hardwareQueue = (QueueHandle_t)arg;
+    queue_hw_cmd_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(hardwareQueue, &(msg), 0))
+        {
+            ESP_LOGI(TAG, "Hardware Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            switch (msg.cmd)
+            {
+            case HARDWARE_COMMAND::SEND_SERIAL:
+             {
+                SerialCommand scd = SerialCommand(msg.data);
+                ESP_LOGI(TAG, "val: %s", scd.GetValue().c_str());
+                queue_msg_t serialMsg = {0, 0};
+                strncpy(serialMsg.data, scd.GetValue().c_str(), sizeof(serialMsg.data));
+                serialMsg.data[sizeof(serialMsg.data) - 1] = '\0';
+                xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000));
+                break;
+            } 
+            case HARDWARE_COMMAND::LOAD_SERVO_CONFIG:
+            {
+                ServoMod.LoadServoConfig();
+                break;    
+            }
+            case HARDWARE_COMMAND::MOVE_SERVO:
+            {
+                queue_msg_t pwmMsg = {0, 0};
+                strncpy(pwmMsg.data, msg.data, sizeof(pwmMsg.data));
+                pwmMsg.data[sizeof(pwmMsg.data) - 1] = '\0';
+                xQueueSend(servoQueue, &pwmMsg, pdMS_TO_TICKS(2000));
+                break;
+            }
+            break;
+            default:
+                break;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -370,6 +425,7 @@ void serialQueueTask(void *arg)
     {
         if (xQueueReceive(serialQueue, &(msg), 0))
         {
+            ESP_LOGI(TAG, "Serial Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
             ESP_LOGI(TAG, "Serial command received on queue => %s", msg.data);
             SerialMod.SendCommand(msg.data);
         }
@@ -377,7 +433,7 @@ void serialQueueTask(void *arg)
     }
 }
 
-void pwmQueueTask(void *arg)
+void servoQueueTask(void *arg)
 {
     QueueHandle_t pwmQueue;
 
@@ -388,9 +444,13 @@ void pwmQueueTask(void *arg)
     {
         if (xQueueReceive(pwmQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "PWM Command received on queue => %s", msg.data);
-
+            ESP_LOGI(TAG, "Servo Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            ESP_LOGI(TAG, "Servo Command received on queue => %s", msg.data);
+            ServoMod.QueueCommand(msg.data);
         }
+        
+        ServoMod.MoveServos();
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -406,10 +466,9 @@ void i2cQueueTask(void *arg)
     {
         if (xQueueReceive(i2cQueue, &(msg), 0))
         {
+            ESP_LOGI(TAG, "I2C Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL)); 
             ESP_LOGI(TAG, "I2C Command received on queue => %s", msg.data);
-
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
-

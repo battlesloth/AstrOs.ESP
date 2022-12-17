@@ -1,7 +1,6 @@
 #ifndef ANIMATIONCOMMAND_H
 #define ANIMATIONCOMMAND_H
 
-#include <ServoCommand.h>
 #include <string>
 #include <vector>
 
@@ -68,11 +67,16 @@ class SerialCommand: public BaseCommand
         std::string GetValue();
 };
 
-class PwmCommand: public BaseCommand
+class ServoCommand: public BaseCommand
 {
+    private:
+        
     public:
-        PwmCommand();
-        ~PwmCommand();
+        ServoCommand(std::string val);
+        ~ServoCommand();
+        int channel;
+        int position;
+        int speed;
 };
 
 class I2cCommand: public BaseCommand

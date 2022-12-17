@@ -17,6 +17,8 @@ class StorageManager{
     bool loadServiceConfig(svc_config_t* config);
     bool saveServiceConfig(svc_config_t config);
     bool clearServiceConfig();
+    bool saveServoConfig(servo_channel *servos, int arraySize);
+    bool loadServoConfig(servo_channel *servos, int arraySize);
     
     
     bool saveFile(std::string filename, std::string data);

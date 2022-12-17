@@ -87,6 +87,14 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
+bool StorageManager::saveServoConfig(servo_channel* servos, int arraySize){
+    return nvsSaveServoConfig(servos, arraySize);
+}
+
+bool StorageManager::loadServoConfig(servo_channel* servos, int arraySize){
+    return nvsLoadServoConfig(servos, arraySize);
+}
+
 bool StorageManager::saveFile(std::string filename, std::string data ){
 
     FILE *fd = NULL;

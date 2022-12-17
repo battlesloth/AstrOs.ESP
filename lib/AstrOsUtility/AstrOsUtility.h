@@ -22,7 +22,16 @@ typedef struct {
     char data[100];
 } queue_svc_cmd_t;
 
+typedef enum {
+    MOVE_SERVO,
+    LOAD_SERVO_CONFIG,
+    SEND_SERIAL
+} HARDWARE_COMMAND;
 
+typedef struct {
+    HARDWARE_COMMAND cmd;
+    char data[100];
+} queue_hw_cmd_t;
 
 typedef enum {
     PANIC_STOP,
@@ -59,6 +68,16 @@ typedef struct {
     char data[100];
 } queue_msg_t;
 
+typedef struct {
+    int id;
+    int minPos;
+    int maxPos;
+    int moveFactor;
+    int currentPos;
+    int requestedPos;
+    int speed;
+    bool set;
+} servo_channel;
 
 // if the esp_err_t != ESP_OK, log the error with the function and line number
 bool logError(const char* tag, const char* function, int line, esp_err_t err);

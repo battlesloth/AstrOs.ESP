@@ -140,8 +140,15 @@ std::string SerialCommand::ToKangarooCommand() {
     }
 }
 
-PwmCommand::PwmCommand() {}
-PwmCommand::~PwmCommand() {}
+ServoCommand::ServoCommand(std::string val) {
+
+    str_vec_t parts = SplitTemplate(val);
+
+    channel = std::stoi(parts.at(0));
+    position = std::stoi(parts.at(1));
+    speed = std::stoi(parts.at(2)); 
+}
+ServoCommand::~ServoCommand() {}
 
 I2cCommand::I2cCommand() {}
 I2cCommand::~I2cCommand() {}

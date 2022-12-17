@@ -16,6 +16,10 @@ bool nvsLoadServiceConfig(svc_config_t* config);
 // clear the service configuration from NVS
 bool nvsClearServiceConfig();
 
+bool nvsSaveServoConfig(servo_channel* config, int arraySize);
+
+bool nvsLoadServoConfig(servo_channel* config, int arraySize);
+
 
 #ifdef __cplusplus
 }
