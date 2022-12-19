@@ -22,10 +22,10 @@
 class Pca9685
 {
 private:
+    uint8_t address;
     esp_err_t reset();
     esp_err_t setFrequency(uint16_t freq);
     esp_err_t getFrequency(uint16_t* freq);
-
     esp_err_t getPWMDetail(uint8_t channel, uint8_t* dataReadOn0, uint8_t* dataReadOn1, uint8_t* dataReadOff0, uint8_t* dataReadOff1);
     esp_err_t writeByte(uint8_t regaddr, uint8_t value);
     esp_err_t writeWord(uint8_t regaddr, uint16_t value);
@@ -38,6 +38,7 @@ public:
     esp_err_t Init(uint8_t address, uint16_t frequency);
     esp_err_t setPwm(uint8_t channel, uint16_t on, uint16_t off);
     esp_err_t getPwm(uint8_t channel, uint16_t* on, uint16_t* off);
+    uint8_t getAddress();
 };
 
 #endif

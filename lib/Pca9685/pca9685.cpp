@@ -6,8 +6,6 @@
 #include <math.h>
 
 
-uint8_t PCA9685_ADDR;
-
 #define WRITE_BIT I2C_MASTER_WRITE           
 #define READ_BIT I2C_MASTER_READ   
 
@@ -16,11 +14,11 @@ static const char *TAG = "PCA9685_Driver";
 Pca9685::Pca9685(/* args */) {}
 Pca9685::~Pca9685() {}
 
-esp_err_t Pca9685::Init(uint8_t address, uint16_t frequency)
+esp_err_t Pca9685::Init(uint8_t addr, uint16_t frequency)
 {
     esp_err_t result = ESP_OK;
 
-    PCA9685_ADDR = address;
+    Pca9685::address = addr;
 
     result = Pca9685::reset();
     if (result != ESP_OK){
@@ -37,6 +35,10 @@ esp_err_t Pca9685::Init(uint8_t address, uint16_t frequency)
     return result;
 }
 
+uint8_t Pca9685::getAddress(){
+    return Pca9685::address;
+}
+
 esp_err_t Pca9685::reset(){
 
     esp_err_t result;
@@ -44,7 +46,7 @@ esp_err_t Pca9685::reset(){
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
 
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | WRITE_BIT, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | WRITE_BIT, ACK_CHECK_EN);
 
     i2c_master_write_byte(cmd, MODE1, ACK_CHECK_EN);
 
@@ -158,7 +160,7 @@ esp_err_t Pca9685::writeByte(uint8_t regaddr, uint8_t value){
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, regaddr, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, value, NACK_VAL);
     i2c_master_stop(cmd);
@@ -174,7 +176,7 @@ esp_err_t Pca9685::writeWord(uint8_t regaddr, uint16_t value){
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, regaddr, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, value & 0xff, ACK_VAL);
     i2c_master_write_byte(cmd, value >> 8, NACK_VAL);
@@ -191,7 +193,7 @@ esp_err_t Pca9685::writeTwoWord(uint8_t regaddr, uint16_t valueOn, uint16_t valu
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, regaddr, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, valueOn & 0xff, ACK_VAL);
     i2c_master_write_byte(cmd, valueOn >> 8, NACK_VAL);
@@ -227,7 +229,7 @@ esp_err_t Pca9685::readTwoWord(uint8_t regaddr, uint8_t* valueA, uint8_t* valueB
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, regaddr, ACK_CHECK_EN);
     i2c_master_stop(cmd);
     result = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
@@ -237,7 +239,7 @@ esp_err_t Pca9685::readTwoWord(uint8_t regaddr, uint8_t* valueA, uint8_t* valueB
     }
     cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (PCA9685_ADDR << 1) | I2C_MASTER_READ, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_READ, ACK_CHECK_EN);
     i2c_master_read_byte(cmd, valueA, (i2c_ack_type_t) ACK_VAL);
     i2c_master_read_byte(cmd, valueB, (i2c_ack_type_t) NACK_VAL);
     i2c_master_stop(cmd);
