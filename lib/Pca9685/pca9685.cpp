@@ -6,7 +6,7 @@
 #include <math.h>
 
 
-uint8_t PCA9685_ADDR = 0x40;
+uint8_t PCA9685_ADDR;
 
 #define WRITE_BIT I2C_MASTER_WRITE           
 #define READ_BIT I2C_MASTER_READ   
@@ -16,33 +16,11 @@ static const char *TAG = "PCA9685_Driver";
 Pca9685::Pca9685(/* args */) {}
 Pca9685::~Pca9685() {}
 
-esp_err_t Pca9685::Init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint16_t frequency)
+esp_err_t Pca9685::Init(uint8_t address, uint16_t frequency)
 {
-
     esp_err_t result = ESP_OK;
 
-    i2c_config_t conf;
-
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = sda;
-    conf.scl_io_num = scl;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 100000;
-    conf.clk_flags = 0;
-
-    
-    result = i2c_param_config(port, &conf);
-    if (result != ESP_OK){
-        ESP_ERROR_CHECK(result);
-        return result;
-    }
-    
-    result = i2c_driver_install(port, conf.mode, 0, 0, 0);
-    if (result != ESP_OK){
-        ESP_ERROR_CHECK(result);
-        return result;
-    }
+    PCA9685_ADDR = address;
 
     result = Pca9685::reset();
     if (result != ESP_OK){

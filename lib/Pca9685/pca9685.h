@@ -35,7 +35,7 @@ private:
 public:
     Pca9685(/* args */);
     ~Pca9685();
-    esp_err_t Init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint16_t frequency);
+    esp_err_t Init(uint8_t address, uint16_t frequency);
     esp_err_t setPwm(uint8_t channel, uint16_t on, uint16_t off);
     esp_err_t getPwm(uint8_t channel, uint16_t* on, uint16_t* off);
 };

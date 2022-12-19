@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <nvs_flash.h>
 #include <string.h>
+#include <math.h>
 
 static const char *TAG = "NvsManager";
 
@@ -133,7 +134,7 @@ bool nvsClearServiceConfig()
     return true;
 }
 
-bool nvsSaveServoConfig(servo_channel *config, int arraySize)
+bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
 {
     esp_err_t err;
     nvs_handle_t nvsHandle;
@@ -146,25 +147,29 @@ bool nvsSaveServoConfig(servo_channel *config, int arraySize)
         return false;
     }
 
-    char minPosConfig[] = "00-minpos";
-    char maxPosConfig[] = "00-maxpos";
-    char setConfig[] = "00-set"; 
+    char minPosConfig[] = "x-00-minpos";
+    char maxPosConfig[] = "x-00-maxpos";
+    char setConfig[] = "x-00-set"; 
+
+    minPosConfig[0] = (boardId + '0');
+    maxPosConfig[0] = (boardId + '0');
+    setConfig[0] = (boardId + '0'); 
 
     for (size_t i = 0; i < arraySize; i++)
     {
         if (i < 10){
-            minPosConfig[1] = (i + '0');
-            maxPosConfig[1] = (i + '0');
-            setConfig[1] = (i + '0');
+            minPosConfig[3] = (i + '0');
+            maxPosConfig[3] = (i + '0');
+            setConfig[3] = (i + '0');
         }
         else
         {
-            minPosConfig[0] = (1 + '0');
-            minPosConfig[1] = ((i - 10) + '0');
-            maxPosConfig[0] = (1 + '0');
-            maxPosConfig[1] = ((i - 10) + '0');
-            setConfig[0] = (1 + '0');
-            setConfig[1] = ((i - 10) + '0');
+            minPosConfig[2] = (1 + '0');
+            minPosConfig[3] = ((i - 10) + '0');
+            maxPosConfig[2] = (1 + '0');
+            maxPosConfig[3] = ((i - 10) + '0');
+            setConfig[2] = (1 + '0');
+            setConfig[3] = ((i - 10) + '0');
         }
 
         err = nvs_set_u16(nvsHandle, minPosConfig, config[i].minPos);
@@ -199,7 +204,7 @@ bool nvsSaveServoConfig(servo_channel *config, int arraySize)
     return true;
 }
 
-bool nvsLoadServoConfig(servo_channel *config, int arraySize)
+bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 {
 
     esp_err_t err;
@@ -217,25 +222,29 @@ bool nvsLoadServoConfig(servo_channel *config, int arraySize)
     uint16_t max;
     bool set;
 
-    char minPosConfig[] = "00-minpos";
-    char maxPosConfig[] = "00-maxpos";
-    char setConfig[] = "00-set"; 
+    char minPosConfig[] = "x-00-minpos";
+    char maxPosConfig[] = "x-00-maxpos";
+    char setConfig[] = "x-00-set"; 
+
+    minPosConfig[0] = (boardId + '0');
+    maxPosConfig[0] = (boardId + '0');
+    setConfig[0] = (boardId + '0'); 
 
     for (size_t i = 0; i < arraySize; i++)
     {
         if (i < 10){
-            minPosConfig[1] = (i + '0');
-            maxPosConfig[1] = (i + '0');
-            setConfig[1] = (i + '0');
+            minPosConfig[3] = (i + '0');
+            maxPosConfig[3] = (i + '0');
+            setConfig[3] = (i + '0');
         }
         else
         {
-            minPosConfig[0] = (1 + '0');
-            minPosConfig[1] = ((i - 10) + '0');
-            maxPosConfig[0] = (1 + '0');
-            maxPosConfig[1] = ((i - 10) + '0');
-            setConfig[0] = (1 + '0');
-            setConfig[1] = ((i - 10) + '0');
+            minPosConfig[2] = (1 + '0');
+            minPosConfig[3] = ((i - 10) + '0');
+            maxPosConfig[2] = (1 + '0');
+            maxPosConfig[3] = ((i - 10) + '0');
+            setConfig[2] = (1 + '0');
+            setConfig[3] = ((i - 10) + '0');
         }
 
         err = nvs_get_u16(nvsHandle, minPosConfig, &min);
@@ -260,8 +269,8 @@ bool nvsLoadServoConfig(servo_channel *config, int arraySize)
         channel.minPos = min;
         channel.maxPos = max;
         channel.set = set;
-        channel.currentPos = min;
-        channel.requestedPos = min;
+        channel.currentPos = channel.minPos;
+        channel.requestedPos = channel.minPos;
         channel.moveFactor = 1;
         channel.speed = 1;
 

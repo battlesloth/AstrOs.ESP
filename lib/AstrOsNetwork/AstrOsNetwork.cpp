@@ -344,7 +344,8 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     }
     buf[cur_len] = '\0';
 
-    servo_channel config[16];
+    servo_channel config0[16];
+    servo_channel config1[16];
 
     cJSON *root = cJSON_Parse(buf);
 
@@ -367,25 +368,37 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
 
         servo_channel ch;
 
-        ch.id = id;
         ch.minPos = minPos;
         ch.maxPos = maxPos;
         ch.set = set;
 
-        config[id] = ch;
-        ESP_LOGI(TAG, "Servo Config: ch: %d, minPos: %d, maxPos: %d, set: %d", config[id].id, config[id].minPos, config[id].maxPos, config[id].set);  
+        if (id < 16){
+            ch.id = id;
+            config0[id] = ch;
+            ESP_LOGI(TAG, "Servo Config: brd 1, ch: %d", ch.id);  
+        } else {
+            ch.id = id - 16;
+            config1[(id - 16)] = ch;
+            ESP_LOGI(TAG, "Servo Config: brd 2, ch: %d", ch.id);
+        }
     }
 
     cJSON_Delete(root);
 
     ESP_LOGI(TAG, "Saving Servo Config...");
 
-    if (!Storage.saveServoConfig(config, 16))
+    if (!Storage.saveServoConfig(0, config0, 16))
     {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
         return ESP_FAIL;
     }
 
+    if (!Storage.saveServoConfig(1, config1, 16))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
+        return ESP_FAIL;
+    }
+    
     ESP_LOGI(TAG, "Servo Config saved!");
     
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::LOAD_SERVO_CONFIG, NULL};

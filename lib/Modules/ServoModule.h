@@ -2,6 +2,8 @@
 #define SERVOMODULE_H
 
 #include <AnimationCommand.h>
+#include "AstrOsUtility.h"
+#include "Pca9685.h"
 
 #include "esp_system.h"
 #include <string>
@@ -13,11 +15,12 @@
 class ServoModule
 {
 private:
-
+    void SetCommandByBoard(servo_channel *servos, ServoCommand *cmd);
+    void MoveServoByBoard(Pca9685 *board, servo_channel *servos, int idx);
 public:
     ServoModule();
     ~ServoModule();
-    esp_err_t Init(i2c_port_t port, gpio_num_t sda, gpio_num_t scl, uint16_t frequency);
+    esp_err_t Init();
     void LoadServoConfig();
     void QueueCommand(const char* cmd);
     void ZeroServos();
