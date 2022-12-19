@@ -14,12 +14,13 @@ class StorageManager{
     StorageManager();
     ~StorageManager();
     esp_err_t Init();
+    
     bool loadServiceConfig(svc_config_t* config);
     bool saveServiceConfig(svc_config_t config);
     bool clearServiceConfig();
-    bool saveServoConfig(servo_channel *servos, int arraySize);
-    bool loadServoConfig(servo_channel *servos, int arraySize);
-    
+
+    bool saveServoConfig(int boardId, servo_channel *servos, int arraySize);
+    bool loadServoConfig(int boardId, servo_channel *servos, int arraySize);
     
     bool saveFile(std::string filename, std::string data);
     bool deleteFile(std::string filename);

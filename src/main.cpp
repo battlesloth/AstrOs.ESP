@@ -69,12 +69,11 @@ static esp_timer_handle_t animationTimer;
 #define KI_BAUD_RATE (9600)
 
 /**********************************
- * Servo Module Settings
+ * I2C Settings
  **********************************/
-#define SERVO_FREQUENCY 50
-#define SERVO_I2C_PORT 0
-#define SERVO_SDA_PIN (GPIO_NUM_21)
-#define SERVO_SCL_PIN (GPIO_NUM_22)
+#define I2C_PORT 0
+#define SDA_PIN (GPIO_NUM_21)
+#define SCL_PIN (GPIO_NUM_22)
 
 /**********************************
  * Method definitions
@@ -121,10 +120,24 @@ void init(void)
     AstrOs.Init(animationQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
+    i2c_config_t conf;
+
+    conf.mode = I2C_MODE_MASTER;
+    conf.sda_io_num = SDA_PIN;
+    conf.scl_io_num = SCL_PIN;
+    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.master.clk_speed = 100000;
+    conf.clk_flags = 0;
+
+    
+    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
+
     ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
     ESP_LOGI(TAG, "Serial Module initiated");
 
-    ESP_ERROR_CHECK(ServoMod.Init(SERVO_I2C_PORT, SERVO_SDA_PIN, SERVO_SCL_PIN, SERVO_FREQUENCY));
+    ESP_ERROR_CHECK(ServoMod.Init());
     ESP_LOGI(TAG, "Servo Module initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());

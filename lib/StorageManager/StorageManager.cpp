@@ -87,12 +87,12 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
-bool StorageManager::saveServoConfig(servo_channel* servos, int arraySize){
-    return nvsSaveServoConfig(servos, arraySize);
+bool StorageManager::saveServoConfig(int boardId, servo_channel* servos, int arraySize){
+    return nvsSaveServoConfig(boardId, servos, arraySize);
 }
 
-bool StorageManager::loadServoConfig(servo_channel* servos, int arraySize){
-    return nvsLoadServoConfig(servos, arraySize);
+bool StorageManager::loadServoConfig(int boardId, servo_channel* servos, int arraySize){
+    return nvsLoadServoConfig(boardId, servos, arraySize);
 }
 
 bool StorageManager::saveFile(std::string filename, std::string data ){
