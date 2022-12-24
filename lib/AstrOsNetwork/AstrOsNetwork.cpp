@@ -2,6 +2,7 @@
 #include "AstrOsConstants.h"
 #include "AstrOsHtml.h"
 #include "StorageManager.h"
+#include "uuid.h"
 
 #include <stdio.h>
 #include <functional>
@@ -225,20 +226,29 @@ bool AstrOsNetwork::startApWebServer()
 esp_err_t staIndexHandler(httpd_req_t *req)
 {
     esp_err_t err;
-    const char *respStr = (const char *)req->user_ctx;
-    err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+    
+    char fingerprint[37];
+
+    Storage.getControllerFingerprint(fingerprint); 
+    
+    std::stringstream ss;
+    ss << "{\"result\":\"up\",\"fingerprint\":\"";
+    ss << fingerprint;
+    ss << "\"}";
+
+    std::string respStr = ss.str();
+    
+    err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_resp_send(req, respStr, strlen(respStr));
-    logError(TAG, __FUNCTION__, __LINE__, err);
-    return err;
+    return ESP_OK;
 };
 
 const httpd_uri_t staIndex = {
     .uri = "/",
     .method = HTTP_GET,
     .handler = staIndexHandler,
-    .user_ctx = (void *)"{\"status\":\"up\"}"};
+    .user_ctx = NULL};
 
 esp_err_t staClearSettingsHandler(httpd_req_t *req)
 {
@@ -401,12 +411,31 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     
     ESP_LOGI(TAG, "Servo Config saved!");
     
+    ESP_LOGI(TAG, "Updating Fingerprint");
+
+    std::string fingerprint = uuid::generate_uuid_v4();
+
+    if (!Storage.setControllerFingerprint(fingerprint.c_str()))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
+
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::LOAD_SERVO_CONFIG, NULL};
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
-    const char *respStr = "{\"result\":\"config saved\"}";
-    err = httpd_resp_send(req, respStr, strlen(respStr));
+    
+    std::stringstream ss;
+    ss << "{\"result\":\"config saved\",\"fingerprint\":\"";
+    ss << fingerprint;
+    ss << "\"}";
+
+    std::string respStr = ss.str();
+
+    err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     return ESP_OK;

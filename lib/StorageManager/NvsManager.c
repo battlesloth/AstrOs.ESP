@@ -134,7 +134,8 @@ bool nvsClearServiceConfig()
     return true;
 }
 
-bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
+// sets the configuration fingerprint to ensure config is up to date
+bool nvsSetControllerFingerprint(const char *fingerprint)
 {
     esp_err_t err;
     nvs_handle_t nvsHandle;
@@ -147,17 +148,66 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
         return false;
     }
 
+    err = nvs_set_str(nvsHandle, "fingerprint", fingerprint);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    nvs_close(nvsHandle);
+    return true;
+}
+
+bool nvsGetControllerFingerprint(char *fingerprint)
+{
+    esp_err_t err;
+    nvs_handle_t nvsHandle;
+    size_t defaultSize = 37;
+    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
+
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_get_str(nvsHandle, "fingerprint", fingerprint, &defaultSize);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    nvs_close(nvsHandle);
+    return true;
+}
+
+bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
+{
+    esp_err_t err;
+    nvs_handle_t nvsHandle;
+
+    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
+
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
-    char setConfig[] = "x-00-set"; 
+    char setConfig[] = "x-00-set";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
-    setConfig[0] = (boardId + '0'); 
+    setConfig[0] = (boardId + '0');
 
     for (size_t i = 0; i < arraySize; i++)
     {
-        if (i < 10){
+        if (i < 10)
+        {
             minPosConfig[3] = (i + '0');
             maxPosConfig[3] = (i + '0');
             setConfig[3] = (i + '0');
@@ -209,7 +259,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     esp_err_t err;
     nvs_handle_t nvsHandle;
-    size_t defaultSize = 0;
+
     err = nvs_open("config", NVS_READWRITE, &nvsHandle);
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -224,15 +274,16 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
-    char setConfig[] = "x-00-set"; 
+    char setConfig[] = "x-00-set";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
-    setConfig[0] = (boardId + '0'); 
+    setConfig[0] = (boardId + '0');
 
     for (size_t i = 0; i < arraySize; i++)
     {
-        if (i < 10){
+        if (i < 10)
+        {
             minPosConfig[3] = (i + '0');
             maxPosConfig[3] = (i + '0');
             setConfig[3] = (i + '0');
@@ -264,7 +315,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         }
 
         servo_channel channel;
-        
+
         channel.id = i;
         channel.minPos = min;
         channel.maxPos = max;

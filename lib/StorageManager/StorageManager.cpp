@@ -87,6 +87,14 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
+bool StorageManager::setControllerFingerprint(const char* fingerprint){
+    return nvsSetControllerFingerprint(fingerprint);
+}
+
+bool StorageManager::getControllerFingerprint(char* fingerprint){
+    return nvsGetControllerFingerprint(fingerprint);
+}
+
 bool StorageManager::saveServoConfig(int boardId, servo_channel* servos, int arraySize){
     return nvsSaveServoConfig(boardId, servos, arraySize);
 }
