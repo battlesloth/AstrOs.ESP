@@ -238,6 +238,7 @@ esp_err_t staIndexHandler(httpd_req_t *req)
 
     std::string respStr = ss.str();
     
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -261,7 +262,9 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
 
     if (Storage.clearServiceConfig())
     {
+        
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -271,6 +274,7 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -296,12 +300,14 @@ esp_err_t staFormatSdHandler(httpd_req_t *req)
     if (Storage.formatSdCard())
     {
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -435,6 +441,7 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
 
     std::string respStr = ss.str();
 
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -499,6 +506,7 @@ esp_err_t staMoveServoHandler(httpd_req_t *req)
 
     esp_err_t err;
     const char *respStr = "{\"result\":\"script queued\"}";
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -523,6 +531,7 @@ esp_err_t staPanicStopHandler(httpd_req_t *req)
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"panic stop sent\"}";
+    httpd_resp_set_type(req, "application/json");
     esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -569,12 +578,14 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
     if (Storage.fileExists(path))
     {
         const char *respStr = "{\"result\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"result\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -623,6 +634,7 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"script queued\"}";
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -647,12 +659,14 @@ esp_err_t staListScriptsHandler(httpd_req_t *req)
     if (Storage.listFiles("scripts"))
     {
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
