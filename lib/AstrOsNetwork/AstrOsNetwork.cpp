@@ -325,9 +325,9 @@ const httpd_uri_t staFormatSd = {
  * Hardware Control endpoints
  ***************************************************************/
 
-esp_err_t staSetServoConfigHandler(httpd_req_t *req)
+esp_err_t staSetConfigHandler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Set Servo Config called");
+    ESP_LOGI(TAG, "Set Config called");
 
     int total_len = req->content_len;
     ESP_LOGI(TAG, "total_len: %d", total_len);
@@ -366,7 +366,7 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     cJSON *root = cJSON_Parse(buf);
 
     cJSON *channels = NULL;
-    channels = cJSON_GetObjectItem(root, "channels");
+    channels = cJSON_GetObjectItem(root, "servoChannels");
 
     int id;
     int minPos;
@@ -448,10 +448,10 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-const httpd_uri_t staSetServoConfig = {
-    .uri = "/setservoconfig",
+const httpd_uri_t staSetConfig = {
+    .uri = "/setconfig",
     .method = HTTP_POST,
-    .handler = staSetServoConfigHandler,
+    .handler = staSetConfigHandler,
     .user_ctx = NULL};
 
 esp_err_t staMoveServoHandler(httpd_req_t *req)
@@ -762,7 +762,7 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staSetServoConfig.uri, staSetServoConfig.method);
+    err = httpd_unregister_uri_handler(webServer, staSetConfig.uri, staSetConfig.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
@@ -811,7 +811,7 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staFormatSd);
     logError(TAG, __FUNCTION__, __LINE__, err);
-    err = httpd_register_uri_handler(webServer, &staSetServoConfig);
+    err = httpd_register_uri_handler(webServer, &staSetConfig);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staMoveServo);
     logError(TAG, __FUNCTION__, __LINE__, err);
