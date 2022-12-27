@@ -144,11 +144,17 @@ ServoCommand::ServoCommand(std::string val) {
 
     str_vec_t parts = SplitTemplate(val);
 
-    channel = std::stoi(parts.at(0));
-    position = std::stoi(parts.at(1));
-    speed = std::stoi(parts.at(2)); 
+    channel = std::stoi(parts.at(2));
+    position = std::stoi(parts.at(3));
+    speed = std::stoi(parts.at(4)); 
 }
 ServoCommand::~ServoCommand() {}
 
-I2cCommand::I2cCommand() {}
+I2cCommand::I2cCommand(std::string val) {
+    str_vec_t parts = SplitTemplate(val);
+
+    channel = std::stoi(parts.at(2));
+    value = parts.at(3);
+}
+
 I2cCommand::~I2cCommand() {}

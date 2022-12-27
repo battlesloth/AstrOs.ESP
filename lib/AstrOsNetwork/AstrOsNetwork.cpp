@@ -500,12 +500,12 @@ esp_err_t staMoveServoHandler(httpd_req_t *req)
     cJSON_Delete(root);
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::MOVE_SERVO, NULL};
-    snprintf(msg.data, sizeof(msg.data), "%d|%d|%d", servoId, position, speed);
+    snprintf(msg.data, sizeof(msg.data), "1|0|%d|%d|%d", servoId, position, speed);
     msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
-    const char *respStr = "{\"result\":\"script queued\"}";
+    const char *respStr = "{\"result\":\"move queued\"}";
     httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
@@ -519,6 +519,69 @@ const httpd_uri_t staMoveServo = {
     .handler = staMoveServoHandler,
     .user_ctx = NULL};
 
+
+esp_err_t staSendI2cHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "send I2C called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len)
+    {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0)
+        {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    int servoId = cJSON_GetObjectItem(root, "id")->valueint;
+
+    std::string cmd = cJSON_GetObjectItem(root, "val")->valuestring;
+
+    cJSON_Delete(root);
+
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_I2C, NULL};
+    snprintf(msg.data, sizeof(msg.data), "2|0|%d|%s", servoId, cmd.c_str());
+    msg.data[sizeof(msg.data) - 1] = '\0';
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+
+    esp_err_t err;
+    const char *respStr = "{\"result\":\"command queued\"}";
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return ESP_OK;
+};
+
+const httpd_uri_t staSendI2c = {
+    .uri = "/sendi2c",
+    .method = HTTP_POST,
+    .handler = staSendI2cHandler,
+    .user_ctx = NULL};
 /**************************************************************
  * Script endpoints
  ***************************************************************/
@@ -735,7 +798,9 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    httpd_resp_sendstr(req, "Script saved");
+    const char *respStr = "{\"success\":\"true\"}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, respStr);
     return ESP_OK;
 }
 
@@ -766,6 +831,9 @@ bool AstrOsNetwork::stopStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staSendI2c.uri, staSendI2c.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
@@ -814,6 +882,8 @@ bool AstrOsNetwork::startStaWebServer()
     err = httpd_register_uri_handler(webServer, &staSetConfig);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staMoveServo);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staSendI2c);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staListScripts);
     logError(TAG, __FUNCTION__, __LINE__, err);

@@ -81,9 +81,13 @@ class ServoCommand: public BaseCommand
 
 class I2cCommand: public BaseCommand
 {
+    private:
+       
     public:
-        I2cCommand();
+        I2cCommand(std::string val);
         ~I2cCommand();
+        int channel;
+        std::string value;
 };
 
 
