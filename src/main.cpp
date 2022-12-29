@@ -236,6 +236,15 @@ static void animationTimerCallback(void *arg)
             xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
             break;
         }
+        case CommandType::I2C:
+        {
+            ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
+            queue_msg_t i2cMsg = {0, 0};
+            strncpy(i2cMsg.data, val.c_str(), sizeof(i2cMsg.data));
+            i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
+            xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
+            break;
+        }
         default:
             break;
         }
