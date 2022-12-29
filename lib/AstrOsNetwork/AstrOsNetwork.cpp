@@ -2,6 +2,7 @@
 #include "AstrOsConstants.h"
 #include "AstrOsHtml.h"
 #include "StorageManager.h"
+#include "uuid.h"
 
 #include <stdio.h>
 #include <functional>
@@ -225,20 +226,30 @@ bool AstrOsNetwork::startApWebServer()
 esp_err_t staIndexHandler(httpd_req_t *req)
 {
     esp_err_t err;
-    const char *respStr = (const char *)req->user_ctx;
-    err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+    
+    char fingerprint[37];
+
+    Storage.getControllerFingerprint(fingerprint); 
+    
+    std::stringstream ss;
+    ss << "{\"result\":\"up\",\"fingerprint\":\"";
+    ss << fingerprint;
+    ss << "\"}";
+
+    std::string respStr = ss.str();
+    
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_resp_send(req, respStr, strlen(respStr));
-    logError(TAG, __FUNCTION__, __LINE__, err);
-    return err;
+    return ESP_OK;
 };
 
 const httpd_uri_t staIndex = {
     .uri = "/",
     .method = HTTP_GET,
     .handler = staIndexHandler,
-    .user_ctx = (void *)"{\"status\":\"up\"}"};
+    .user_ctx = NULL};
 
 esp_err_t staClearSettingsHandler(httpd_req_t *req)
 {
@@ -251,7 +262,9 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
 
     if (Storage.clearServiceConfig())
     {
+        
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -261,6 +274,7 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -286,12 +300,14 @@ esp_err_t staFormatSdHandler(httpd_req_t *req)
     if (Storage.formatSdCard())
     {
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -309,9 +325,9 @@ const httpd_uri_t staFormatSd = {
  * Hardware Control endpoints
  ***************************************************************/
 
-esp_err_t staSetServoConfigHandler(httpd_req_t *req)
+esp_err_t staSetConfigHandler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Set Servo Config called");
+    ESP_LOGI(TAG, "Set Config called");
 
     int total_len = req->content_len;
     ESP_LOGI(TAG, "total_len: %d", total_len);
@@ -350,7 +366,7 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     cJSON *root = cJSON_Parse(buf);
 
     cJSON *channels = NULL;
-    channels = cJSON_GetObjectItem(root, "channels");
+    channels = cJSON_GetObjectItem(root, "servoChannels");
 
     int id;
     int minPos;
@@ -401,21 +417,41 @@ esp_err_t staSetServoConfigHandler(httpd_req_t *req)
     
     ESP_LOGI(TAG, "Servo Config saved!");
     
+    ESP_LOGI(TAG, "Updating Fingerprint");
+
+    std::string fingerprint = uuid::generate_uuid_v4();
+
+    if (!Storage.setControllerFingerprint(fingerprint.c_str()))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
+
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::LOAD_SERVO_CONFIG, NULL};
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
-    const char *respStr = "{\"result\":\"config saved\"}";
-    err = httpd_resp_send(req, respStr, strlen(respStr));
+    
+    std::stringstream ss;
+    ss << "{\"result\":\"config saved\",\"fingerprint\":\"";
+    ss << fingerprint;
+    ss << "\"}";
+
+    std::string respStr = ss.str();
+
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     return ESP_OK;
 }
 
-const httpd_uri_t staSetServoConfig = {
-    .uri = "/setservoconfig",
+const httpd_uri_t staSetConfig = {
+    .uri = "/setconfig",
     .method = HTTP_POST,
-    .handler = staSetServoConfigHandler,
+    .handler = staSetConfigHandler,
     .user_ctx = NULL};
 
 esp_err_t staMoveServoHandler(httpd_req_t *req)
@@ -464,12 +500,13 @@ esp_err_t staMoveServoHandler(httpd_req_t *req)
     cJSON_Delete(root);
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::MOVE_SERVO, NULL};
-    snprintf(msg.data, sizeof(msg.data), "%d|%d|%d", servoId, position, speed);
+    snprintf(msg.data, sizeof(msg.data), "1|0|%d|%d|%d", servoId, position, speed);
     msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
-    const char *respStr = "{\"result\":\"script queued\"}";
+    const char *respStr = "{\"result\":\"move queued\"}";
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -482,6 +519,69 @@ const httpd_uri_t staMoveServo = {
     .handler = staMoveServoHandler,
     .user_ctx = NULL};
 
+
+esp_err_t staSendI2cHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "send I2C called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len)
+    {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0)
+        {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    int servoId = cJSON_GetObjectItem(root, "id")->valueint;
+
+    std::string cmd = cJSON_GetObjectItem(root, "val")->valuestring;
+
+    cJSON_Delete(root);
+
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_I2C, NULL};
+    snprintf(msg.data, sizeof(msg.data), "2|0|%d|%s", servoId, cmd.c_str());
+    msg.data[sizeof(msg.data) - 1] = '\0';
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+
+    esp_err_t err;
+    const char *respStr = "{\"result\":\"command queued\"}";
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return ESP_OK;
+};
+
+const httpd_uri_t staSendI2c = {
+    .uri = "/sendi2c",
+    .method = HTTP_POST,
+    .handler = staSendI2cHandler,
+    .user_ctx = NULL};
 /**************************************************************
  * Script endpoints
  ***************************************************************/
@@ -494,6 +594,7 @@ esp_err_t staPanicStopHandler(httpd_req_t *req)
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"panic stop sent\"}";
+    httpd_resp_set_type(req, "application/json");
     esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -540,12 +641,14 @@ esp_err_t staScriptExistsHandler(httpd_req_t *req)
     if (Storage.fileExists(path))
     {
         const char *respStr = "{\"result\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"result\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         esp_err_t err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -594,6 +697,7 @@ esp_err_t staRunScriptHandler(httpd_req_t *req)
     xQueueSend(AstrOsNetwork::animationQueue, &msg, pdMS_TO_TICKS(2000));
 
     const char *respStr = "{\"result\":\"script queued\"}";
+    httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr, strlen(respStr));
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -618,12 +722,14 @@ esp_err_t staListScriptsHandler(httpd_req_t *req)
     if (Storage.listFiles("scripts"))
     {
         const char *respStr = "{\"success\":\"true\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
     else
     {
         const char *respStr = "{\"success\":\"false\"}";
+        httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
     }
@@ -692,7 +798,9 @@ esp_err_t staUploadScriptHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    httpd_resp_sendstr(req, "Script saved");
+    const char *respStr = "{\"success\":\"true\"}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, respStr);
     return ESP_OK;
 }
 
@@ -719,10 +827,13 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staSetServoConfig.uri, staSetServoConfig.method);
+    err = httpd_unregister_uri_handler(webServer, staSetConfig.uri, staSetConfig.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = httpd_unregister_uri_handler(webServer, staSendI2c.uri, staSendI2c.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
@@ -768,9 +879,11 @@ bool AstrOsNetwork::startStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staFormatSd);
     logError(TAG, __FUNCTION__, __LINE__, err);
-    err = httpd_register_uri_handler(webServer, &staSetServoConfig);
+    err = httpd_register_uri_handler(webServer, &staSetConfig);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staMoveServo);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staSendI2c);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staListScripts);
     logError(TAG, __FUNCTION__, __LINE__, err);

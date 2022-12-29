@@ -13,7 +13,7 @@
 
 #include <pthread.h>
 
-#define ADDR PCA9685_ADDR_BASE
+//#define ADDR PCA9685_ADDR_BASE
 #ifndef APP_CPU_NUM
 #define APP_CPU_NUM PRO_CPU_NUM
 #endif

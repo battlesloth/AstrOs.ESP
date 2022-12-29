@@ -19,6 +19,9 @@ class StorageManager{
     bool saveServiceConfig(svc_config_t config);
     bool clearServiceConfig();
 
+    bool setControllerFingerprint(const char* fingerprint);
+    bool getControllerFingerprint(char* fingerprint);
+
     bool saveServoConfig(int boardId, servo_channel *servos, int arraySize);
     bool loadServoConfig(int boardId, servo_channel *servos, int arraySize);
     

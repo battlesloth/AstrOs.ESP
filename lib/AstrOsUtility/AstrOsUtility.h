@@ -25,7 +25,8 @@ typedef struct {
 typedef enum {
     MOVE_SERVO,
     LOAD_SERVO_CONFIG,
-    SEND_SERIAL
+    SEND_SERIAL,
+    SEND_I2C
 } HARDWARE_COMMAND;
 
 typedef struct {
