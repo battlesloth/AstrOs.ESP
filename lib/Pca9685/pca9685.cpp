@@ -75,7 +75,10 @@ esp_err_t Pca9685::setFrequency(uint16_t freq){
 
     // Set prescaler
     // calculation on page 25 of datasheet
-    uint8_t prescale_val = round((CLOCK_FREQ / 4096 / (0.9*freq)) - 1+0.5);
+    // the 0.93 dials in exactly 20ms on the board i was using
+    // might need to make this configurable if there are issues
+    // with other boards.
+    uint8_t prescale_val = round((CLOCK_FREQ / ((4096 * freq) * 0.93) ) - 1);
     result = Pca9685::writeByte(PRE_SCALE, prescale_val);
     if (result != ESP_OK) {
         return result;

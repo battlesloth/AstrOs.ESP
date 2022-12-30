@@ -16,7 +16,7 @@
 #define SUBADR3         0x04    /*!< I2C-bus subaddress 3 */
 
 #define PRE_SCALE       0xfe    /*!< prescaler for output frequency */
-#define CLOCK_FREQ      27000000.0  /*!< 25MHz default osc clock */
+#define CLOCK_FREQ      25000000.0  /*!< 25MHz default osc clock */
 
 
 class Pca9685

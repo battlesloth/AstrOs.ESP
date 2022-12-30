@@ -65,6 +65,8 @@ esp_err_t ServoModule::Init()
         return result;
     }
 
+    ServoModule::ZeroServos();
+    
     return result;
 }
 
@@ -83,10 +85,10 @@ void ServoModule::LoadServoConfig()
             // Board 0
 
             // convert from micorseconds to PWM
-            // based on 500 => 120, 2500 => 440
+            // based on 500 => 100, 2500 => 510 as 20ms
             // which works for the servos I tested with
-            channels0[i].minPos = (int)((((4 * channels0[i].minPos) / 25) + 40) + 0.5);
-            channels0[i].maxPos = (int)((((4 * channels0[i].maxPos) / 25) + 40) + 0.5);
+            channels0[i].minPos = (int)((channels0[i].minPos * 0.205) - 2.5);
+            channels0[i].maxPos = (int)((channels0[i].maxPos * 0.205) - 2.5);
 
             // zero on start up
             channels0[i].currentPos = channels0[i].minPos + 10;
@@ -100,10 +102,10 @@ void ServoModule::LoadServoConfig()
             // Board 1
 
             // convert from micorseconds to PWM
-            // based on 500 => 120, 2500 => 440
+            // based on 500 => 105, 2500 => 505 as 20ms
             // which works for the servos I tested with
-            channels1[i].minPos = (int)((((4 * channels1[i].minPos) / 25) + 40) + 0.5);
-            channels1[i].maxPos = (int)((((4 * channels1[i].maxPos) / 25) + 40) + 0.5);
+            channels1[i].minPos = (int)((channels1[i].minPos * 0.205) - 2.5);
+            channels1[i].maxPos = (int)((channels1[i].maxPos * 0.205) - 2.5);
 
             // zero on start up
             channels1[i].currentPos = channels1[i].minPos + 10;
@@ -124,7 +126,17 @@ void ServoModule::QueueCommand(const char *cmd)
     ESP_LOGI(TAG, "Queueing servo command => %s", cmd);
     ServoCommand servoCmd = ServoCommand(cmd);
 
-    if (servoCmd.channel < 16)
+
+    if (servoCmd.position == 666){
+        // this is a test command to set the channel
+        // pulse command directly between 0 and 4096
+        if (servoCmd.channel < 16){
+            pcaBoard0.setPwm(servoCmd.channel, 0, servoCmd.speed);
+        } else if (servoCmd.channel < 32){
+            pcaBoard1.setPwm(servoCmd.channel - 16, 0, servoCmd.speed);
+        }
+    }
+    else if (servoCmd.channel < 16)
     {
         ServoModule::SetCommandByBoard(channels0, &servoCmd);
     }
