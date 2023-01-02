@@ -413,10 +413,8 @@ void hardwareQueueTask(void *arg)
             {
             case HARDWARE_COMMAND::SEND_SERIAL:
             {
-                SerialCommand scd = SerialCommand(msg.data);
-                ESP_LOGI(TAG, "val: %s", scd.GetValue().c_str());
                 queue_msg_t serialMsg = {0, 0};
-                strncpy(serialMsg.data, scd.GetValue().c_str(), sizeof(serialMsg.data));
+                strncpy(serialMsg.data, msg.data, sizeof(serialMsg.data));
                 serialMsg.data[sizeof(serialMsg.data) - 1] = '\0';
                 xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000));
                 break;

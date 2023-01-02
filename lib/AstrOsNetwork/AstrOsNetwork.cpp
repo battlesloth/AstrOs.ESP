@@ -582,6 +582,69 @@ const httpd_uri_t staSendI2c = {
     .method = HTTP_POST,
     .handler = staSendI2cHandler,
     .user_ctx = NULL};
+
+
+    esp_err_t staSendSerialHandler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "send serial called");
+
+    int total_len = req->content_len;
+    ESP_LOGI(TAG, "total_len: %d", total_len);
+    if (total_len == 0)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no content");
+        return ESP_FAIL;
+    }
+    int cur_len = 0;
+    char buf[2000]; // = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    memset(buf, 0, sizeof(buf));
+    int received = 0;
+    if (total_len >= POST_BUFFER_SIZE)
+    {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len)
+    {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0)
+        {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post script");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+
+    std::string cmd = cJSON_GetObjectItem(root, "val")->valuestring;
+
+    cJSON_Delete(root);
+
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_SERIAL, NULL};
+    strncpy(msg.data, cmd.c_str(), sizeof(msg.data));
+    msg.data[cmd.length()] = '\n';
+    msg.data[cmd.length() + 1] = '\0';
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+
+    esp_err_t err;
+    const char *respStr = "{\"result\":\"command queued\"}";
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_send(req, respStr, strlen(respStr));
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    return ESP_OK;
+};
+
+const httpd_uri_t staSendSerial = {
+    .uri = "/sendserial",
+    .method = HTTP_POST,
+    .handler = staSendSerialHandler,
+    .user_ctx = NULL};
 /**************************************************************
  * Script endpoints
  ***************************************************************/
@@ -836,6 +899,9 @@ bool AstrOsNetwork::stopStaWebServer()
     err = httpd_unregister_uri_handler(webServer, staSendI2c.uri, staSendI2c.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = httpd_unregister_uri_handler(webServer, staSendSerial.uri, staSendSerial.method);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
     err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
@@ -884,6 +950,8 @@ bool AstrOsNetwork::startStaWebServer()
     err = httpd_register_uri_handler(webServer, &staMoveServo);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staSendI2c);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+    err = httpd_register_uri_handler(webServer, &staSendSerial);
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &staListScripts);
     logError(TAG, __FUNCTION__, __LINE__, err);
