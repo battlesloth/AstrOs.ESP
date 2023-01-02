@@ -90,6 +90,8 @@ void AnimationController::loadNextScript()
         AnimationController::parseScript(script);
 
         ESP_LOGI(TAG, "Loaded: %s", script.c_str());
+        ESP_LOGI(TAG, "Events loaded: %d", scriptEvents.size());
+
 
         scriptLoaded = true;
     }
