@@ -40,7 +40,7 @@ ServoModule::~ServoModule()
 {
 }
 
-esp_err_t ServoModule::Init()
+esp_err_t ServoModule::Init(uint8_t board0addr, u_int8_t board1addr)
 {
     esp_err_t result = ESP_OK;
 
@@ -51,14 +51,14 @@ esp_err_t ServoModule::Init()
 
     ServoModule::LoadServoConfig();
 
-    result = pcaBoard0.Init(0x40, SERVO_FREQ);
+    result = pcaBoard0.Init(board0addr, SERVO_FREQ);
 
     if (result != ESP_OK)
     {
         return result;
     }
 
-    result = pcaBoard1.Init(0x41, SERVO_FREQ);
+    result = pcaBoard1.Init(board1addr, SERVO_FREQ);
 
     if (result != ESP_OK)
     {

@@ -64,16 +64,38 @@ static esp_timer_handle_t animationTimer;
  * Kangaroo Interface
  **********************************/
 
+#ifdef DARTHSERVO
+#define KI_TX_PIN (GPIO_NUM_1)
+#define KI_RX_PIN (GPIO_NUM_2)
+#else
 #define KI_TX_PIN (GPIO_NUM_12)
 #define KI_RX_PIN (GPIO_NUM_13)
+#endif
 #define KI_BAUD_RATE (9600)
 
 /**********************************
  * I2C Settings
  **********************************/
-#define I2C_PORT 0
+#ifdef DARTHSERVO
+#define SDA_PIN (GPIO_NUM_18)
+#define SCL_PIN (GPIO_NUM_17)
+#else
 #define SDA_PIN (GPIO_NUM_21)
 #define SCL_PIN (GPIO_NUM_22)
+#endif
+#define I2C_PORT 0
+
+/**********************************
+ * Servo Settings
+ **********************************/
+#ifdef DARTHSERVO
+#define SERVO_BOARD_0_ADDR 0x40
+#define SERVO_BOARD_1_ADDR 0x41
+#else
+#define SERVO_BOARD_0_ADDR 0x40
+#define SERVO_BOARD_1_ADDR 0x41
+#endif
+
 
 /**********************************
  * Method definitions
@@ -136,7 +158,7 @@ void init(void)
     ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
     ESP_LOGI(TAG, "Serial Module initiated");
 
-    ESP_ERROR_CHECK(ServoMod.Init());
+    ESP_ERROR_CHECK(ServoMod.Init(SERVO_BOARD_0_ADDR, SERVO_BOARD_1_ADDR));
     ESP_LOGI(TAG, "Servo Module initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());

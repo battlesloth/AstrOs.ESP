@@ -20,7 +20,7 @@ private:
 public:
     ServoModule();
     ~ServoModule();
-    esp_err_t Init();
+    esp_err_t Init(uint8_t board0addr, uint8_t board1addr);
     void LoadServoConfig();
     void QueueCommand(const char* cmd);
     void ZeroServos();

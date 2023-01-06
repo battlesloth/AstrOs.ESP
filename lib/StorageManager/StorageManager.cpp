@@ -69,7 +69,11 @@ esp_err_t StorageManager::Init()
     ESP_LOGI(TAG, "Mounting SD Card");
     
 
+    #ifndef DARTHSERVO
     return StorageManager::mountSdCard();
+    #else
+    return err;
+    #endif
 }
 
 bool StorageManager::saveServiceConfig(svc_config_t config)
