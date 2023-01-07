@@ -3,6 +3,7 @@
 
 #include <esp_log.h>
 #include <string>
+#include <vector>
 
 #include <AstrOsUtility.h>
 
@@ -10,6 +11,16 @@ class StorageManager{
     private:
         esp_err_t mountSdCard();
         std::string setFilePath(std::string filename);
+        bool saveFileSd(std::string filename, std::string data);
+        bool deleteFileSd(std::string filename);
+        bool fileExistsSd(std::string filename);
+        std::string readFileSd(std::string filename);
+        std::vector<std::string> listFilesSd(std::string folder);
+        bool saveFileSpiffs(std::string filename, std::string data);
+        bool deleteFileSpiffs(std::string filename);
+        bool fileExistsSpiffs(std::string filename);
+        std::string readFileSpiffs(std::string filename);
+        std::vector<std::string> listFilesSpiffs(std::string folder);
     public:
     StorageManager();
     ~StorageManager();
@@ -30,7 +41,8 @@ class StorageManager{
     bool fileExists(std::string filename);
 
     std::string readFile(std::string filename);
-    bool listFiles(std::string folder);
+
+    std::vector<std::string> listFiles(std::string folder);
 
     bool formatSdCard();
     

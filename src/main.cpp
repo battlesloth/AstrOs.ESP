@@ -1,4 +1,5 @@
 #include <stdio.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
@@ -7,6 +8,7 @@
 #include <driver/uart.h>
 #include <nvs_flash.h>
 #include <esp_event.h>
+
 
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
@@ -19,6 +21,8 @@
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <StorageManager.h>
+
+
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -113,6 +117,7 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
+
 
 extern "C"
 {
@@ -284,6 +289,8 @@ static void animationTimerCallback(void *arg)
 /******************************************
  * tasks
  *****************************************/
+
+
 void astrosRxTask(void *arg)
 {
 
