@@ -76,20 +76,6 @@ esp_err_t StorageManager::Init()
         }
     }
 
-    ESP_LOGI(TAG, "Initializing SPIFFS");
-
-    esp_vfs_spiffs_conf_t spiffsCfg = {
-        .base_path = "/spiffs",
-        .partition_label = NULL,
-        .max_files = 5,
-        .format_if_mount_failed = true};
-
-    err = esp_vfs_spiffs_register(&spiffsCfg);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
     ESP_LOGI(TAG, "Mounting SD Card");
 
 #ifndef DARTHSERVO
@@ -177,9 +163,9 @@ bool StorageManager::fileExists(std::string filename)
 std::vector<std::string> StorageManager::listFiles(std::string folder)
 {
 #ifdef USE_SPIFFS
-    return StorageManager::listFiles(folder);
+    return StorageManager::listFilesSpiffs(folder);
 #else
-    return StorageManager::listFiles(folder);
+    return StorageManager::listFilesSd(folder);
 #endif
 }
 
@@ -569,7 +555,6 @@ std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
         }
 
         result.push_back(de->d_name);
-        printf("Found file: %s\n", de->d_name);
     }
 
     closedir(dir);

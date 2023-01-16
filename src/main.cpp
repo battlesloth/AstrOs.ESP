@@ -69,8 +69,8 @@ static esp_timer_handle_t animationTimer;
  **********************************/
 
 #ifdef DARTHSERVO
-#define KI_TX_PIN (GPIO_NUM_1)
-#define KI_RX_PIN (GPIO_NUM_2)
+#define KI_TX_PIN (GPIO_NUM_2)
+#define KI_RX_PIN (GPIO_NUM_1)
 #else
 #define KI_TX_PIN (GPIO_NUM_12)
 #define KI_RX_PIN (GPIO_NUM_13)
@@ -177,6 +177,14 @@ void init(void)
 
     if (Storage.loadServiceConfig(&config))
     {
+        ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
+
+        std::string temp = std::string(config.networkPass);
+
+        temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+
+        ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
+
         astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
     }
     else
@@ -356,6 +364,14 @@ void serviceQueueTask(void *arg)
                 bool wifiStopped = astrOsNetwork.stopWifiAp();
                 if (wifiStopped)
                 {
+                    ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
+                    
+                    std::string temp = std::string(config.networkPass);
+
+                    temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+
+                    ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
+                    
                     wifiConnected = astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
                 }
                 if (wifiConnected)
