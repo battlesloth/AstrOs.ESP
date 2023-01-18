@@ -78,6 +78,8 @@ typedef struct {
     int requestedPos;
     int speed;
     bool set;
+    bool inverted;
+    bool on;
 } servo_channel;
 
 // if the esp_err_t != ESP_OK, log the error with the function and line number

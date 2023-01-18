@@ -58,12 +58,6 @@ bool nvsSaveServiceConfig(svc_config_t config)
 
 bool nvsLoadServiceConfig(svc_config_t *config)
 {
-
-    strncpy(config->networkSSID, "Interwebs", sizeof(config->networkSSID) - 1);
-    strncpy(config->networkPass, "Rubherducky21!", sizeof(config->networkPass) - 1);
-
-    return true;
-
     esp_err_t err;
     nvs_handle_t nvsHandle;
     size_t defaultSize = 0;
@@ -199,10 +193,12 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
     char setConfig[] = "x-00-set";
+    char invertedConfig[] = "x-00-inv";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
     setConfig[0] = (boardId + '0');
+    invertedConfig[0] = (boardId + '0');
 
     for (size_t i = 0; i < arraySize; i++)
     {
@@ -211,6 +207,7 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
             minPosConfig[3] = (i + '0');
             maxPosConfig[3] = (i + '0');
             setConfig[3] = (i + '0');
+            invertedConfig[3] = (i + '0');
         }
         else
         {
@@ -220,6 +217,8 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
             maxPosConfig[3] = ((i - 10) + '0');
             setConfig[2] = (1 + '0');
             setConfig[3] = ((i - 10) + '0');
+            invertedConfig[2] = (1 + '0');
+            invertedConfig[3] = ((i - 10) + '0');
         }
 
         err = nvs_set_u16(nvsHandle, minPosConfig, config[i].minPos);
@@ -237,6 +236,14 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
         }
 
         err = nvs_set_u8(nvsHandle, setConfig, config[i].set);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            nvs_close(nvsHandle);
+            return false;
+        }
+
+        
+        err = nvs_set_u8(nvsHandle, invertedConfig, config[i].inverted);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
@@ -271,14 +278,17 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
     uint16_t min;
     uint16_t max;
     bool set;
+    bool inverted;
 
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
     char setConfig[] = "x-00-set";
+    char invertedConfig[] = "x-00-inv";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
     setConfig[0] = (boardId + '0');
+    invertedConfig[0] = (boardId + '0');
 
     for (size_t i = 0; i < arraySize; i++)
     {
@@ -287,6 +297,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
             minPosConfig[3] = (i + '0');
             maxPosConfig[3] = (i + '0');
             setConfig[3] = (i + '0');
+            invertedConfig[3] = (i + '0');
         }
         else
         {
@@ -296,6 +307,8 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
             maxPosConfig[3] = ((i - 10) + '0');
             setConfig[2] = (1 + '0');
             setConfig[3] = ((i - 10) + '0');
+            invertedConfig[2] = (1 + '0');
+            invertedConfig[3] = ((i - 10) + '0');
         }
 
         err = nvs_get_u16(nvsHandle, minPosConfig, &min);
@@ -313,6 +326,11 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         {
             set = false;
         }
+        err = nvs_get_u8(nvsHandle, invertedConfig, &inverted);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            inverted = false;
+        }
 
         servo_channel channel;
 
@@ -320,6 +338,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.minPos = min;
         channel.maxPos = max;
         channel.set = set;
+        channel.inverted = inverted;
         channel.currentPos = channel.minPos;
         channel.requestedPos = channel.minPos;
         channel.moveFactor = 1;

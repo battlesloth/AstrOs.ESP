@@ -1,4 +1,5 @@
 #include <stdio.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
@@ -7,6 +8,7 @@
 #include <driver/uart.h>
 #include <nvs_flash.h>
 #include <esp_event.h>
+
 
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
@@ -19,6 +21,8 @@
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <StorageManager.h>
+
+
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -64,16 +68,38 @@ static esp_timer_handle_t animationTimer;
  * Kangaroo Interface
  **********************************/
 
+#ifdef DARTHSERVO
+#define KI_TX_PIN (GPIO_NUM_2)
+#define KI_RX_PIN (GPIO_NUM_1)
+#else
 #define KI_TX_PIN (GPIO_NUM_12)
 #define KI_RX_PIN (GPIO_NUM_13)
+#endif
 #define KI_BAUD_RATE (9600)
 
 /**********************************
  * I2C Settings
  **********************************/
-#define I2C_PORT 0
+#ifdef DARTHSERVO
+#define SDA_PIN (GPIO_NUM_18)
+#define SCL_PIN (GPIO_NUM_17)
+#else
 #define SDA_PIN (GPIO_NUM_21)
 #define SCL_PIN (GPIO_NUM_22)
+#endif
+#define I2C_PORT 0
+
+/**********************************
+ * Servo Settings
+ **********************************/
+#ifdef DARTHSERVO
+#define SERVO_BOARD_0_ADDR 0x40
+#define SERVO_BOARD_1_ADDR 0x41
+#else
+#define SERVO_BOARD_0_ADDR 0x40
+#define SERVO_BOARD_1_ADDR 0x41
+#endif
+
 
 /**********************************
  * Method definitions
@@ -91,6 +117,7 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
+
 
 extern "C"
 {
@@ -136,7 +163,7 @@ void init(void)
     ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
     ESP_LOGI(TAG, "Serial Module initiated");
 
-    ESP_ERROR_CHECK(ServoMod.Init());
+    ESP_ERROR_CHECK(ServoMod.Init(SERVO_BOARD_0_ADDR, SERVO_BOARD_1_ADDR));
     ESP_LOGI(TAG, "Servo Module initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
@@ -150,6 +177,14 @@ void init(void)
 
     if (Storage.loadServiceConfig(&config))
     {
+        ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
+
+        std::string temp = std::string(config.networkPass);
+
+        temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+
+        ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
+
         astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
     }
     else
@@ -262,6 +297,8 @@ static void animationTimerCallback(void *arg)
 /******************************************
  * tasks
  *****************************************/
+
+
 void astrosRxTask(void *arg)
 {
 
@@ -327,6 +364,14 @@ void serviceQueueTask(void *arg)
                 bool wifiStopped = astrOsNetwork.stopWifiAp();
                 if (wifiStopped)
                 {
+                    ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
+                    
+                    std::string temp = std::string(config.networkPass);
+
+                    temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+
+                    ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
+                    
                     wifiConnected = astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
                 }
                 if (wifiConnected)

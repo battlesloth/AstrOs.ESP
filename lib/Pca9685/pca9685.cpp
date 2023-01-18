@@ -51,15 +51,15 @@ esp_err_t Pca9685::reset(){
     i2c_master_write_byte(cmd, MODE1, ACK_CHECK_EN);
 
     i2c_master_write_byte(cmd, 0x80, ACK_CHECK_EN);
- 
+
     i2c_master_stop(cmd);
-  
+
     result = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
- 
+
     i2c_cmd_link_delete(cmd);
 
     vTaskDelay(pdMS_TO_TICKS(50));
-
+   
     return result;
 }
 

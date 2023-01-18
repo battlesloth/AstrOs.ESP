@@ -8,17 +8,24 @@
 #include <nvs_flash.h>
 
 #include <string>
+#include <vector>
 
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
 #include "vfs_fat_internal.h"
 #include "sdmmc_cmd.h"
+#include "esp_spiffs.h"
 
 /**********************************
  * SD Card
  **********************************/
 
+#ifdef USE_SPIFFS
+#define MOUNT_POINT "/spiffs"
+#else
 #define MOUNT_POINT "/sdcard"
+#endif
+
 #define PIN_NUM_MISO 19 // 2
 #define PIN_NUM_MOSI 23 // 15
 #define PIN_NUM_CLK 18  // 14
@@ -63,13 +70,19 @@ esp_err_t StorageManager::Init()
     }
     else
     {
-        logError(TAG, __FUNCTION__, __LINE__, err);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            return err;
+        }
     }
 
     ESP_LOGI(TAG, "Mounting SD Card");
-    
 
+#ifndef DARTHSERVO
     return StorageManager::mountSdCard();
+#else
+    return err;
+#endif
 }
 
 bool StorageManager::saveServiceConfig(svc_config_t config)
@@ -87,160 +100,102 @@ bool StorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
-bool StorageManager::setControllerFingerprint(const char* fingerprint){
+bool StorageManager::setControllerFingerprint(const char *fingerprint)
+{
     return nvsSetControllerFingerprint(fingerprint);
 }
 
-bool StorageManager::getControllerFingerprint(char* fingerprint){
+bool StorageManager::getControllerFingerprint(char *fingerprint)
+{
     return nvsGetControllerFingerprint(fingerprint);
 }
 
-bool StorageManager::saveServoConfig(int boardId, servo_channel* servos, int arraySize){
+bool StorageManager::saveServoConfig(int boardId, servo_channel *servos, int arraySize)
+{
     return nvsSaveServoConfig(boardId, servos, arraySize);
 }
 
-bool StorageManager::loadServoConfig(int boardId, servo_channel* servos, int arraySize){
+bool StorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
+{
     return nvsLoadServoConfig(boardId, servos, arraySize);
 }
 
-bool StorageManager::saveFile(std::string filename, std::string data ){
-
-    FILE *fd = NULL;
-    
-    std::string path = StorageManager::setFilePath(filename);
-
-    ESP_LOGI(TAG, "Saving %s", path.c_str());
-
-    if( access( path.c_str(), F_OK ) == 0 ) {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
-        unlink(path.c_str());
-    }
-
-    fd = fopen(path.c_str(), "w");
-    if (!fd){
-        ESP_LOGE(TAG, "Failed to create file : %s", path.c_str()); 
-        return false;
-    }
-
-    fwrite(data.c_str(), sizeof(char), strlen(data.c_str()) + 1, fd);
-
-    fclose(fd);
-
-    ESP_LOGI(TAG, "Saved %s", path.c_str());
-    
-    return true;
-}
-
-bool StorageManager::deleteFile(std::string filename){
-
-    std::string path = StorageManager::setFilePath(filename);
-        
-    if( access( path.c_str(), F_OK ) == 0 ) {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
-        unlink(path.c_str());
-    }
-
-    return true; 
-}
-
-std::string StorageManager::readFile(std::string filename){
-
-    std::string path = StorageManager::setFilePath(filename);
-    
-    if ( access( path.c_str(), F_OK ) != 0){
-        ESP_LOGE(TAG, "File does not exist: %s", path.c_str());
-        return "error";
-    }
-
-    FILE *f = fopen(path.c_str(), "r");
-    if (f == NULL) {
-        ESP_LOGE(TAG, "Failed to open %s for reading", path.c_str());
-        return "error";
-    }
-
-    std::string result = "";
-
-    char segment[100];
-    
-    while(fgets(segment, sizeof(segment), f)){
-        result.append(segment);
-    }
-
-    fclose(f);
-
-    return result;
-}
-
-bool StorageManager::fileExists(std::string filename){
-
-    std::string path = StorageManager::setFilePath(filename);
-
-    return access( path.c_str(), F_OK ) == 0;
-}
-
-bool StorageManager::listFiles(std::string folder)
+bool StorageManager::saveFile(std::string filename, std::string data)
 {
-    char entrysize[37];
-    const char *entrytype;
 
-    struct dirent *entry;
-    struct stat entry_stat;
-  
-    std::string entryPath = StorageManager::setFilePath(folder);
-    
-    DIR *dir = opendir(entryPath.c_str());
-    
-    if (!dir)
-    {
-        ESP_LOGE(TAG, "Failed to open dir %s", entryPath.c_str());
-        return false;
-    }
+#ifdef USE_SPIFFS
+    return StorageManager::saveFileSpiffs(filename, data);
+#else
+    return StorageManager::saveFileSd(filename, data);
+#endif
+}
 
-    while ((entry = readdir(dir)) != NULL)
-    {
-        entrytype = (entry->d_type == DT_DIR ? "directory" : "file");
+bool StorageManager::deleteFile(std::string filename)
+{
 
-        const char * ep = entryPath.c_str();
+#ifdef USE_SPIFFS
+    return StorageManager::deleteFileSpiffs(filename);
+#else
+    return StorageManager::deleteFileSd(filename);
+#endif
+}
 
-        if (stat(ep, &entry_stat) == -1)
-        {
-            ESP_LOGE(TAG, "Failed to stat %s : %s", entrytype, entry->d_name);
-            continue;
-        }
-        sprintf(entrysize, "%ld", entry_stat.st_size);
-        ESP_LOGI(TAG, "Found %s : %s (%s bytes)", entrytype, entry->d_name, entrysize);
-    }
-   
-    closedir(dir);
+std::string StorageManager::readFile(std::string filename)
+{
 
-    return true;
+#ifdef USE_SPIFFS
+    return StorageManager::readFileSpiffs(filename);
+#else
+    return StorageManager::readFileSd(filename);
+#endif
+}
+
+bool StorageManager::fileExists(std::string filename)
+{
+
+#ifdef USE_SPIFFS
+    return StorageManager::fileExistsSpiffs(filename);
+#else
+    return StorageManager::fileExistsSd(filename);
+#endif
+}
+
+std::vector<std::string> StorageManager::listFiles(std::string folder)
+{
+#ifdef USE_SPIFFS
+    return StorageManager::listFilesSpiffs(folder);
+#else
+    return StorageManager::listFilesSd(folder);
+#endif
 }
 
 /**************************************************************
-* SD Card methods
-***************************************************************/
+ * SD Card methods
+ ***************************************************************/
 
 bool StorageManager::formatSdCard()
 {
     char drv[3] = {'0', ':', 0};
     const size_t workbuf_size = 4096;
-    void* workbuf = NULL;
+    void *workbuf = NULL;
     ESP_LOGI(TAG, "Formatting the SD card");
 
     size_t allocation_unit_size = 16 * 1024;
 
     workbuf = ff_memalloc(workbuf_size);
-    if (workbuf == NULL) {
+    if (workbuf == NULL)
+    {
         ESP_LOGE(TAG, "Error formatting SD card: ESP_ERR_NO_MEM");
         return false;
     }
 
     size_t alloc_unit_size = esp_vfs_fat_get_allocation_unit_size(
-                card->csd.sector_size,
-                allocation_unit_size);
+        card->csd.sector_size,
+        allocation_unit_size);
 
     FRESULT res = f_mkfs(drv, FM_ANY, alloc_unit_size, workbuf, workbuf_size);
-    if (res != FR_OK) {
+    if (res != FR_OK)
+    {
         ESP_LOGE(TAG, "Error formatting SD card: f_mkfs failed (%d)", res);
         return false;
     }
@@ -253,8 +208,6 @@ bool StorageManager::formatSdCard()
 
     return true;
 }
-
-
 
 esp_err_t StorageManager::mountSdCard()
 {
@@ -311,13 +264,313 @@ esp_err_t StorageManager::mountSdCard()
     return err;
 }
 
-/**************************************************************
-* Utility methods
-***************************************************************/
+bool StorageManager::saveFileSd(std::string filename, std::string data)
+{
+    FILE *fd = NULL;
 
-std::string StorageManager::setFilePath(std::string filename){
+    std::string path = StorageManager::setFilePath(filename);
+
+    ESP_LOGI(TAG, "Saving %s", path.c_str());
+
+    if (access(path.c_str(), F_OK) == 0)
+    {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        unlink(path.c_str());
+    }
+
+    fd = fopen(path.c_str(), "w");
+    if (!fd)
+    {
+        ESP_LOGE(TAG, "Failed to create file : %s", path.c_str());
+        return false;
+    }
+
+    fwrite(data.c_str(), sizeof(char), strlen(data.c_str()) + 1, fd);
+
+    fclose(fd);
+
+    ESP_LOGI(TAG, "Saved %s", path.c_str());
+
+    return true;
+}
+
+bool StorageManager::deleteFileSd(std::string filename)
+{
+
+    std::string path = StorageManager::setFilePath(filename);
+
+    if (access(path.c_str(), F_OK) == 0)
+    {
+        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        unlink(path.c_str());
+    }
+
+    return true;
+}
+
+bool StorageManager::fileExistsSd(std::string filename)
+{
+    std::string path = StorageManager::setFilePath(filename);
+
+    return access(path.c_str(), F_OK) == 0;
+}
+
+std::string StorageManager::readFileSd(std::string filename)
+{
+    std::string path = StorageManager::setFilePath(filename);
+
+    if (access(path.c_str(), F_OK) != 0)
+    {
+        ESP_LOGE(TAG, "File does not exist: %s", path.c_str());
+        return "error";
+    }
+
+    FILE *f = fopen(path.c_str(), "r");
+    if (f == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to open %s for reading", path.c_str());
+        return "error";
+    }
+
+    std::string result = "";
+
+    char segment[100];
+
+    while (fgets(segment, sizeof(segment), f))
+    {
+        result.append(segment);
+    }
+
+    fclose(f);
+
+    return result;
+}
+
+std::vector<std::string> StorageManager::listFilesSd(std::string folder)
+{
+    std::vector<std::string> result;
+
+    const char *entrytype;
+    struct dirent *entry;
+    struct stat entry_stat;
+
+    std::string entryPath = StorageManager::setFilePath(folder);
+
+    DIR *dir = opendir(entryPath.c_str());
+
+    if (!dir)
+    {
+        ESP_LOGE(TAG, "Failed to open dir %s", entryPath.c_str());
+        return result;
+    }
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        entrytype = (entry->d_type == DT_DIR ? "directory" : "file");
+
+        const char *ep = entryPath.c_str();
+
+        if (stat(ep, &entry_stat) == -1)
+        {
+            ESP_LOGE(TAG, "Failed to stat %s : %s", entrytype, entry->d_name);
+            continue;
+        }
+
+        result.push_back(entry->d_name);
+    }
+
+    closedir(dir);
+
+    return result;
+}
+
+/**************************************************************
+ * SPIFFS methods
+ ***************************************************************/
+
+bool StorageManager::saveFileSpiffs(std::string filename, std::string data)
+{
+    esp_vfs_spiffs_conf_t config = {
+        .base_path = "/spiffs",
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&config);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return false;
+    }
+
+    ESP_LOGE(TAG, "Creating file: %s", filename.c_str());
+
+    std::string path = StorageManager::setFilePath(filename);
+
+    FILE *f = fopen(path.c_str(), "w");
+    if (f == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to open file for writing");
+        return false;
+    }
+
+    fprintf(f, data.c_str());
+    fclose(f);
+
+    esp_vfs_spiffs_unregister(NULL);
+
+    return true;
+}
+
+bool StorageManager::deleteFileSpiffs(std::string filename)
+{
+    esp_vfs_spiffs_conf_t config = {
+        .base_path = MOUNT_POINT,
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&config);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return false;
+    }
+
+    std::string path = StorageManager::setFilePath(filename);
+
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0)
+    {
+        unlink(path.c_str());
+        return true;
+    }
+
+    ESP_LOGI(TAG, "File %s does not exist!", filename.c_str());
+
+    esp_vfs_spiffs_unregister(NULL);
+    return false;
+}
+
+bool StorageManager::fileExistsSpiffs(std::string filename)
+{
+    esp_vfs_spiffs_conf_t config = {
+        .base_path = MOUNT_POINT,
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&config);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return false;
+    }
+
+    std::string path = StorageManager::setFilePath(filename);
+
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0)
+    {
+        esp_vfs_spiffs_unregister(NULL);
+        return true;
+    }
+
+    ESP_LOGI(TAG, "File %s does not exist!", filename.c_str());
+
+    esp_vfs_spiffs_unregister(NULL);
+    return false;
+}
+
+std::string StorageManager::readFileSpiffs(std::string filename)
+{
+    esp_vfs_spiffs_conf_t config = {
+        .base_path = MOUNT_POINT,
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&config);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return "error";
+    }
+
+    std::string path = StorageManager::setFilePath(filename);
+
+    FILE *file = fopen(path.c_str(), "r");
+    if (file == NULL)
+    {
+        ESP_LOGE(TAG, "File does not exist!");
+        return "error";
+    }
+
+    std::string result = "";
+
+    char segment[256];
+    while (fgets(segment, sizeof(segment), file) != NULL)
+    {
+        result.append(segment);
+    }
+    fclose(file);
+
+    esp_vfs_spiffs_unregister(NULL);
+
+    return result;
+}
+
+std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
+{
+    std::vector<std::string> result;
+
+    esp_vfs_spiffs_conf_t config = {
+        .base_path = MOUNT_POINT,
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+
+        esp_err_t err = esp_vfs_spiffs_register(&config);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return result;
+    }
+
+    std::string path = StorageManager::setFilePath(folder);
+
+    DIR *dir = opendir(path.c_str());
+    if (dir == NULL)
+    {
+        esp_vfs_spiffs_unregister(NULL);
+        return result;
+    }
+
+    while (true)
+    {
+        struct dirent *de = readdir(dir);
+        if (!de)
+        {
+            break;
+        }
+
+        result.push_back(de->d_name);
+    }
+
+    closedir(dir);
+    esp_vfs_spiffs_unregister(NULL);
+
+    return result;
+}
+
+/**************************************************************
+ * Utility methods
+ ***************************************************************/
+
+std::string StorageManager::setFilePath(std::string filename)
+{
 
     std::string out = MOUNT_POINT + std::string("/") + filename;
-    
+
     return out;
 }

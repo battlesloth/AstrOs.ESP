@@ -372,6 +372,7 @@ esp_err_t staSetConfigHandler(httpd_req_t *req)
     int minPos;
     int maxPos;
     bool set;
+    bool inverted;
 
     const cJSON *channel = NULL;
 
@@ -381,12 +382,14 @@ esp_err_t staSetConfigHandler(httpd_req_t *req)
         minPos = cJSON_GetObjectItem(channel, "minPos")->valueint;
         maxPos = cJSON_GetObjectItem(channel, "maxPos")->valueint;
         set = cJSON_GetObjectItem(channel, "set")->valueint;
+        inverted = cJSON_GetObjectItem(channel, "inverted")->valueint;
 
         servo_channel ch;
 
         ch.minPos = minPos;
         ch.maxPos = maxPos;
         ch.set = set;
+        ch.inverted = inverted;
 
         if (id < 16){
             ch.id = id;
@@ -782,9 +785,57 @@ esp_err_t staListScriptsHandler(httpd_req_t *req)
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    if (Storage.listFiles("scripts"))
+    std::vector<std::string> files = Storage.listFiles("scripts"); 
+
+    ESP_LOGI(TAG, "scripts found: %d", files.size());
+
+
+    if (!files.empty()){
+    char *response = NULL;
+    
+    cJSON *status = NULL;
+    cJSON *fileArray = NULL;
+    cJSON *filename = NULL;
+
+    cJSON *body = cJSON_CreateObject();
+    if (body == NULL){
+        goto end;
+    }
+    
+    status = cJSON_CreateString("success");
+    if (status == NULL)
     {
-        const char *respStr = "{\"success\":\"true\"}";
+        goto end;
+    }
+    cJSON_AddItemToObject(body, "true", status);
+    
+    fileArray = cJSON_CreateArray();
+    if (fileArray == NULL)
+    {
+        goto end;
+    }
+
+    cJSON_AddItemToObject(body, "scripts", fileArray);
+    
+    for (auto & element : files){
+        filename = cJSON_CreateString(element.c_str());
+        if (status == NULL)
+        {
+            goto end;
+        }
+        cJSON_AddItemToArray(fileArray, filename);
+    }
+
+    response = cJSON_Print(body);
+
+    end:
+        cJSON_Delete(body);
+        if (response == NULL)
+        {
+            response = "{\"success\":\"false\"}";
+        }
+
+        const char *respStr = response;
         httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
         logError(TAG, __FUNCTION__, __LINE__, err);
