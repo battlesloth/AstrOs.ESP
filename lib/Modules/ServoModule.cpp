@@ -49,8 +49,6 @@ esp_err_t ServoModule::Init(uint8_t board0addr, u_int8_t board1addr)
         ESP_LOGE(TAG, "Failed to initialize the channels mutex");
     }
 
-    ServoModule::LoadServoConfig();
-
     result = pcaBoard0.Init(board0addr, SERVO_FREQ);
 
     if (result != ESP_OK)
@@ -64,8 +62,8 @@ esp_err_t ServoModule::Init(uint8_t board0addr, u_int8_t board1addr)
     {
         return result;
     }
-
-    ServoModule::ZeroServos();
+    ServoModule::LoadServoConfig();
+    //ServoModule::ZeroServos();
     
     return result;
 }
@@ -91,12 +89,19 @@ void ServoModule::LoadServoConfig()
             channels0[i].maxPos = (int)((channels0[i].maxPos * 0.205) - 2.5);
 
             // zero on start up
-            channels0[i].currentPos = channels0[i].minPos + 10;
-            channels0[i].requestedPos = channels0[1].minPos;
+            if (channels0[i].inverted){
+                channels0[i].currentPos = channels0[i].maxPos - 2;
+                channels0[i].requestedPos = channels0[1].maxPos;
+
+            } else {
+                channels0[i].currentPos = channels0[i].minPos + 2;
+                channels0[i].requestedPos = channels0[1].minPos;
+            }
 
             int x = (channels0[i].maxPos - channels0[i].minPos) / 100;
             channels0[i].moveFactor = (int)(x + 0.5);
-            channels0[i].on = false;
+            channels0[i].speed = 5;
+            channels0[i].on = true;
 
             ESP_LOGI(TAG, "Servo Config=> bd: 0 ch: %d, min %d, max %d, set %d, inverted %d",
                 channels0[i].id, channels0[i].minPos, channels0[i].maxPos, channels0[i].set, channels0[i].inverted);
@@ -110,12 +115,19 @@ void ServoModule::LoadServoConfig()
             channels1[i].maxPos = (int)((channels1[i].maxPos * 0.205) - 2.5);
 
             // zero on start up
-            channels1[i].currentPos = channels1[i].minPos + 10;
-            channels1[i].requestedPos = channels1[1].minPos;
+            if (channels1[i].inverted){
+                channels1[i].currentPos = channels1[i].maxPos - 2;
+                channels1[i].requestedPos = channels1[1].maxPos;
+
+            } else {
+                channels1[i].currentPos = channels1[i].minPos + 2;
+                channels1[i].requestedPos = channels1[1].minPos;
+            }
 
             int y = (channels1[i].maxPos - channels1[i].minPos) / 100;
             channels1[i].moveFactor = (int)(y + 0.5);
-            channels1[i].on = false;
+            channels1[i].speed = 5;
+            channels1[i].on = true;
 
             ESP_LOGI(TAG, "Servo Config=> bd: 1 ch: %d, min %d, max %d, set %d, inverted %d", 
                 channels1[i].id, channels1[i].minPos, channels1[i].maxPos, channels1[i].set, channels1[i].inverted);
@@ -129,7 +141,6 @@ void ServoModule::QueueCommand(const char *cmd)
 {
     ESP_LOGI(TAG, "Queueing servo command => %s", cmd);
     ServoCommand servoCmd = ServoCommand(cmd);
-
 
     if (servoCmd.position == 666){
         // this is a test command to set the channel
@@ -216,6 +227,7 @@ void ServoModule::ZeroServos()
             } else{
                 channels0[i].requestedPos = channels0[i].minPos;
             }
+            channels0[i].speed = 5;
             channels0[i].on = true;
             
             if (channels1[i].inverted){
@@ -223,6 +235,7 @@ void ServoModule::ZeroServos()
             } else{
                 channels1[i].requestedPos = channels1[i].minPos;
             }
+            channels1[i].speed = 5;
             channels1[i].on = true;
         }
         pthread_mutex_unlock(&channelsMutex);
