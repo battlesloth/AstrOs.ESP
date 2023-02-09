@@ -90,18 +90,15 @@ void ServoModule::LoadServoConfig()
 
             // zero on start up
             if (channels0[i].inverted){
-                channels0[i].currentPos = channels0[i].maxPos - 2;
                 channels0[i].requestedPos = channels0[1].maxPos;
 
             } else {
-                channels0[i].currentPos = channels0[i].minPos + 2;
                 channels0[i].requestedPos = channels0[1].minPos;
             }
 
             int x = (channels0[i].maxPos - channels0[i].minPos) / 100;
             channels0[i].moveFactor = (int)(x + 0.5);
-            channels0[i].speed = 5;
-            channels0[i].on = true;
+            channels0[i].on = false;
 
             ESP_LOGI(TAG, "Servo Config=> bd: 0 ch: %d, min %d, max %d, set %d, inverted %d",
                 channels0[i].id, channels0[i].minPos, channels0[i].maxPos, channels0[i].set, channels0[i].inverted);
@@ -116,18 +113,15 @@ void ServoModule::LoadServoConfig()
 
             // zero on start up
             if (channels1[i].inverted){
-                channels1[i].currentPos = channels1[i].maxPos - 2;
                 channels1[i].requestedPos = channels1[1].maxPos;
 
             } else {
-                channels1[i].currentPos = channels1[i].minPos + 2;
-                channels1[i].requestedPos = channels1[1].minPos;
+                channels1[i].requestedPos = channels1[i].minPos;
             }
 
             int y = (channels1[i].maxPos - channels1[i].minPos) / 100;
             channels1[i].moveFactor = (int)(y + 0.5);
-            channels1[i].speed = 5;
-            channels1[i].on = true;
+            channels1[i].on = false;
 
             ESP_LOGI(TAG, "Servo Config=> bd: 1 ch: %d, min %d, max %d, set %d, inverted %d", 
                 channels1[i].id, channels1[i].minPos, channels1[i].maxPos, channels1[i].set, channels1[i].inverted);
@@ -135,6 +129,8 @@ void ServoModule::LoadServoConfig()
 
         pthread_mutex_unlock(&channelsMutex);
     }
+
+    ServoModule::ZeroServos();
 }
 
 void ServoModule::QueueCommand(const char *cmd)
