@@ -3,12 +3,13 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
+#include "esp_timer.h"
+#include "esp_netif.h"
 #include <driver/rmt.h>
 #include <esp_log.h>
 #include <driver/uart.h>
 #include <nvs_flash.h>
 #include <esp_event.h>
-
 
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
@@ -21,8 +22,6 @@
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <StorageManager.h>
-
-
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -69,8 +68,8 @@ static esp_timer_handle_t animationTimer;
  **********************************/
 
 #ifdef DARTHSERVO
-#define KI_TX_PIN (GPIO_NUM_2)
-#define KI_RX_PIN (GPIO_NUM_1)
+#define KI_TX_PIN (GPIO_NUM_16)
+#define KI_RX_PIN (GPIO_NUM_3)
 #else
 #define KI_TX_PIN (GPIO_NUM_12)
 #define KI_RX_PIN (GPIO_NUM_13)
@@ -100,7 +99,6 @@ static esp_timer_handle_t animationTimer;
 #define SERVO_BOARD_1_ADDR 0x41
 #endif
 
-
 /**********************************
  * Method definitions
  *********************************/
@@ -117,7 +115,6 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
-
 
 extern "C"
 {
@@ -177,13 +174,13 @@ void init(void)
 
     if (Storage.loadServiceConfig(&config))
     {
-        ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
+        ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID);
 
         std::string temp = std::string(config.networkPass);
 
-        temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+        temp.replace(temp.begin() + 1, temp.end() - 1, std::string(temp.length() - 2, '*'));
 
-        ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
+        ESP_LOGI(TAG, "Network Password: %s", temp.c_str());
 
         astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
     }
@@ -235,7 +232,7 @@ static void initTimers(void)
 static void maintenanceTimerCallback(void *arg)
 {
 
-    ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "RAM left %lu", esp_get_free_heap_size());
 }
 
 static void animationTimerCallback(void *arg)
@@ -297,7 +294,6 @@ static void animationTimerCallback(void *arg)
 /******************************************
  * tasks
  *****************************************/
-
 
 void astrosRxTask(void *arg)
 {
@@ -364,14 +360,14 @@ void serviceQueueTask(void *arg)
                 bool wifiStopped = astrOsNetwork.stopWifiAp();
                 if (wifiStopped)
                 {
-                    ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID );
-                    
+                    ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID);
+
                     std::string temp = std::string(config.networkPass);
 
-                    temp.replace(temp.begin()+1, temp.end()-1, std::string(temp.length()-2, '*')); 
+                    temp.replace(temp.begin() + 1, temp.end() - 1, std::string(temp.length() - 2, '*'));
 
-                    ESP_LOGI(TAG, "Network Password: %s", temp.c_str() );
-                    
+                    ESP_LOGI(TAG, "Network Password: %s", temp.c_str());
+
                     wifiConnected = astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
                 }
                 if (wifiConnected)
@@ -485,6 +481,14 @@ void hardwareQueueTask(void *arg)
                 xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
                 break;
             }
+            case HARDWARE_COMMAND::DISPLAY_COMMAND:
+            {
+                queue_msg_t i2cMsg = {1, 0};
+                strncpy(i2cMsg.data, msg.data, sizeof(i2cMsg.data));
+                i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
+                xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
+                break;
+            }
             break;
             default:
                 break;
@@ -549,7 +553,14 @@ void i2cQueueTask(void *arg)
         {
             ESP_LOGI(TAG, "I2C Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
             ESP_LOGI(TAG, "I2C Command received on queue => %s", msg.data);
-            I2cMod.SendCommand(msg.data);
+            if (msg.message_id == 0)
+            {
+                I2cMod.SendCommand(msg.data);
+            }
+            else if (msg.message_id == 1)
+            {
+                I2cMod.WriteDisplay(msg.data);
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

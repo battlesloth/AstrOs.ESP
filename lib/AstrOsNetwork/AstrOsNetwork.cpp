@@ -3,6 +3,7 @@
 #include "AstrOsHtml.h"
 #include "StorageManager.h"
 #include "uuid.h"
+#include "DisplayCommand.h"
 
 #include <stdio.h>
 #include <functional>
@@ -92,6 +93,14 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
             esp_err_t err = esp_wifi_connect();
             logError(TAG, __FUNCTION__, __LINE__, err);
         }
+
+        queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
+        DisplayCommand cmd = DisplayCommand();
+        cmd.setLine(1, "WIFI");
+        cmd.setLine(3, "Disconnected");
+        strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
+        msg.data[sizeof(msg.data) - 1] = '\0';
+        xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
     }
     else if (eventBase == IP_EVENT && eventId == IP_EVENT_STA_GOT_IP)
     {
@@ -99,6 +108,17 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(AstrOsNetwork::wifiEvenGroup, WIFI_CONNECTED_BIT);
         initializemDns();
+
+        queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
+        DisplayCommand cmd = DisplayCommand();
+        cmd.setLine(1, "Connected");
+        char buff[100];
+        snprintf(buff, sizeof(buff), IPSTR, IP2STR(&event->ip_info.ip));
+        std::string ip = buff;
+        cmd.setLine(3, ip);
+        strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
+        msg.data[sizeof(msg.data) - 1] = '\0';
+        xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
     }
 }
 
@@ -217,6 +237,7 @@ bool AstrOsNetwork::startApWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
     err = httpd_register_uri_handler(webServer, &creds);
     logError(TAG, __FUNCTION__, __LINE__, err);
+
     return true;
 }
 
@@ -226,18 +247,18 @@ bool AstrOsNetwork::startApWebServer()
 esp_err_t staIndexHandler(httpd_req_t *req)
 {
     esp_err_t err;
-    
+
     char fingerprint[37];
 
-    Storage.getControllerFingerprint(fingerprint); 
-    
+    Storage.getControllerFingerprint(fingerprint);
+
     std::stringstream ss;
     ss << "{\"result\":\"up\",\"fingerprint\":\"";
     ss << fingerprint;
     ss << "\"}";
 
     std::string respStr = ss.str();
-    
+
     httpd_resp_set_type(req, "application/json");
     err = httpd_resp_send(req, respStr.c_str(), strlen(respStr.c_str()));
     logError(TAG, __FUNCTION__, __LINE__, err);
@@ -262,7 +283,7 @@ esp_err_t staClearSettingsHandler(httpd_req_t *req)
 
     if (Storage.clearServiceConfig())
     {
-        
+
         const char *respStr = "{\"success\":\"true\"}";
         httpd_resp_set_type(req, "application/json");
         err = httpd_resp_send(req, respStr, strlen(respStr));
@@ -391,11 +412,14 @@ esp_err_t staSetConfigHandler(httpd_req_t *req)
         ch.set = set;
         ch.inverted = inverted;
 
-        if (id < 16){
+        if (id < 16)
+        {
             ch.id = id;
             config0[id] = ch;
-            ESP_LOGI(TAG, "Servo Config: brd 1, ch: %d", ch.id);  
-        } else {
+            ESP_LOGI(TAG, "Servo Config: brd 1, ch: %d", ch.id);
+        }
+        else
+        {
             ch.id = id - 16;
             config1[(id - 16)] = ch;
             ESP_LOGI(TAG, "Servo Config: brd 2, ch: %d", ch.id);
@@ -417,9 +441,9 @@ esp_err_t staSetConfigHandler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
         return ESP_FAIL;
     }
-    
+
     ESP_LOGI(TAG, "Servo Config saved!");
-    
+
     ESP_LOGI(TAG, "Updating Fingerprint");
 
     std::string fingerprint = uuid::generate_uuid_v4();
@@ -429,14 +453,14 @@ esp_err_t staSetConfigHandler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save servo config");
         return ESP_FAIL;
     }
-    
+
     ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::LOAD_SERVO_CONFIG, NULL};
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
-    
+
     std::stringstream ss;
     ss << "{\"result\":\"config saved\",\"fingerprint\":\"";
     ss << fingerprint;
@@ -522,7 +546,6 @@ const httpd_uri_t staMoveServo = {
     .handler = staMoveServoHandler,
     .user_ctx = NULL};
 
-
 esp_err_t staSendI2cHandler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "send I2C called");
@@ -560,14 +583,14 @@ esp_err_t staSendI2cHandler(httpd_req_t *req)
 
     cJSON *root = cJSON_Parse(buf);
 
-    int servoId = cJSON_GetObjectItem(root, "id")->valueint;
+    int i2cCh = cJSON_GetObjectItem(root, "id")->valueint;
 
     std::string cmd = cJSON_GetObjectItem(root, "val")->valuestring;
 
     cJSON_Delete(root);
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_I2C, NULL};
-    snprintf(msg.data, sizeof(msg.data), "2|0|%d|%s", servoId, cmd.c_str());
+    snprintf(msg.data, sizeof(msg.data), "2|0|%d|%s", i2cCh, cmd.c_str());
     msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
@@ -586,8 +609,7 @@ const httpd_uri_t staSendI2c = {
     .handler = staSendI2cHandler,
     .user_ctx = NULL};
 
-
-    esp_err_t staSendSerialHandler(httpd_req_t *req)
+esp_err_t staSendSerialHandler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "send serial called");
 
@@ -785,48 +807,50 @@ esp_err_t staListScriptsHandler(httpd_req_t *req)
     err = httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    std::vector<std::string> files = Storage.listFiles("scripts"); 
+    std::vector<std::string> files = Storage.listFiles("scripts");
 
     ESP_LOGI(TAG, "scripts found: %d", files.size());
 
-
-    if (!files.empty()){
-    char *response = NULL;
-    
-    cJSON *status = NULL;
-    cJSON *fileArray = NULL;
-    cJSON *filename = NULL;
-
-    cJSON *body = cJSON_CreateObject();
-    if (body == NULL){
-        goto end;
-    }
-    
-    status = cJSON_CreateString("success");
-    if (status == NULL)
+    if (!files.empty())
     {
-        goto end;
-    }
-    cJSON_AddItemToObject(body, "true", status);
-    
-    fileArray = cJSON_CreateArray();
-    if (fileArray == NULL)
-    {
-        goto end;
-    }
+        char *response = NULL;
 
-    cJSON_AddItemToObject(body, "scripts", fileArray);
-    
-    for (auto & element : files){
-        filename = cJSON_CreateString(element.c_str());
+        cJSON *status = NULL;
+        cJSON *fileArray = NULL;
+        cJSON *filename = NULL;
+
+        cJSON *body = cJSON_CreateObject();
+        if (body == NULL)
+        {
+            goto end;
+        }
+
+        status = cJSON_CreateString("success");
         if (status == NULL)
         {
             goto end;
         }
-        cJSON_AddItemToArray(fileArray, filename);
-    }
+        cJSON_AddItemToObject(body, "true", status);
 
-    response = cJSON_Print(body);
+        fileArray = cJSON_CreateArray();
+        if (fileArray == NULL)
+        {
+            goto end;
+        }
+
+        cJSON_AddItemToObject(body, "scripts", fileArray);
+
+        for (auto &element : files)
+        {
+            filename = cJSON_CreateString(element.c_str());
+            if (status == NULL)
+            {
+                goto end;
+            }
+            cJSON_AddItemToArray(fileArray, filename);
+        }
+
+        response = cJSON_Print(body);
 
     end:
         cJSON_Delete(body);
@@ -1068,6 +1092,15 @@ bool AstrOsNetwork::startWifiAp()
     ESP_ERROR_CHECK(esp_wifi_start());
 
     AstrOsNetwork::startApWebServer();
+
+    queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
+    DisplayCommand cmd = DisplayCommand();
+    cmd.setLine(1, "AP Mode");
+    cmd.setLine(2, ssid);
+    cmd.setLine(3, password);
+    strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
+    msg.data[sizeof(msg.data) - 1] = '\0';
+    xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     ESP_LOGI(TAG, "WIFI AP started");
     return true;

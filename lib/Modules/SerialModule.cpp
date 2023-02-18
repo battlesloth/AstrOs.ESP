@@ -1,5 +1,6 @@
 #include <SerialModule.h>
 #include <AnimationCommand.h>
+#include <AstrOsUtility.h>
 
 #include "esp_system.h"
 #include "driver/uart.h"
@@ -27,17 +28,18 @@ esp_err_t SerialModule::Init(int baud_rate, int rx_pin, int tx_pin){
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE};
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT};
 
     esp_err_t err = uart_param_config(UART_PORT, &uart_config);
-    if (err != ESP_OK)
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         return err;
     }
 
     err = uart_set_pin(UART_PORT, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
-    if (err != ESP_OK)
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         return err;
     }
