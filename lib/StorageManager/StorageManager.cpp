@@ -193,7 +193,12 @@ bool StorageManager::formatSdCard()
         card->csd.sector_size,
         allocation_unit_size);
 
-    FRESULT res = f_mkfs(drv, FM_ANY, alloc_unit_size, workbuf, workbuf_size);
+    MKFS_PARM param;
+
+    param.fmt = FM_ANY;
+    param.au_size = alloc_unit_size;
+
+    FRESULT res = f_mkfs(drv, &param, workbuf, workbuf_size);
     if (res != FR_OK)
     {
         ESP_LOGE(TAG, "Error formatting SD card: f_mkfs failed (%d)", res);

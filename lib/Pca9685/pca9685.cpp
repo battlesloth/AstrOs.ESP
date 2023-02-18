@@ -235,7 +235,7 @@ esp_err_t Pca9685::readTwoWord(uint8_t regaddr, uint8_t* valueA, uint8_t* valueB
     i2c_master_write_byte(cmd, (Pca9685::address << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
     i2c_master_write_byte(cmd, regaddr, ACK_CHECK_EN);
     i2c_master_stop(cmd);
-    result = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+    result = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
     if (result != ESP_OK) {
         return result;
@@ -246,7 +246,7 @@ esp_err_t Pca9685::readTwoWord(uint8_t regaddr, uint8_t* valueA, uint8_t* valueB
     i2c_master_read_byte(cmd, valueA, (i2c_ack_type_t) ACK_VAL);
     i2c_master_read_byte(cmd, valueB, (i2c_ack_type_t) NACK_VAL);
     i2c_master_stop(cmd);
-    result = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+    result = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
     
     return result;
