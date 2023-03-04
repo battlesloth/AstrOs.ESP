@@ -64,6 +64,12 @@ static esp_timer_handle_t animationTimer;
 #define QUEUE_LENGTH 5
 
 /**********************************
+ * Reset Button
+ **********************************/
+#define RESET_GPIO (GPIO_NUM_15)
+#define LONG_PRESS_THRESHOLD_MS 3000 // 3 seconds
+
+/**********************************
  * Kangaroo Interface
  **********************************/
 
@@ -106,6 +112,7 @@ static void initTimers(void);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 
+void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void hardwareQueueTask(void *arg);
@@ -124,6 +131,14 @@ extern "C"
 void init(void)
 {
     ESP_LOGI(TAG, "init called");
+
+    gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = 1ULL << RESET_GPIO;
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
@@ -169,6 +184,21 @@ void init(void)
     initTimers();
 
     ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue, hardwareQueue));
+}
+
+void app_main()
+{
+    init();
+
+    xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
+    xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
+    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
+    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
+    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
+    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
+
+    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
 
     svc_config_t config;
 
@@ -188,20 +218,6 @@ void init(void)
     {
         astrOsNetwork.startWifiAp();
     }
-}
-
-void app_main()
-{
-    init();
-
-    xTaskCreate(&serviceQueueTask, "service_queue_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
-    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
-    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
-    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
-
-    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
 }
 
 /******************************************
@@ -295,6 +311,46 @@ static void animationTimerCallback(void *arg)
  * tasks
  *****************************************/
 
+void buttonListenerTask(void *arg)
+{
+
+    QueueHandle_t svcQueue;
+
+    svcQueue = (QueueHandle_t)arg;
+    uint32_t buttonStartTime = 0;
+    bool restartSent = false;
+
+    uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
+    while (1)
+    {
+        if (gpio_get_level(RESET_GPIO) == 0)
+        {
+            if (buttonStartTime == 0)
+            {
+                ESP_LOGI(TAG, "Button Pressed");
+                buttonStartTime = xTaskGetTickCount();
+            }
+            else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(LONG_PRESS_THRESHOLD_MS))
+            {
+                
+                if (!restartSent){
+                    queue_svc_cmd_t msg = {SERVICE_COMMAND::SWITCH_TO_WIFI_AP, NULL};
+                    xQueueSend(svcQueue, &msg, pdMS_TO_TICKS(2000));
+                    restartSent = true;
+                    ESP_LOGI(TAG, "AP Switch Sent");
+                }
+            }
+        }
+        else
+        {
+            buttonStartTime = 0;
+            restartSent = false;
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    free(data);
+}
+
 void astrosRxTask(void *arg)
 {
 
@@ -383,6 +439,7 @@ void serviceQueueTask(void *arg)
             }
             case SERVICE_COMMAND::SWITCH_TO_WIFI_AP:
             {
+                ESP_LOGI(TAG, "Switching to WIFI AP");
                 bool apStarted = false;
                 bool wifiStopped = astrOsNetwork.disconnectFromNetwork();
                 if (wifiStopped)

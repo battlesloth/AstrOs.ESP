@@ -44,6 +44,8 @@ int percentDecode(char* out, const char* in)
                     return -1;
                 }
                 c = (v1<<4)|v2;
+            } else if (c == '+'){
+                c = ' ';
             }
             *out++ = c;
         }

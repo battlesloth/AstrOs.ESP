@@ -5,8 +5,6 @@
 
 #include <esp_log.h>
 
-static const char *TAG = "AnimationCommand";
-
 
 DisplayCommand::DisplayCommand()
 {

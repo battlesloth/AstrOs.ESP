@@ -90,8 +90,20 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)eventData;
             ESP_LOGI(TAG, "WIFI STA disconnected, Reason:%d. Attempting to reconnect in 30 seconds", event->reason);
             vTaskDelay(pdMS_TO_TICKS(30000));
-            esp_err_t err = esp_wifi_connect();
-            logError(TAG, __FUNCTION__, __LINE__, err);
+            
+            wifi_mode_t mode; 
+            esp_err_t modeErr = esp_wifi_get_mode(&mode);
+            logError(TAG, __FUNCTION__, __LINE__, modeErr);
+            
+            // we may have reset the wifi to AP mode during the delay
+            if (mode != WIFI_MODE_AP){
+                esp_err_t err = esp_wifi_connect();
+                logError(TAG, __FUNCTION__, __LINE__, err);
+            } else {
+                ESP_LOGI(TAG, "Was going to try to reconnect to WIFI, but AP mode is active.");
+                intentionalDisconnect = false;
+                return;
+            }
         }
 
         queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
@@ -954,44 +966,44 @@ const httpd_uri_t staUploadScript = {
 
 bool AstrOsNetwork::stopStaWebServer()
 {
-    esp_err_t err = httpd_stop(webServer);
-
-    err = httpd_unregister_uri_handler(webServer, "/", HTTP_GET);
+    esp_err_t err = httpd_unregister_uri(webServer, "/");
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staClearSettings.uri, staClearSettings.method);
+    err = httpd_unregister_uri(webServer, staClearSettings.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staFormatSd.uri, staFormatSd.method);
+    err = httpd_unregister_uri(webServer, staFormatSd.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staSetConfig.uri, staSetConfig.method);
+    err = httpd_unregister_uri(webServer, staSetConfig.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staMoveServo.uri, staMoveServo.method);
+    err = httpd_unregister_uri(webServer, staMoveServo.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staSendI2c.uri, staSendI2c.method);
+    err = httpd_unregister_uri(webServer, staSendI2c.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staSendSerial.uri, staSendSerial.method);
+    err = httpd_unregister_uri(webServer, staSendSerial.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staListScripts.uri, staListScripts.method);
+    err = httpd_unregister_uri(webServer, staListScripts.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staUploadScript.uri, staUploadScript.method);
+    err = httpd_unregister_uri(webServer, staUploadScript.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staRunScript.uri, staRunScript.method);
+    err = httpd_unregister_uri(webServer, staRunScript.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
-    err = httpd_unregister_uri_handler(webServer, staPanicStop.uri, staPanicStop.method);
+    err = httpd_unregister_uri(webServer, staPanicStop.uri);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_unregister_uri_handler(webServer, staScriptExists.uri, staScriptExists.method);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = httpd_stop(webServer);
+    
     ESP_LOGI(TAG, "server stopped");
     return (err == ESP_OK);
 }
@@ -1095,9 +1107,9 @@ bool AstrOsNetwork::startWifiAp()
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
     DisplayCommand cmd = DisplayCommand();
-    cmd.setLine(1, "AP Mode");
-    cmd.setLine(2, ssid);
-    cmd.setLine(3, password);
+    cmd.setLine(1, ssid);
+    cmd.setLine(2, password);
+    cmd.setLine(3, "192.168.4.1");
     strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
     msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));

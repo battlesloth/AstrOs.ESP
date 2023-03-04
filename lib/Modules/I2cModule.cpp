@@ -37,7 +37,7 @@ esp_err_t I2cModule::Init()
 
 #ifdef USE_I2C_OLED
     oled._address = I2CAddress;
-    oled._flip = true;
+    oled._flip = false;
     ssd1306_init(&oled, 128, 32);
     ssd1306_clear_screen(&oled, false);
     ssd1306_contrast(&oled, 0xff);

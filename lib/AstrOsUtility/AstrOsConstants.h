@@ -11,7 +11,7 @@ namespace AstrOsConstants{
 
     constexpr const char* ModuleName = "AstrOs-esp32";
     constexpr const char* SerialNumber = "0001";
-    constexpr const char* ApSsid = "AstrOs-esp32-0001";
+    constexpr const char* ApSsid = "AstrOs-ESP";
     constexpr const char* Password = "password";
 
     /***********************************
