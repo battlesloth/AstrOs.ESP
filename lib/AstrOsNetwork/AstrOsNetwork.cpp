@@ -168,15 +168,15 @@ esp_err_t credentialsHandler(httpd_req_t *req)
         else
         {
             ESP_LOGI(TAG, "Found URL query => %s", buf);
-            char ssid[33];
-            err = httpd_query_key_value(buf, "ssid", ssid, 33);
+            char _ssid[33];
+            err = httpd_query_key_value(buf, "ssid", _ssid, 33);
             logError(TAG, __FUNCTION__, __LINE__, err);
 
             char pass[65];
             err = httpd_query_key_value(buf, "pass", pass, 65);
             logError(TAG, __FUNCTION__, __LINE__, err);
 
-            percentDecode(svcConfig.networkSSID, ssid);
+            percentDecode(svcConfig.networkSSID, _ssid);
             percentDecode(svcConfig.networkPass, pass);
         }
         free(buf);
@@ -658,14 +658,19 @@ esp_err_t staSendSerialHandler(httpd_req_t *req)
 
     cJSON *root = cJSON_Parse(buf);
 
+    int ch = cJSON_GetObjectItem(root, "ch")->valueint;
     std::string cmd = cJSON_GetObjectItem(root, "val")->valuestring;
 
     cJSON_Delete(root);
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_SERIAL, NULL};
-    strncpy(msg.data, cmd.c_str(), sizeof(msg.data));
-    msg.data[cmd.length()] = '\n';
-    msg.data[cmd.length() + 1] = '\0';
+    snprintf(msg.data, sizeof(msg.data), "3|0|%d|%s", ch, cmd.c_str());
+    msg.data[sizeof(msg.data) - 1] = '\0';
+
+    //queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_SERIAL, NULL};
+    //strncpy(msg.data, cmd.c_str(), sizeof(msg.data));
+    //msg.data[cmd.length()] = '\n';
+    //msg.data[cmd.length() + 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
@@ -1059,12 +1064,15 @@ bool AstrOsNetwork::startStaWebServer()
  ***************************************************************/
 esp_err_t AstrOsNetwork::init(const char *network, const char *pass, QueueHandle_t sQueue, QueueHandle_t aQueue, QueueHandle_t hQueue)
 {
+
+    ESP_LOGI(TAG, "%s", network);
     serviceQueue = sQueue;
     animationQueue = aQueue;
     hardwareQueue = hQueue;
-    ssid = network;
-    password = pass;
+    AstrOsNetwork::ssid = network;
+    AstrOsNetwork::password = pass;
 
+    ESP_LOGI(TAG, "%s", AstrOsNetwork::ssid.c_str());
     esp_netif_create_default_wifi_ap();
     esp_netif_create_default_wifi_sta();
 
@@ -1086,15 +1094,15 @@ bool AstrOsNetwork::startWifiAp()
 {
 
     wifi_config_t wifiConfig = {};
+    ESP_LOGI(TAG, "%s", AstrOsNetwork::ssid.c_str());
+    memcpy(wifiConfig.ap.ssid, AstrOsNetwork::ssid.c_str(), AstrOsNetwork::ssid.size());
+    memcpy(wifiConfig.ap.password, AstrOsNetwork::password.c_str(), AstrOsNetwork::password.size());
 
-    memcpy(wifiConfig.ap.ssid, ssid, strlen(ssid));
-    memcpy(wifiConfig.ap.password, password, strlen(password));
-
-    wifiConfig.ap.ssid_len = strlen(ssid);
+    wifiConfig.ap.ssid_len = AstrOsNetwork::ssid.size();
     wifiConfig.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     wifiConfig.ap.max_connection = 1;
 
-    if (strlen(password) == 0)
+    if (password.size() == 0)
     {
         wifiConfig.ap.authmode = WIFI_AUTH_OPEN;
     }
@@ -1107,7 +1115,7 @@ bool AstrOsNetwork::startWifiAp()
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
     DisplayCommand cmd = DisplayCommand();
-    cmd.setLine(1, ssid);
+    cmd.setLine(1, AstrOsNetwork::ssid);
     cmd.setLine(2, password);
     cmd.setLine(3, "192.168.4.1");
     strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));

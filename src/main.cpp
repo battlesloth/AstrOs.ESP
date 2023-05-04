@@ -10,6 +10,7 @@
 #include <driver/uart.h>
 #include <nvs_flash.h>
 #include <esp_event.h>
+#include <esp_random.h>
 
 #include <AstrOsInterface.h>
 #include <KangarooInterface.h>
@@ -77,10 +78,16 @@ static esp_timer_handle_t animationTimer;
 #define KI_TX_PIN (GPIO_NUM_16)
 #define KI_RX_PIN (GPIO_NUM_3)
 #else
-#define KI_TX_PIN (GPIO_NUM_12)
-#define KI_RX_PIN (GPIO_NUM_13)
+#define BAUD_RATE_1 (9600)
+#define TX_PIN_1 (GPIO_NUM_2)
+#define RX_PIN_1 (GPIO_NUM_0)
+#define BAUD_RATE_2 (9600)
+#define TX_PIN_2 (GPIO_NUM_32)
+#define RX_PIN_2 (GPIO_NUM_33)
+#define BAUD_RATE_3 (9600)
+#define TX_PIN_3 (GPIO_NUM_12)
+#define RX_PIN_3 (GPIO_NUM_13)
 #endif
-#define KI_BAUD_RATE (9600)
 
 /**********************************
  * I2C Settings
@@ -172,7 +179,19 @@ void init(void)
     ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
 
-    ESP_ERROR_CHECK(SerialMod.Init(KI_BAUD_RATE, KI_RX_PIN, KI_TX_PIN));
+    serial_config_t serialConf;
+
+    serialConf.baudRate1 = 9600;
+    serialConf.txPin1 = TX_PIN_1;
+    serialConf.rxPin1 = RX_PIN_1;
+    serialConf.baudRate2 = 9600;
+    serialConf.txPin2 = TX_PIN_2;
+    serialConf.rxPin2 = RX_PIN_2;
+    serialConf.baudRate3 = 9600;
+    serialConf.txPin3 = TX_PIN_3;
+    serialConf.rxPin3 = RX_PIN_3; 
+
+    ESP_ERROR_CHECK(SerialMod.Init(serialConf));
     ESP_LOGI(TAG, "Serial Module initiated");
 
     ESP_ERROR_CHECK(ServoMod.Init(SERVO_BOARD_0_ADDR, SERVO_BOARD_1_ADDR));
@@ -183,7 +202,21 @@ void init(void)
 
     initTimers();
 
-    ESP_ERROR_CHECK(astrOsNetwork.init(WIFI_AP_SSID, WIFI_AP_PASS, serviceQueue, animationQueue, hardwareQueue));
+    const char alphanum[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const int string_length = 3;
+    std::string random_string(WIFI_AP_SSID);
+
+    for (int i = 0; i < string_length; ++i) {
+        int num = esp_random() % (sizeof(alphanum) - 1);
+        
+        ESP_LOGI(TAG, "%d", num);
+        ESP_LOGI(TAG, "%c", alphanum[num]);
+        random_string += alphanum[num];
+    }
+
+    ESP_LOGI(TAG, "%s", random_string.c_str());
+
+    ESP_ERROR_CHECK(astrOsNetwork.init(random_string.c_str(), WIFI_AP_PASS, serviceQueue, animationQueue, hardwareQueue));
 }
 
 void app_main()
@@ -267,10 +300,9 @@ static void animationTimerCallback(void *arg)
         case CommandType::Kangaroo:
         case CommandType::GenericSerial:
         {
-            SerialCommand scd = SerialCommand(val);
-            ESP_LOGI(TAG, "Serial command val: %s", scd.GetValue().c_str());
+            ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
             queue_msg_t msg = {0, 0};
-            strncpy(msg.data, scd.GetValue().c_str(), sizeof(msg.data));
+            strncpy(msg.data, val.c_str(), sizeof(msg.data));
             msg.data[sizeof(msg.data) - 1] = '\0';
             xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
             break;

@@ -65,6 +65,7 @@ class SerialCommand: public BaseCommand
         SerialCommand();
         ~SerialCommand();
         std::string GetValue();
+        int serialChannel;
 };
 
 class ServoCommand: public BaseCommand

@@ -6,16 +6,18 @@
 
 #include <esp_http_server.h>
 #include <freertos/event_groups.h>
+#include <string>
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+ 
 
 class AstrOsNetwork
 {
 
 private:  
-    const char* ssid;
-    const char* password;
+    std::string ssid;
+    std::string password;
     httpd_handle_t webServer;
     bool startApWebServer();
     bool stopApWebServer();

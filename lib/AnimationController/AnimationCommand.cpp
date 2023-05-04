@@ -31,8 +31,8 @@ CommandTemplate* AnimationCommand::GetCommandTemplatePtr()
 void AnimationCommand::parseCommandType()
 {
     str_vec_t script = AnimationCommand::splitTemplate();
-    commandType = static_cast<CommandType>(std::stoi(script.at(0)));
-    duration = std::stoi(script.at(1));
+    AnimationCommand::commandType = static_cast<CommandType>(std::stoi(script.at(0)));
+    AnimationCommand::duration = std::stoi(script.at(1));
    
 }
 
@@ -87,15 +87,17 @@ SerialCommand::SerialCommand(std::string val) {
 
     str_vec_t parts = SplitTemplate(val);
 
-    type = static_cast<CommandType>(std::stoi(parts.at(0)));
+    SerialCommand::type = static_cast<CommandType>(std::stoi(parts.at(0)));
     
-    if (type == CommandType::Kangaroo){
-        ch = std::stoi(parts.at(2));
-        cmd = std::stoi(parts.at(3));
-        spd = std::stoi(parts.at(4));
-        pos = std::stoi(parts.at(5));
+    SerialCommand::serialChannel = std::stoi(parts.at(2));
+
+    if (SerialCommand::type == CommandType::Kangaroo){
+        SerialCommand::ch = std::stoi(parts.at(3));
+        SerialCommand::cmd = std::stoi(parts.at(4));
+        SerialCommand::spd = std::stoi(parts.at(5));
+        SerialCommand::pos = std::stoi(parts.at(6));
     } else {
-        SerialCommand::value = parts.at(2);
+        SerialCommand::value = parts.at(3);
     }
 }
 
@@ -105,38 +107,38 @@ SerialCommand::~SerialCommand() {}
 
 std::string SerialCommand::GetValue(){
 
-    if (type == CommandType::Kangaroo){
+    if (SerialCommand::type == CommandType::Kangaroo){
         return ToKangarooCommand();
     } else {
-        return value;
+        return SerialCommand::value;
     } 
 }
 
 std::string SerialCommand::ToKangarooCommand() {
-    switch (cmd)
+    switch (SerialCommand::cmd)
     {
     case KANGAROO_ACTION::START:
-        return stringFormat("%d,start%c", ch, '\n');
+        return stringFormat("%d,start%c", SerialCommand::ch, '\n');
     case KANGAROO_ACTION::HOME:
-        return stringFormat("%d,home%c", ch, '\n');
+        return stringFormat("%d,home%c", SerialCommand::ch, '\n');
     case KANGAROO_ACTION::SPEED:
-        return stringFormat("%d,s%d%c", ch, spd, '\n');
+        return stringFormat("%d,s%d%c", SerialCommand::ch, SerialCommand::spd, '\n');
     case KANGAROO_ACTION::POSITION:
-        if (spd > 0){
-            return stringFormat("%d,p%d s%d%c", ch, pos, spd, '\n');
+        if (SerialCommand::spd > 0){
+            return stringFormat("%d,p%d s%d%c", SerialCommand::ch, SerialCommand::pos, SerialCommand::spd, '\n');
         } else {
-            return stringFormat("%d,p%d%c", ch, pos, '\n');
+            return stringFormat("%d,p%d%c", SerialCommand::ch, SerialCommand::pos, '\n');
         }
     case KANGAROO_ACTION::SPEED_INCREMENTAL:
-        return stringFormat("%d,si%d%c", ch, spd, '\n');
+        return stringFormat("%d,si%d%c", SerialCommand::ch, SerialCommand::spd, '\n');
     case KANGAROO_ACTION::POSITION_INCREMENTAL:
-        if (spd > 0){
-            return stringFormat("%d,pi%d s%d%c", ch, pos, spd, '\n');
+        if (SerialCommand::spd > 0){
+            return stringFormat("%d,pi%d s%d%c", SerialCommand::ch, SerialCommand::pos, SerialCommand::spd, '\n');
         } else {
-            return stringFormat("%d,pi%d%c", ch, pos, '\n');
+            return stringFormat("%d,pi%d%c", SerialCommand::ch, SerialCommand::pos, '\n');
         }
     default:
-        return value;
+        return SerialCommand::value;
     }
 }
 
@@ -144,17 +146,17 @@ ServoCommand::ServoCommand(std::string val) {
 
     str_vec_t parts = SplitTemplate(val);
 
-    channel = std::stoi(parts.at(2));
-    position = std::stoi(parts.at(3));
-    speed = std::stoi(parts.at(4)); 
+    ServoCommand::channel = std::stoi(parts.at(2));
+    ServoCommand::position = std::stoi(parts.at(3));
+    ServoCommand::speed = std::stoi(parts.at(4)); 
 }
 ServoCommand::~ServoCommand() {}
 
 I2cCommand::I2cCommand(std::string val) {
     str_vec_t parts = SplitTemplate(val);
 
-    channel = std::stoi(parts.at(2));
-    value = parts.at(3);
+    I2cCommand::channel = std::stoi(parts.at(2));
+    I2cCommand::value = parts.at(3);
 }
 
 I2cCommand::~I2cCommand() {}
