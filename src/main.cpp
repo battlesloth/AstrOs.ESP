@@ -67,7 +67,7 @@ static esp_timer_handle_t animationTimer;
 /**********************************
  * Reset Button
  **********************************/
-#define RESET_GPIO (GPIO_NUM_15)
+#define RESET_GPIO (GPIO_NUM_13)
 #define LONG_PRESS_THRESHOLD_MS 3000 // 3 seconds
 
 /**********************************
