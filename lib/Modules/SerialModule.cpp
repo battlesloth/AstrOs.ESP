@@ -10,7 +10,7 @@
 #include <string.h>
 
 static const char *TAG = "SerialModule";
-static pthread_mutex_t serialMutex;
+static SemaphoreHandle_t serialMutex;
 
 static const int RX_BUF_SIZE = 1024;
 
@@ -26,7 +26,8 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
 {
     esp_err_t result = ESP_OK;
 
-    if (pthread_mutex_init(&serialMutex, NULL) != 0)
+    serialMutex = xSemaphoreCreateMutex();
+    if (serialMutex == NULL)
     {
         ESP_LOGE(TAG, "Failed to initialize the serial mutex");
     }
@@ -105,32 +106,39 @@ void SerialModule::SendCommand(const char *cmd)
 
 void SerialModule::SendData(int ch, std::string msg)
 {
-    if (pthread_mutex_lock(&serialMutex) == 0)
+    bool sent = false;
+
+    while (!sent)
     {
-        uart_port_t port;
-        esp_err_t err;
-
-        switch (ch)
+        if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
-        case 1:
-            port = UART_NUM_1;
-            break;
-        case 2:
-            port = UART_NUM_2;
-            break;
-        case 3:
-            SerialModule::SoftSerialWrite(msg.c_str());
-            pthread_mutex_unlock(&serialMutex);
-            return;
-        default:
-            port = UART_NUM_1;
-            break;
+            uart_port_t port;
+            esp_err_t err;
+
+            switch (ch)
+            {
+            case 1:
+                port = UART_NUM_1;
+                break;
+            case 2:
+                port = UART_NUM_2;
+                break;
+            case 3:
+                SerialModule::SoftSerialWrite(msg.c_str());
+                xSemaphoreGive(serialMutex);
+                return;
+            default:
+                port = UART_NUM_1;
+                break;
+            }
+
+            const int txBytes = uart_write_bytes(port, msg.c_str(), msg.length() + 1);
+            ESP_LOGI(TAG, "Wrote %d bytes", txBytes);
+
+            xSemaphoreGive(serialMutex);
+        } else {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-
-        const int txBytes = uart_write_bytes(port, msg.c_str(), msg.length() + 1);
-        ESP_LOGI(TAG, "Wrote %d bytes", txBytes);
-
-        pthread_mutex_unlock(&serialMutex);
     }
 }
 

@@ -3,6 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+build
 external_libs/esp-idf-lib/components/ads111x/.eil.yml
 external_libs/esp-idf-lib/components/ads111x/ads111x.c
 external_libs/esp-idf-lib/components/ads111x/ads111x.h

@@ -9,9 +9,7 @@ static const char *TAG = "NvsManager";
 
 bool nvsSaveServiceConfig(svc_config_t config)
 {
-    if (config.networkSSID != NULL &&
-        config.networkPass != NULL &&
-        config.networkSSID[0] != '\0' &&
+    if (config.networkSSID[0] != '\0' &&
         config.networkPass[0] != '\0')
     {
         nvs_handle_t nvsHandle;
@@ -242,7 +240,6 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
             return false;
         }
 
-        
         err = nvs_set_u8(nvsHandle, invertedConfig, config[i].inverted);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
