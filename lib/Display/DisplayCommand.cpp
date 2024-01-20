@@ -5,7 +5,6 @@
 
 #include <esp_log.h>
 
-
 DisplayCommand::DisplayCommand()
 {
     useLine1 = false;
@@ -26,27 +25,18 @@ DisplayCommand::~DisplayCommand()
 {
 }
 
-void DisplayCommand::setLine(int line, std::string value){
-    switch (line)
-    {
-    case 1:
-        useLine1 = true;
-        line1 = value;
-        break;
-    case 2:
-        useLine2 = true;
-        line2 = value;
-        break;
-    case 3:
-        useLine3 = true;
-        line3 = value;
-        break;
-    default:
-        break;
-    }
+void DisplayCommand::setValue(std::string line1, std::string line2, std::string line3)
+{
+    DisplayCommand::useLine1 = true;
+    DisplayCommand::line1 = line1;
+    DisplayCommand::useLine2 = line2.length() > 0;
+    DisplayCommand::line2 = line2;
+    DisplayCommand::useLine3 = line3.length() > 0;
+    DisplayCommand::line3 = line3;
 }
 
-void DisplayCommand::parseCommand(){
+void DisplayCommand::parseCommand()
+{
     str_vec_t parts;
 
     auto start = 0U;
@@ -68,11 +58,12 @@ void DisplayCommand::parseCommand(){
     DisplayCommand::line3 = parts.at(5);
 }
 
-std::string DisplayCommand::toString(){
+std::string DisplayCommand::toString()
+{
     std::stringstream ss;
-    ss << (DisplayCommand::useLine1 ? "1": "0") << "|" << DisplayCommand::line1 << "|" 
-       << (DisplayCommand::useLine2 ? "1": "0") << "|" << DisplayCommand::line2 << "|" 
-       << (DisplayCommand::useLine3 ? "1": "0") << "|" << DisplayCommand::line3;
+    ss << (DisplayCommand::useLine1 ? "1" : "0") << "|" << DisplayCommand::line1 << "|"
+       << (DisplayCommand::useLine2 ? "1" : "0") << "|" << DisplayCommand::line2 << "|"
+       << (DisplayCommand::useLine3 ? "1" : "0") << "|" << DisplayCommand::line3;
 
     return ss.str();
 }

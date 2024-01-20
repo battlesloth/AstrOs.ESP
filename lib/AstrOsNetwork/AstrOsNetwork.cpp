@@ -90,16 +90,19 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
             wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)eventData;
             ESP_LOGI(TAG, "WIFI STA disconnected, Reason:%d. Attempting to reconnect in 30 seconds", event->reason);
             vTaskDelay(pdMS_TO_TICKS(30000));
-            
-            wifi_mode_t mode; 
+
+            wifi_mode_t mode;
             esp_err_t modeErr = esp_wifi_get_mode(&mode);
             logError(TAG, __FUNCTION__, __LINE__, modeErr);
-            
+
             // we may have reset the wifi to AP mode during the delay
-            if (mode != WIFI_MODE_AP){
+            if (mode != WIFI_MODE_AP)
+            {
                 esp_err_t err = esp_wifi_connect();
                 logError(TAG, __FUNCTION__, __LINE__, err);
-            } else {
+            }
+            else
+            {
                 ESP_LOGI(TAG, "Was going to try to reconnect to WIFI, but AP mode is active.");
                 intentionalDisconnect = false;
                 return;
@@ -108,8 +111,7 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
 
         queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
         DisplayCommand cmd = DisplayCommand();
-        cmd.setLine(1, "WIFI");
-        cmd.setLine(3, "Disconnected");
+        cmd.setValue("WIFI", "", "Disconnected");
         strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
         msg.data[sizeof(msg.data) - 1] = '\0';
         xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
@@ -121,13 +123,13 @@ void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, vo
         xEventGroupSetBits(AstrOsNetwork::wifiEvenGroup, WIFI_CONNECTED_BIT);
         initializemDns();
 
-        queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
-        DisplayCommand cmd = DisplayCommand();
-        cmd.setLine(1, "Connected");
         char buff[100];
         snprintf(buff, sizeof(buff), IPSTR, IP2STR(&event->ip_info.ip));
         std::string ip = buff;
-        cmd.setLine(3, ip);
+
+        queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
+        DisplayCommand cmd = DisplayCommand();
+        cmd.setValue("Connected", "", ip);
         strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
         msg.data[sizeof(msg.data) - 1] = '\0';
         xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
@@ -667,10 +669,10 @@ esp_err_t staSendSerialHandler(httpd_req_t *req)
     snprintf(msg.data, sizeof(msg.data), "3|0|%d|%s", ch, cmd.c_str());
     msg.data[sizeof(msg.data) - 1] = '\0';
 
-    //queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_SERIAL, NULL};
-    //strncpy(msg.data, cmd.c_str(), sizeof(msg.data));
-    //msg.data[cmd.length()] = '\n';
-    //msg.data[cmd.length() + 1] = '\0';
+    // queue_hw_cmd_t msg = {HARDWARE_COMMAND::SEND_SERIAL, NULL};
+    // strncpy(msg.data, cmd.c_str(), sizeof(msg.data));
+    // msg.data[cmd.length()] = '\n';
+    // msg.data[cmd.length() + 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
 
     esp_err_t err;
@@ -1008,7 +1010,7 @@ bool AstrOsNetwork::stopStaWebServer()
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     err = httpd_stop(webServer);
-    
+
     ESP_LOGI(TAG, "server stopped");
     return (err == ESP_OK);
 }
@@ -1115,9 +1117,7 @@ bool AstrOsNetwork::startWifiAp()
 
     queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
     DisplayCommand cmd = DisplayCommand();
-    cmd.setLine(1, AstrOsNetwork::ssid);
-    cmd.setLine(2, password);
-    cmd.setLine(3, "192.168.4.1");
+    cmd.setValue(AstrOsNetwork::ssid, password, "192.168.4.1");
     strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
     msg.data[sizeof(msg.data) - 1] = '\0';
     xQueueSend(AstrOsNetwork::hardwareQueue, &msg, pdMS_TO_TICKS(2000));
