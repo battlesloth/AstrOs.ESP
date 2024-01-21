@@ -12,6 +12,7 @@ extern "C"
     typedef enum
     {
         ESPNOW_SEND,
+        ESPNOW_SEND_HEARTBEAT,
         ESPNOW_RECV,
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF

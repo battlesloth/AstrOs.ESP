@@ -147,6 +147,7 @@ static esp_timer_handle_t heartbeatTimer;
 #define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
 #define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 
+static SemaphoreHandle_t masterMacMutex;
 static uint8_t master_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
@@ -206,6 +207,12 @@ void app_main()
 void init(void)
 {
     ESP_LOGI(TAG, "init called");
+
+    masterMacMutex = xSemaphoreCreateMutex();
+    if (masterMacMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to initialize the serial mutex");
+    }
 
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
@@ -311,11 +318,8 @@ static void heartbeatTimerCallback(void *arg)
     if (!isMaster) // && !IS_BROADCAST_ADDR(master_mac))
     {
         queue_espnow_msg_t msg;
-        msg.id = ESPNOW_SEND;
-        memccpy(msg.dest, broadcast_mac, 0, ESP_NOW_ETH_ALEN);
-        msg.data = (uint8_t *)malloc(11);
-        msg.data_len = 11;
-        memcpy(msg.data, "heartbeat", 10);
+        msg.id = ESPNOW_SEND_HEARTBEAT;
+        msg.data = (uint8_t *)malloc(1);
 
         if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
         {
@@ -746,6 +750,35 @@ void espnowQueueTask(void *arg)
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
+            case ESPNOW_SEND_HEARTBEAT:
+            {
+                uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+                bool gotMac = false;
+                while (!gotMac)
+                {
+                    if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
+                    {
+                        memcpy(destMac, master_mac, ESP_NOW_ETH_ALEN);
+                        gotMac = true;
+                        xSemaphoreGive(masterMacMutex);
+                    }
+                    else
+                    {
+                        vTaskDelay(10 / portTICK_PERIOD_MS);
+                    }
+                }
+
+                queue_espnow_msg_t msg;
+                msg.id = ESPNOW_SEND_HEARTBEAT;
+                memccpy(msg.dest, destMac, 0, ESP_NOW_ETH_ALEN);
+                msg.data = (uint8_t *)malloc(11);
+                msg.data_len = 11;
+                memcpy(msg.data, "heartbeat", 10);
+
+                free(destMac);
+
+                break;
+            }
             case ESPNOW_SEND:
             {
                 ESP_LOGI(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
@@ -764,7 +797,7 @@ void espnowQueueTask(void *arg)
                     ESP_LOGI(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     /* If MAC address does not exist in peer list, add it to peer list. */
-                    if (esp_now_is_peer_exist(msg.src) == false && discoveryMode && isMaster)
+                    if (esp_now_is_peer_exist(msg.src) == false && discoveryMode)
                     {
                         if (peerCount == ESPNOW_PEER_LIMIT)
                         {
@@ -792,8 +825,17 @@ void espnowQueueTask(void *arg)
                         // add to peer cache
                         espnow_peer_t newPeer;
                         newPeer.id = peerCount - 1;
-                        std::string name = astrOsGetName(peerCount - 1);
-                        memccpy(newPeer.name, name.c_str(), '\0', name.length());
+
+                        if (isMaster)
+                        {
+                            std::string name = astrOsGetName(peerCount - 1);
+                            memccpy(newPeer.name, name.c_str(), '\0', name.length());
+                        }
+                        else
+                        {
+                            memccpy(newPeer.name, "master", '\0', 8);
+                        }
+
                         memcpy(newPeer.mac_addr, msg.src, ESP_NOW_ETH_ALEN);
                         memset(newPeer.crypto_key, 0, ESP_NOW_KEY_LEN);
                         newPeer.is_paired = true;
@@ -804,18 +846,37 @@ void espnowQueueTask(void *arg)
 
                         peerCount++;
 
-                        // send registration message
-                        queue_espnow_msg_t regMsg;
-                        regMsg.id = ESPNOW_SEND;
-                        memccpy(regMsg.dest, msg.src, 0, ESP_NOW_ETH_ALEN);
-                        regMsg.data = (uint8_t *)malloc(11);
-                        regMsg.data_len = 11;
-                        memcpy(regMsg.data, "registered", 10);
+                        if (isMaster)
+                        { // send registration message
+                            queue_espnow_msg_t regMsg;
+                            regMsg.id = ESPNOW_SEND;
+                            memccpy(regMsg.dest, broadcast_mac, 0, ESP_NOW_ETH_ALEN);
+                            regMsg.data = (uint8_t *)malloc(16);
+                            regMsg.data_len = 16;
+                            memcpy(regMsg.data, "AstrOs Register", 16);
 
-                        if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                            if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                            {
+                                ESP_LOGW(TAG, "Send espnow queue fail");
+                                free(regMsg.data);
+                            }
+                        }
+                        else
                         {
-                            ESP_LOGW(TAG, "Send espnow queue fail");
-                            free(regMsg.data);
+                            bool macSet = false;
+                            while (!macSet)
+                            {
+                                if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
+                                {
+                                    memcpy(master_mac, msg.src, ESP_NOW_ETH_ALEN);
+                                    macSet = true;
+                                    xSemaphoreGive(masterMacMutex);
+                                }
+                                else
+                                {
+                                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                                }
+                            }
                         }
                     }
                     // TODO: test code, remove
