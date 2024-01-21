@@ -8,6 +8,19 @@
 
 static const char *TAG = "NvsManager";
 
+static void setKeyId(char *key, uint8_t id, uint8_t startPos)
+{
+    if (id < 10)
+    {
+        key[startPos + 1] = (id + '0');
+    }
+    else
+    {
+        key[2] = (1 + '0');
+        key[3] = ((id - 10) + '0');
+    }
+}
+
 bool nvsSaveServiceConfig(svc_config_t config)
 {
     if (config.networkSSID[0] != '\0' &&
@@ -201,24 +214,10 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
 
     for (size_t i = 0; i < arraySize; i++)
     {
-        if (i < 10)
-        {
-            minPosConfig[3] = (i + '0');
-            maxPosConfig[3] = (i + '0');
-            setConfig[3] = (i + '0');
-            invertedConfig[3] = (i + '0');
-        }
-        else
-        {
-            minPosConfig[2] = (1 + '0');
-            minPosConfig[3] = ((i - 10) + '0');
-            maxPosConfig[2] = (1 + '0');
-            maxPosConfig[3] = ((i - 10) + '0');
-            setConfig[2] = (1 + '0');
-            setConfig[3] = ((i - 10) + '0');
-            invertedConfig[2] = (1 + '0');
-            invertedConfig[3] = ((i - 10) + '0');
-        }
+        setKeyId(minPosConfig, i, 2);
+        setKeyId(maxPosConfig, i, 2);
+        setKeyId(setConfig, i, 2);
+        setKeyId(invertedConfig, i, 2);
 
         err = nvs_set_u16(nvsHandle, minPosConfig, config[i].minPos);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -290,24 +289,10 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     for (size_t i = 0; i < arraySize; i++)
     {
-        if (i < 10)
-        {
-            minPosConfig[3] = (i + '0');
-            maxPosConfig[3] = (i + '0');
-            setConfig[3] = (i + '0');
-            invertedConfig[3] = (i + '0');
-        }
-        else
-        {
-            minPosConfig[2] = (1 + '0');
-            minPosConfig[3] = ((i - 10) + '0');
-            maxPosConfig[2] = (1 + '0');
-            maxPosConfig[3] = ((i - 10) + '0');
-            setConfig[2] = (1 + '0');
-            setConfig[3] = ((i - 10) + '0');
-            invertedConfig[2] = (1 + '0');
-            invertedConfig[3] = ((i - 10) + '0');
-        }
+        setKeyId(minPosConfig, i, 2);
+        setKeyId(maxPosConfig, i, 2);
+        setKeyId(setConfig, i, 2);
+        setKeyId(invertedConfig, i, 2);
 
         err = nvs_get_u16(nvsHandle, minPosConfig, &min);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -421,85 +406,33 @@ bool nvsClearEspNowPeerConfig()
         return false;
     }
 
-    char peerNameConfig[] = "peer-00-name";
-    char peerMacConfig[] = "peer-00-mac";
-    char peerChannelConfig[] = "peer-00-channel";
-    char peerCryptoKeyConfig[] = "peer-00-cryptokey";
-    char peerIsPairedConfig[] = "peer-00-ispaired";
+    char nameConfig[] = "p-00-name";
+    char macConfig[] = "p-00-mac";
+    char cryptoKeyConfig[] = "p-00-crypt";
+    char isPairedConfig[] = "p-00-paired";
 
     for (size_t i = 0; i < peers; i++)
     {
-        if (i < 10)
-        {
-            peerNameConfig[6] = (i + '0');
-            peerMacConfig[6] = (i + '0');
-            peerChannelConfig[6] = (i + '0');
-            peerCryptoKeyConfig[6] = (i + '0');
-            peerIsPairedConfig[6] = (i + '0');
-        }
-        else
-        {
-            peerNameConfig[5] = (1 + '0');
-            peerNameConfig[6] = ((i - 10) + '0');
-            peerMacConfig[5] = (1 + '0');
-            peerMacConfig[6] = ((i - 10) + '0');
-            peerChannelConfig[5] = (1 + '0');
-            peerChannelConfig[6] = ((i - 10) + '0');
-            peerCryptoKeyConfig[5] = (1 + '0');
-            peerCryptoKeyConfig[6] = ((i - 10) + '0');
-            peerIsPairedConfig[5] = (1 + '0');
-            peerIsPairedConfig[6] = ((i - 10) + '0');
-        }
+        setKeyId(nameConfig, i, 2);
+        setKeyId(macConfig, i, 2);
+        setKeyId(cryptoKeyConfig, i, 2);
+        setKeyId(isPairedConfig, i, 2);
 
-        err = nvs_erase_key(nvsHandle, peerNameConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
+        err = nvs_erase_key(nvsHandle, nameConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
 
-        err = nvs_erase_key(nvsHandle, peerMacConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
+        err = nvs_erase_key(nvsHandle, macConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
 
-        err = nvs_erase_key(nvsHandle, peerChannelConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
+        err = nvs_erase_key(nvsHandle, cryptoKeyConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
 
-        err = nvs_erase_key(nvsHandle, peerChannelConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        err = nvs_erase_key(nvsHandle, peerCryptoKeyConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        err = nvs_erase_key(nvsHandle, peerIsPairedConfig);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
+        err = nvs_erase_key(nvsHandle, isPairedConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
     }
 
     err = nvs_erase_key(nvsHandle, peerCountConfig);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
+    logError(TAG, __FUNCTION__, __LINE__, err);
 
     nvs_close(nvsHandle);
     return true;
@@ -534,54 +467,40 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
         return false;
     }
 
-    char peerNameConfig[] = "peer-00-name";
-    char peerMacConfig[] = "peer-00-mac";
-    char peerCryptoKeyConfig[] = "peer-00-cryptokey";
-    char peerIsPairedConfig[] = "peer-00-ispaired";
+    char nameConfig[] = "p-00-name";
+    char macConfig[] = "p-00-mac";
+    char cryptoKeyConfig[] = "p-00-crypt";
+    char isPairedConfig[] = "p-00-paired";
 
     int i = config.id;
 
-    if (i < 10)
-    {
-        peerNameConfig[6] = (i + '0');
-        peerMacConfig[6] = (i + '0');
-        peerCryptoKeyConfig[6] = (i + '0');
-        peerIsPairedConfig[6] = (i + '0');
-    }
-    else
-    {
-        peerNameConfig[5] = (1 + '0');
-        peerNameConfig[6] = ((i - 10) + '0');
-        peerMacConfig[5] = (1 + '0');
-        peerMacConfig[6] = ((i - 10) + '0');
-        peerCryptoKeyConfig[5] = (1 + '0');
-        peerCryptoKeyConfig[6] = ((i - 10) + '0');
-        peerIsPairedConfig[5] = (1 + '0');
-        peerIsPairedConfig[6] = ((i - 10) + '0');
-    }
+    setKeyId(nameConfig, i, 2);
+    setKeyId(macConfig, i, 2);
+    setKeyId(cryptoKeyConfig, i, 2);
+    setKeyId(isPairedConfig, i, 2);
 
-    err = nvs_set_blob(nvsHandle, peerNameConfig, config.name, 16);
+    err = nvs_set_blob(nvsHandle, nameConfig, config.name, 16);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
         return false;
     }
 
-    err = nvs_set_blob(nvsHandle, peerMacConfig, config.mac_addr, 6);
+    err = nvs_set_blob(nvsHandle, macConfig, config.mac_addr, 6);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
         return false;
     }
 
-    err = nvs_set_blob(nvsHandle, peerCryptoKeyConfig, config.crypto_key, 16);
+    err = nvs_set_blob(nvsHandle, cryptoKeyConfig, config.crypto_key, 16);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
         return false;
     }
 
-    err = nvs_set_u8(nvsHandle, peerIsPairedConfig, config.is_paired);
+    err = nvs_set_u8(nvsHandle, isPairedConfig, config.is_paired);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -615,55 +534,40 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
         nvs_close(nvsHandle);
         return false;
     }
-
-    char peerNameConfig[] = "peer-00-name";
-    char peerMacConfig[] = "peer-00-mac";
-    char peerCryptoKeyConfig[] = "peer-00-cryptokey";
-    char peerIsPairedConfig[] = "peer-00-ispaired";
+    char nameConfig[] = "p-00-name";
+    char macConfig[] = "p-00-mac";
+    char cryptoKeyConfig[] = "p-00-crypt";
+    char isPairedConfig[] = "p-00-paired";
 
     for (size_t i = 0; i < peers; i++)
     {
-        if (i < 10)
-        {
-            peerNameConfig[6] = (i + '0');
-            peerMacConfig[6] = (i + '0');
-            peerCryptoKeyConfig[6] = (i + '0');
-            peerIsPairedConfig[6] = (i + '0');
-        }
-        else
-        {
-            peerNameConfig[5] = (1 + '0');
-            peerNameConfig[6] = ((i - 10) + '0');
-            peerMacConfig[5] = (1 + '0');
-            peerMacConfig[6] = ((i - 10) + '0');
-            peerCryptoKeyConfig[5] = (1 + '0');
-            peerCryptoKeyConfig[6] = ((i - 10) + '0');
-            peerIsPairedConfig[5] = (1 + '0');
-            peerIsPairedConfig[6] = ((i - 10) + '0');
-        }
+        setKeyId(nameConfig, i, 2);
+        setKeyId(macConfig, i, 2);
+        setKeyId(cryptoKeyConfig, i, 2);
+        setKeyId(isPairedConfig, i, 2);
 
-        err = nvs_set_blob(nvsHandle, peerNameConfig, config[i].name, 16);
+        err = nvs_set_blob(nvsHandle, nameConfig, config[i].name, 16);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
             return false;
         }
 
-        err = nvs_set_blob(nvsHandle, peerMacConfig, config[i].mac_addr, 6);
+        err = nvs_set_blob(nvsHandle, macConfig, config[i].mac_addr, 6);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
             return false;
         }
 
-        err = nvs_set_blob(nvsHandle, peerCryptoKeyConfig, config[i].crypto_key, 16);
+        err = nvs_set_blob(nvsHandle, cryptoKeyConfig, config[i].crypto_key, 16);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
             return false;
         }
 
-        err = nvs_set_u8(nvsHandle, peerIsPairedConfig, config[i].is_paired);
+        err = nvs_set_u8(nvsHandle, isPairedConfig, config[i].is_paired);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
@@ -705,51 +609,37 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
     uint8_t cryptoKey[16];
     bool isPaired;
 
-    char peerNameConfig[] = "peer-00-name";
-    char peerMacConfig[] = "peer-00-mac";
-    char peerCryptoKeyConfig[] = "peer-00-cryptokey";
-    char peerIsPairedConfig[] = "peer-00-ispaired";
+    char nameConfig[] = "p-00-name";
+    char macConfig[] = "p-00-mac";
+    char cryptoKeyConfig[] = "p-00-crypt";
+    char isPairedConfig[] = "p-00-paired";
 
     for (size_t i = 0; i < peers; i++)
     {
-        if (i < 10)
-        {
-            peerNameConfig[6] = (i + '0');
-            peerMacConfig[6] = (i + '0');
-            peerCryptoKeyConfig[6] = (i + '0');
-            peerIsPairedConfig[6] = (i + '0');
-        }
-        else
-        {
-            peerNameConfig[5] = (1 + '0');
-            peerNameConfig[6] = ((i - 10) + '0');
-            peerMacConfig[5] = (1 + '0');
-            peerMacConfig[6] = ((i - 10) + '0');
-            peerCryptoKeyConfig[5] = (1 + '0');
-            peerCryptoKeyConfig[6] = ((i - 10) + '0');
-            peerIsPairedConfig[5] = (1 + '0');
-            peerIsPairedConfig[6] = ((i - 10) + '0');
-        }
+        setKeyId(nameConfig, i, 2);
+        setKeyId(macConfig, i, 2);
+        setKeyId(cryptoKeyConfig, i, 2);
+        setKeyId(isPairedConfig, i, 2);
 
-        err = nvs_get_blob(nvsHandle, peerNameConfig, name, 16);
+        err = nvs_get_blob(nvsHandle, nameConfig, name, 16);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(name, 0, 16);
         }
 
-        err = nvs_get_blob(nvsHandle, peerMacConfig, mac, 6);
+        err = nvs_get_blob(nvsHandle, macConfig, mac, 6);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(mac, 0, 6);
         }
 
-        err = nvs_get_blob(nvsHandle, peerCryptoKeyConfig, cryptoKey, 16);
+        err = nvs_get_blob(nvsHandle, cryptoKeyConfig, cryptoKey, 16);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(cryptoKey, 0, 16);
         }
 
-        err = nvs_get_u8(nvsHandle, peerIsPairedConfig, &isPaired);
+        err = nvs_get_u8(nvsHandle, isPairedConfig, &isPaired);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             isPaired = false;

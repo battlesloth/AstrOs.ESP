@@ -685,25 +685,28 @@ void espnowQueueTask(void *arg)
     ESP_ERROR_CHECK(esp_now_add_peer(broadcastPeer));
     free(broadcastPeer);
 
-    // Load current peer list.
-    espnow_peer_t peerList[10] = {};
-    int peerCount = Storage.loadEspNowPeerConfigs(peerList);
-
-    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
-
-    for (int i = 0; i < peerCount; i++)
+    if (isMaster)
     {
-        espnow_peer_t p = peerList[i];
+        // Load current peer list.
+        espnow_peer_t peerList[10] = {};
+        int peerCount = Storage.loadEspNowPeerConfigs(peerList);
 
-        esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
+        ESP_LOGI(TAG, "Loaded %d peers", peerCount);
 
-        memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
-        cachedPeer->channel = ESPNOW_CHANNEL;
-        cachedPeer->ifidx = ESPNOW_WIFI_IF;
-        cachedPeer->encrypt = false;
-        memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
-        ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
-        free(cachedPeer);
+        for (int i = 0; i < peerCount; i++)
+        {
+            espnow_peer_t p = peerList[i];
+
+            esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
+
+            memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
+            cachedPeer->channel = ESPNOW_CHANNEL;
+            cachedPeer->ifidx = ESPNOW_WIFI_IF;
+            cachedPeer->encrypt = false;
+            memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
+            ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
+            free(cachedPeer);
+        }
     }
 
     bool discoveryMode = false;
@@ -761,7 +764,7 @@ void espnowQueueTask(void *arg)
                     /* If MAC address does not exist in peer list, add it to peer list. */
                     if (esp_now_is_peer_exist(msg.src) == false && discoveryMode && isMaster)
                     {
-                        if (peerCount < ESPNOW_PEER_LIMIT)
+                        if (peerCount == ESPNOW_PEER_LIMIT)
                         {
                             ESP_LOGI(TAG, "Max peers have already been added.");
                             break;
@@ -799,6 +802,23 @@ void espnowQueueTask(void *arg)
 
                         peerCount++;
 
+                        // send registration message
+                        queue_espnow_msg_t regMsg;
+                        regMsg.id = ESPNOW_SEND;
+                        memccpy(regMsg.dest, msg.src, 0, ESP_NOW_ETH_ALEN);
+                        regMsg.data = (uint8_t *)malloc(11);
+                        regMsg.data_len = 11;
+                        memcpy(regMsg.data, "registered", 10);
+
+                        if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                        {
+                            ESP_LOGW(TAG, "Send espnow queue fail");
+                            free(regMsg.data);
+                        }
+                    }
+                    // TODO: test code, remove
+                    else if (discoveryMode && isMaster)
+                    {
                         // send registration message
                         queue_espnow_msg_t regMsg;
                         regMsg.id = ESPNOW_SEND;
