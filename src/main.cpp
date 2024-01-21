@@ -27,8 +27,10 @@
 #include <ServoModule.h>
 #include <I2cModule.h>
 #include <AstrOsUtility.h>
+#include <AstrOsEspNowHelpers.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
+#include <AstrOsNames.h>
 #include <StorageManager.h>
 
 static const char *TAG = AstrOsConstants::ModuleName;
@@ -140,15 +142,19 @@ static esp_timer_handle_t heartbeatTimer;
 #define ESPNOW_WIFI_MODE WIFI_MODE_STA
 #define ESPNOW_WIFI_IF WIFI_IF_STA
 #define ESPNOW_MAXDELAY 512
+#define ESPNOW_PEER_LIMIT 10
 
 #define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
 #define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 
+static uint8_t master_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 /**********************************
  * Method definitions
  *********************************/
+void init(void);
+
 static void initTimers(void);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
@@ -178,6 +184,23 @@ esp_err_t mountSdCard(void);
 extern "C"
 {
     void app_main(void);
+}
+
+void app_main()
+{
+    init();
+
+    xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
+    xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
+    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
+    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
+    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
+    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
+    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL);
+
+    initTimers();
 }
 
 void init(void)
@@ -245,23 +268,6 @@ void init(void)
     ESP_ERROR_CHECK(espnowInit());
 }
 
-void app_main()
-{
-    init();
-
-    xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
-    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
-    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
-    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
-    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL);
-
-    initTimers();
-}
-
 /******************************************
  * timers
  *****************************************/
@@ -301,17 +307,21 @@ static void initTimers(void)
 static void heartbeatTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "Heartbeat");
-    queue_espnow_msg_t msg;
-    msg.id = ESPNOW_SEND;
-    memccpy(msg.dest, broadcast_mac, 0, ESP_NOW_ETH_ALEN);
-    msg.data = (uint8_t *)malloc(11);
-    msg.data_len = 11;
-    memcpy(msg.data, "heartbeat", 10);
 
-    if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+    if (!isMaster) // && !IS_BROADCAST_ADDR(master_mac))
     {
-        ESP_LOGW(TAG, "Send espnow queue fail");
-        free(msg.data);
+        queue_espnow_msg_t msg;
+        msg.id = ESPNOW_SEND;
+        memccpy(msg.dest, broadcast_mac, 0, ESP_NOW_ETH_ALEN);
+        msg.data = (uint8_t *)malloc(11);
+        msg.data_len = 11;
+        memcpy(msg.data, "heartbeat", 10);
+
+        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send espnow queue fail");
+            free(msg.data);
+        }
     }
 }
 
@@ -405,7 +415,10 @@ void buttonListenerTask(void *arg)
 
                 if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(LONG_PRESS_THRESHOLD_MS))
                 {
-                    ESP_LOGI(TAG, "Restarting ESP32");
+                    ESP_LOGI(TAG, "Clearing ESP-NOW peer config");
+
+                    Storage.clearEspNowPeerConfig();
+
                     esp_restart();
                 }
                 else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(MEDIUM_PRESS_THRESHOLD_MS))
@@ -661,16 +674,37 @@ void espnowQueueTask(void *arg)
     displayUpdate.data[sizeof(displayUpdate.data) - 1] = '\0';
     xQueueSend(hardwareQueue, &displayUpdate, pdMS_TO_TICKS(2000));
 
-    /* Add broadcast peer information to peer list. */
-    esp_now_peer_info_t *peer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
+    // Add broadcast peer information to peer list.
+    esp_now_peer_info_t *broadcastPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
 
-    memset(peer, 0, sizeof(esp_now_peer_info_t));
-    peer->channel = ESPNOW_CHANNEL;
-    peer->ifidx = ESPNOW_WIFI_IF;
-    peer->encrypt = false;
-    memcpy(peer->peer_addr, broadcast_mac, ESP_NOW_ETH_ALEN);
-    ESP_ERROR_CHECK(esp_now_add_peer(peer));
-    free(peer);
+    memset(broadcastPeer, 0, sizeof(esp_now_peer_info_t));
+    broadcastPeer->channel = ESPNOW_CHANNEL;
+    broadcastPeer->ifidx = ESPNOW_WIFI_IF;
+    broadcastPeer->encrypt = false;
+    memcpy(broadcastPeer->peer_addr, broadcast_mac, ESP_NOW_ETH_ALEN);
+    ESP_ERROR_CHECK(esp_now_add_peer(broadcastPeer));
+    free(broadcastPeer);
+
+    // Load current peer list.
+    espnow_peer_t peerList[10] = {};
+    int peerCount = Storage.loadEspNowPeerConfigs(peerList);
+
+    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
+
+    for (int i = 0; i < peerCount; i++)
+    {
+        espnow_peer_t p = peerList[i];
+
+        esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
+
+        memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
+        cachedPeer->channel = ESPNOW_CHANNEL;
+        cachedPeer->ifidx = ESPNOW_WIFI_IF;
+        cachedPeer->encrypt = false;
+        memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
+        ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
+        free(cachedPeer);
+    }
 
     bool discoveryMode = false;
     queue_espnow_msg_t msg;
@@ -698,6 +732,12 @@ void espnowQueueTask(void *arg)
             case ESPNOW_DISCOVERY_MODE_OFF:
             {
                 discoveryMode = false;
+                queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
+                DisplayCommand cmd = DisplayCommand();
+                cmd.setValue("", rank, "");
+                strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
+                msg.data[sizeof(msg.data) - 1] = '\0';
+                xQueueSend(hardwareQueue, &msg, pdMS_TO_TICKS(2000));
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -719,8 +759,16 @@ void espnowQueueTask(void *arg)
                     ESP_LOGI(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     /* If MAC address does not exist in peer list, add it to peer list. */
-                    if (esp_now_is_peer_exist(msg.src) == false && discoveryMode)
+                    if (esp_now_is_peer_exist(msg.src) == false && discoveryMode && isMaster)
                     {
+                        if (peerCount < ESPNOW_PEER_LIMIT)
+                        {
+                            ESP_LOGI(TAG, "Max peers have already been added.");
+                            break;
+                        }
+
+                        ESP_LOGI(TAG, "Adding new peer:" MACSTR, MAC2STR(msg.src));
+
                         esp_now_peer_info_t *peer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
                         if (peer == NULL)
                         {
@@ -735,6 +783,35 @@ void espnowQueueTask(void *arg)
                         memcpy(peer->peer_addr, msg.src, ESP_NOW_ETH_ALEN);
                         ESP_ERROR_CHECK(esp_now_add_peer(peer));
                         free(peer);
+
+                        // add to peer cache
+                        espnow_peer_t newPeer;
+                        newPeer.id = peerCount - 1;
+                        std::string name = astrOsGetName(peerCount - 1);
+                        memccpy(newPeer.name, name.c_str(), '\0', name.length());
+                        memcpy(newPeer.mac_addr, msg.src, ESP_NOW_ETH_ALEN);
+                        memset(newPeer.crypto_key, 0, ESP_NOW_KEY_LEN);
+                        newPeer.is_paired = true;
+
+                        Storage.saveEspNowPeer(newPeer);
+
+                        peerList[peerCount] = newPeer;
+
+                        peerCount++;
+
+                        // send registration message
+                        queue_espnow_msg_t regMsg;
+                        regMsg.id = ESPNOW_SEND;
+                        memccpy(regMsg.dest, msg.src, 0, ESP_NOW_ETH_ALEN);
+                        regMsg.data = (uint8_t *)malloc(11);
+                        regMsg.data_len = 11;
+                        memcpy(regMsg.data, "registered", 10);
+
+                        if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                        {
+                            ESP_LOGW(TAG, "Send espnow queue fail");
+                            free(regMsg.data);
+                        }
                     }
                 }
                 else if (esp_now_is_peer_exist(msg.src))

@@ -8,7 +8,6 @@ extern "C"
 #include <stdio.h>
 #include <stdbool.h>
 #include <esp_err.h>
-#include <esp_now.h>
 
     typedef enum
     {
@@ -94,48 +93,6 @@ extern "C"
         bool inverted;
         bool on;
     } servo_channel;
-
-/***************
- * ESP-NOW
- ****************/
-#define IS_BROADCAST_ADDR(addr) (memcmp(addr, broadcast_mac, ESP_NOW_ETH_ALEN) == 0)
-
-    typedef enum
-    {
-        ESPNOW_SEND,
-        ESPNOW_RECV,
-        ESPNOW_DISCOVERY_MODE_ON,
-        ESPNOW_DISCOVERY_MODE_OFF
-    } espnow_event_id_t;
-
-    /* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
-    typedef struct
-    {
-        espnow_event_id_t id;
-        uint8_t src[ESP_NOW_ETH_ALEN];
-        uint8_t dest[ESP_NOW_ETH_ALEN];
-        esp_now_send_status_t status;
-        uint8_t *data;
-        int data_len;
-    } queue_espnow_msg_t;
-
-    /*typedef struct
-    {
-        uint8_t mac_addr[ESP_NOW_ETH_ALEN];
-        esp_now_send_status_t status;
-    } espnow_event_send_cb_t;
-
-    typedef struct
-    {
-        uint8_t mac_addr[ESP_NOW_ETH_ALEN];
-        uint8_t *data;
-        int data_len;
-    } espnow_event_recv_cb_t;
-*/
-
-    /**********************************
-     * Helper Methods
-     *********************************/
 
     // if the esp_err_t != ESP_OK, log the error with the function and line number
     bool logError(const char *tag, const char *function, int line, esp_err_t err);

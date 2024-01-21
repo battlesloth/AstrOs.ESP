@@ -1,5 +1,6 @@
 #include <StorageManager.h>
 #include <AstrOsUtility.h>
+#include <AstrOsEspNowHelpers.h>
 #include <NvsManager.h>
 
 #include <stdio.h>
@@ -118,6 +119,40 @@ bool StorageManager::saveServoConfig(int boardId, servo_channel *servos, int arr
 bool StorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
 {
     return nvsLoadServoConfig(boardId, servos, arraySize);
+}
+
+/*******************************
+ * ESP-NOW configs
+ ********************************/
+
+bool StorageManager::saveMasterMacAddress(uint8_t *mac)
+{
+    return nvsSaveMasterMacAddress(mac);
+}
+
+bool StorageManager::loadMasterMacAddress(uint8_t *mac)
+{
+    return nvsLoadMasterMacAddress(mac);
+}
+
+bool StorageManager::clearEspNowPeerConfig()
+{
+    return nvsClearEspNowPeerConfig();
+}
+
+bool StorageManager::saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
+{
+    return nvsSaveEspNowPeerConfigs(config, arraySize);
+}
+
+bool StorageManager::saveEspNowPeer(espnow_peer_t config)
+{
+    return nvsSaveEspNowPeer(config);
+}
+
+int StorageManager::loadEspNowPeerConfigs(espnow_peer_t *config)
+{
+    return nvsLoadEspNowPeerConfigs(config);
 }
 
 bool StorageManager::saveFile(std::string filename, std::string data)
@@ -536,7 +571,7 @@ std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
         .format_if_mount_failed = true,
     };
 
-        esp_err_t err = esp_vfs_spiffs_register(&config);
+    esp_err_t err = esp_vfs_spiffs_register(&config);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         return result;
