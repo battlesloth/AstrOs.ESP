@@ -319,7 +319,9 @@ static void heartbeatTimerCallback(void *arg)
     {
         queue_espnow_msg_t msg;
         msg.id = ESPNOW_SEND_HEARTBEAT;
-        msg.data = (uint8_t *)malloc(1);
+        msg.data = (uint8_t *)malloc(11);
+        msg.data_len = 11;
+        memcpy(msg.data, "heartbeat", 10);
 
         if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
         {
@@ -692,27 +694,24 @@ void espnowQueueTask(void *arg)
     int peerCount = 0;
     espnow_peer_t peerList[10] = {};
 
-    if (isMaster)
+    // Load current peer list.
+    peerCount = Storage.loadEspNowPeerConfigs(peerList);
+
+    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
+
+    for (int i = 0; i < peerCount; i++)
     {
-        // Load current peer list.
-        peerCount = Storage.loadEspNowPeerConfigs(peerList);
+        espnow_peer_t p = peerList[i];
 
-        ESP_LOGI(TAG, "Loaded %d peers", peerCount);
+        esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
 
-        for (int i = 0; i < peerCount; i++)
-        {
-            espnow_peer_t p = peerList[i];
-
-            esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
-
-            memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
-            cachedPeer->channel = ESPNOW_CHANNEL;
-            cachedPeer->ifidx = ESPNOW_WIFI_IF;
-            cachedPeer->encrypt = false;
-            memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
-            ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
-            free(cachedPeer);
-        }
+        memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
+        cachedPeer->channel = ESPNOW_CHANNEL;
+        cachedPeer->ifidx = ESPNOW_WIFI_IF;
+        cachedPeer->encrypt = false;
+        memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
+        ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
+        free(cachedPeer);
     }
 
     bool discoveryMode = false;
@@ -754,6 +753,7 @@ void espnowQueueTask(void *arg)
             {
                 uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
                 bool gotMac = false;
+
                 while (!gotMac)
                 {
                     if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
@@ -768,12 +768,10 @@ void espnowQueueTask(void *arg)
                     }
                 }
 
-                queue_espnow_msg_t msg;
-                msg.id = ESPNOW_SEND_HEARTBEAT;
-                memccpy(msg.dest, destMac, 0, ESP_NOW_ETH_ALEN);
-                msg.data = (uint8_t *)malloc(11);
-                msg.data_len = 11;
-                memcpy(msg.data, "heartbeat", 10);
+                if (esp_now_send(destMac, msg.data, msg.data_len) != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Send error");
+                }
 
                 free(destMac);
 
