@@ -27,7 +27,8 @@
 #include <ServoModule.h>
 #include <I2cModule.h>
 #include <AstrOsUtility.h>
-#include <AstrOsEspNowHelpers.h>
+#include <AstrOsEspNow.h>
+#include <AstrOsEspNowUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <AstrOsNames.h>
@@ -132,20 +133,6 @@ static esp_timer_handle_t heartbeatTimer;
 /**********************************
  * ESP-NOW
  **********************************/
-#define CONFIG_ESPNOW_PMK "pmk1234567890123"
-#define CONFIG_ESPNOW_LMK "lmk1234567890123"
-#define ESPNOW_CHANNEL 1
-#define ESPNOW_CHANNEL 1
-#define ESPNOW_SEND_COUNT 100
-#define ESPNOW_SEND_DELAY 1000
-#define ESPNOW_SEND_LEN 200
-#define ESPNOW_WIFI_MODE WIFI_MODE_STA
-#define ESPNOW_WIFI_IF WIFI_IF_STA
-#define ESPNOW_MAXDELAY 512
-#define ESPNOW_PEER_LIMIT 10
-
-#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
-#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 
 static SemaphoreHandle_t masterMacMutex;
 static uint8_t master_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -285,6 +272,8 @@ void init(void)
 
     ESP_ERROR_CHECK(wifiInit());
     ESP_ERROR_CHECK(espnowInit());
+
+    AstrOs_EspNow.init();
 }
 
 /******************************************
@@ -693,15 +682,7 @@ void espnowQueueTask(void *arg)
     xQueueSend(hardwareQueue, &displayUpdate, pdMS_TO_TICKS(2000));
 
     // Add broadcast peer information to peer list.
-    esp_now_peer_info_t *broadcastPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
-
-    memset(broadcastPeer, 0, sizeof(esp_now_peer_info_t));
-    broadcastPeer->channel = ESPNOW_CHANNEL;
-    broadcastPeer->ifidx = ESPNOW_WIFI_IF;
-    broadcastPeer->encrypt = false;
-    memcpy(broadcastPeer->peer_addr, broadcast_mac, ESP_NOW_ETH_ALEN);
-    ESP_ERROR_CHECK(esp_now_add_peer(broadcastPeer));
-    free(broadcastPeer);
+    AstrOs_EspNow.addPeer(broadcast_mac);
 
     int peerCount = 0;
     espnow_peer_t peerList[10] = {};
@@ -713,17 +694,7 @@ void espnowQueueTask(void *arg)
 
     for (int i = 0; i < peerCount; i++)
     {
-        espnow_peer_t p = peerList[i];
-
-        esp_now_peer_info_t *cachedPeer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
-
-        memset(cachedPeer, 0, sizeof(esp_now_peer_info_t));
-        cachedPeer->channel = ESPNOW_CHANNEL;
-        cachedPeer->ifidx = ESPNOW_WIFI_IF;
-        cachedPeer->encrypt = false;
-        memcpy(cachedPeer->peer_addr, p.mac_addr, ESP_NOW_ETH_ALEN);
-        ESP_ERROR_CHECK(esp_now_add_peer(cachedPeer));
-        free(cachedPeer);
+        AstrOs_EspNow.addPeer(peerList[i].mac_addr);
     }
 
     bool discoveryMode = false;
@@ -817,20 +788,7 @@ void espnowQueueTask(void *arg)
 
                         ESP_LOGI(TAG, "Adding new peer:" MACSTR, MAC2STR(msg.src));
 
-                        esp_now_peer_info_t *peer = (esp_now_peer_info_t *)malloc(sizeof(esp_now_peer_info_t));
-                        if (peer == NULL)
-                        {
-                            ESP_LOGE(TAG, "Malloc peer information fail");
-                            break;
-                        }
-                        memset(peer, 0, sizeof(esp_now_peer_info_t));
-                        peer->channel = ESPNOW_CHANNEL;
-                        peer->ifidx = ESPNOW_WIFI_IF;
-                        peer->encrypt = true;
-                        memcpy(peer->lmk, CONFIG_ESPNOW_LMK, ESP_NOW_KEY_LEN);
-                        memcpy(peer->peer_addr, msg.src, ESP_NOW_ETH_ALEN);
-                        ESP_ERROR_CHECK(esp_now_add_peer(peer));
-                        free(peer);
+                        AstrOs_EspNow.addPeer(msg.src);
 
                         // add to peer cache
                         espnow_peer_t newPeer;
@@ -841,11 +799,13 @@ void espnowQueueTask(void *arg)
                         if (isMaster)
                         {
                             std::string name = astrOsGetName(newPeer.id);
-                            memccpy(newPeer.name, name.c_str(), '\0', name.length());
+                            char nameBuf[16];
+
+                            memcpy(newPeer.name, name.c_str(), name.length() + 1);
                         }
                         else
                         {
-                            memccpy(newPeer.name, "master", '\0', 8);
+                            memcpy(newPeer.name, "master\0", 8);
                         }
 
                         memcpy(newPeer.mac_addr, msg.src, ESP_NOW_ETH_ALEN);
@@ -860,12 +820,7 @@ void espnowQueueTask(void *arg)
 
                         if (isMaster)
                         { // send registration message
-                            queue_espnow_msg_t regMsg;
-                            regMsg.id = ESPNOW_SEND;
-                            memccpy(regMsg.dest, broadcast_mac, 0, ESP_NOW_ETH_ALEN);
-                            regMsg.data = (uint8_t *)malloc(16);
-                            regMsg.data_len = 16;
-                            memcpy(regMsg.data, "AstrOs Register", 16);
+                            queue_espnow_msg_t regMsg = AstrOs_EspNow.generateRegisterMessage(msg.src);
 
                             if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                             {

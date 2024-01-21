@@ -5,11 +5,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-
-class AstrOsInterface{
-    private:
+class AstrOsInterface
+{
+private:
     QueueHandle_t animationQueue;
-    public:
+
+public:
     AstrOsInterface();
     ~AstrOsInterface();
     void Init(QueueHandle_t animationQueue);

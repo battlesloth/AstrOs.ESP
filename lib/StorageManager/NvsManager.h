@@ -6,7 +6,7 @@ extern "C"
 #endif
 
 #include <AstrOsUtility.h>
-#include <AstrOsEspNowHelpers.h>
+#include <AstrOsEspNowUtility.h>
 
     // save the service configuration to NVS
     bool nvsSaveServiceConfig(svc_config_t config);
