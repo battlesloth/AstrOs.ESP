@@ -685,11 +685,13 @@ void espnowQueueTask(void *arg)
     ESP_ERROR_CHECK(esp_now_add_peer(broadcastPeer));
     free(broadcastPeer);
 
+    int peerCount = 0;
+    espnow_peer_t peerList[10] = {};
+
     if (isMaster)
     {
         // Load current peer list.
-        espnow_peer_t peerList[10] = {};
-        int peerCount = Storage.loadEspNowPeerConfigs(peerList);
+        peerCount = Storage.loadEspNowPeerConfigs(peerList);
 
         ESP_LOGI(TAG, "Loaded %d peers", peerCount);
 
