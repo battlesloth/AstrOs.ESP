@@ -820,6 +820,7 @@ void espnowQueueTask(void *arg)
 
                         if (isMaster)
                         { // send registration message
+                            ESP_LOGI(TAG, "Generating registration message in response to " MACSTR, MAC2STR(msg.src));
                             queue_espnow_msg_t regMsg = AstrOs_EspNow.generateRegisterMessage(broadcast_mac);
 
                             if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
