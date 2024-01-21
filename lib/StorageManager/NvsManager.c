@@ -494,7 +494,7 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
     setKeyId(cryptoKeyConfig, i, 2);
     setKeyId(isPairedConfig, i, 2);
 
-    err = nvs_set_blob(nvsHandle, nameConfig, config.name, 16);
+    err = nvs_set_str(nvsHandle, nameConfig, config.name);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -508,7 +508,7 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
         return false;
     }
 
-    err = nvs_set_blob(nvsHandle, cryptoKeyConfig, config.crypto_key, 16);
+    err = nvs_set_str(nvsHandle, cryptoKeyConfig, config.crypto_key);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -568,7 +568,7 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
         setKeyId(cryptoKeyConfig, i, 2);
         setKeyId(isPairedConfig, i, 2);
 
-        err = nvs_set_blob(nvsHandle, nameConfig, config[i].name, 16);
+        err = nvs_set_str(nvsHandle, nameConfig, config[i].name);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
@@ -582,7 +582,7 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
             return false;
         }
 
-        err = nvs_set_blob(nvsHandle, cryptoKeyConfig, config[i].crypto_key, 16);
+        err = nvs_set_str(nvsHandle, cryptoKeyConfig, config[i].crypto_key);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             nvs_close(nvsHandle);
@@ -632,9 +632,10 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
         return 0;
     }
 
-    uint8_t name[16];
+    size_t size = 0;
+    char name[16];
     uint8_t mac[6];
-    uint8_t cryptoKey[16];
+    char cryptoKey[16];
     bool isPaired;
 
     char nameConfig[] = "p-00-name";
@@ -649,19 +650,22 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
         setKeyId(cryptoKeyConfig, i, 2);
         setKeyId(isPairedConfig, i, 2);
 
-        err = nvs_get_blob(nvsHandle, nameConfig, name, 16);
+        size = 16;
+        err = nvs_get_str(nvsHandle, nameConfig, name, &size);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(name, 0, 16);
         }
 
-        err = nvs_get_blob(nvsHandle, macConfig, mac, 6);
+        size = 6;
+        err = nvs_get_blob(nvsHandle, macConfig, mac, &size);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(mac, 0, 6);
         }
 
-        err = nvs_get_blob(nvsHandle, cryptoKeyConfig, cryptoKey, 16);
+        size = 16;
+        err = nvs_get_str(nvsHandle, cryptoKeyConfig, cryptoKey, &size);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             memset(cryptoKey, 0, 16);
