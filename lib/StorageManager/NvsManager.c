@@ -353,6 +353,14 @@ bool nvsSaveMasterMacAddress(uint8_t *mac)
         nvs_close(nvsHandle);
         return false;
     }
+
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     nvs_close(nvsHandle);
     return true;
 }
@@ -387,7 +395,7 @@ bool nvsClearEspNowPeerConfig()
 {
     esp_err_t err;
     nvs_handle_t nvsHandle;
-    size_t defaultSize = 0;
+
     err = nvs_open("config", NVS_READWRITE, &nvsHandle);
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -399,7 +407,7 @@ bool nvsClearEspNowPeerConfig()
     int peers = 0;
     char peerCountConfig[] = "peer-count";
 
-    err = nvs_get_u8(nvsHandle, peerCountConfig, &peers);
+    err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -434,6 +442,13 @@ bool nvsClearEspNowPeerConfig()
     err = nvs_erase_key(nvsHandle, peerCountConfig);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     nvs_close(nvsHandle);
     return true;
 }
@@ -455,12 +470,12 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
 
     char peerCountConfig[] = "peer-count";
 
-    err = nvs_get_u8(nvsHandle, peerCountConfig, &peers);
+    err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
     peers++;
 
-    err = nvs_set_u8(nvsHandle, peerCountConfig, peers);
+    err = nvs_set_i8(nvsHandle, peerCountConfig, peers);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -507,6 +522,13 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
         return false;
     }
 
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     nvs_close(nvsHandle);
     return true;
 }
@@ -528,7 +550,7 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
 
     char peerCountConfig[] = "peer-count";
 
-    err = nvs_set_u8(nvsHandle, peerCountConfig, peers);
+    err = nvs_set_i8(nvsHandle, peerCountConfig, peers);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -575,6 +597,13 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
         }
     }
 
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     nvs_close(nvsHandle);
     return true;
 }
@@ -596,7 +625,7 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
     int peers = 0;
     char peerCountConfig[] = "peer-count";
 
-    err = nvs_get_u8(nvsHandle, peerCountConfig, &peers);
+    err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -605,7 +634,6 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
 
     uint8_t name[16];
     uint8_t mac[6];
-    uint8_t channel;
     uint8_t cryptoKey[16];
     bool isPaired;
 
