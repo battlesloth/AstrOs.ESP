@@ -232,6 +232,18 @@ void init(void)
 
     ESP_ERROR_CHECK(Storage.Init());
 
+    uint8_t mac[ESP_NOW_ETH_ALEN] = {0};
+
+    if (Storage.loadMasterMacAddress(mac))
+    {
+        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(mac));
+        memcpy(master_mac, mac, ESP_NOW_ETH_ALEN);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Master MAC address not found in storage");
+    }
+
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     AstrOs.Init(animationQueue);
@@ -822,11 +834,13 @@ void espnowQueueTask(void *arg)
 
                         // add to peer cache
                         espnow_peer_t newPeer;
-                        newPeer.id = peerCount - 1;
+
+                        // peer id is 0 indexed
+                        newPeer.id = peerCount;
 
                         if (isMaster)
                         {
-                            std::string name = astrOsGetName(peerCount - 1);
+                            std::string name = astrOsGetName(newPeer.id);
                             memccpy(newPeer.name, name.c_str(), '\0', name.length());
                         }
                         else
@@ -861,6 +875,11 @@ void espnowQueueTask(void *arg)
                         }
                         else
                         {
+                            uint8_t cachedMac[ESP_NOW_ETH_ALEN] = {0};
+                            memccpy(cachedMac, msg.src, 0, ESP_NOW_ETH_ALEN);
+
+                            Storage.saveMasterMacAddress(cachedMac);
+
                             bool macSet = false;
                             while (!macSet)
                             {

@@ -442,6 +442,8 @@ bool nvsClearEspNowPeerConfig()
     err = nvs_erase_key(nvsHandle, peerCountConfig);
     logError(TAG, __FUNCTION__, __LINE__, err);
 
+    err = nvs_erase_key(nvsHandle, "masterMac");
+
     err = nvs_commit(nvsHandle);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
