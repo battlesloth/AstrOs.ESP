@@ -46,7 +46,7 @@ esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
 queue_espnow_msg_t AstrOsEspNow::generateRegisterMessage(uint8_t *macAddress)
 {
     queue_espnow_msg_t regMsg;
-    regMsg.id = ESPNOW_SEND;
+    regMsg.eventType = ESPNOW_SEND;
     memcpy(regMsg.dest, macAddress, ESP_NOW_ETH_ALEN);
     regMsg.data = (uint8_t *)malloc(16);
     regMsg.data_len = 16;

@@ -319,7 +319,7 @@ static void heartbeatTimerCallback(void *arg)
     if (!isMaster) // && !IS_BROADCAST_ADDR(master_mac))
     {
         queue_espnow_msg_t msg;
-        msg.id = ESPNOW_SEND_HEARTBEAT;
+        msg.eventType = ESPNOW_SEND_HEARTBEAT;
         msg.data = (uint8_t *)malloc(11);
         msg.data_len = 11;
         memcpy(msg.data, "heartbeat", 10);
@@ -434,12 +434,12 @@ void buttonListenerTask(void *arg)
                     msg.data = (uint8_t *)malloc(sizeof(uint8_t));
                     if (discoveryModeActive)
                     {
-                        msg.id = ESPNOW_DISCOVERY_MODE_OFF;
+                        msg.eventType = ESPNOW_DISCOVERY_MODE_OFF;
                         discoveryModeActive = false;
                     }
                     else
                     {
-                        msg.id = ESPNOW_DISCOVERY_MODE_ON;
+                        msg.eventType = ESPNOW_DISCOVERY_MODE_ON;
                         discoveryModeActive = true;
                     }
 
@@ -706,7 +706,7 @@ void espnowQueueTask(void *arg)
         {
             ESP_LOGI(TAG, "ESP-NOW Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
 
-            switch (msg.id)
+            switch (msg.eventType)
             {
             case ESPNOW_DISCOVERY_MODE_ON:
             {
@@ -857,7 +857,7 @@ void espnowQueueTask(void *arg)
                     {
                         // send registration message
                         queue_espnow_msg_t regMsg;
-                        regMsg.id = ESPNOW_SEND;
+                        regMsg.eventType = ESPNOW_SEND;
                         memccpy(regMsg.dest, msg.src, 0, ESP_NOW_ETH_ALEN);
                         regMsg.data = (uint8_t *)malloc(11);
                         regMsg.data_len = 11;
@@ -881,7 +881,7 @@ void espnowQueueTask(void *arg)
                 break;
             }
             default:
-                ESP_LOGE(TAG, "Callback type error: %d", msg.id);
+                ESP_LOGE(TAG, "Callback type error: %d", msg.eventType);
                 break;
             }
 
@@ -946,7 +946,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
         ESP_LOGI(TAG, "Receive unicast ESPNOW data");
     }
 
-    msg.id = ESPNOW_RECV;
+    msg.eventType = ESPNOW_RECV;
     memcpy(msg.src, src_addr, ESP_NOW_ETH_ALEN);
     memcpy(msg.dest, dest_addr, ESP_NOW_ETH_ALEN);
     msg.data = (uint8_t *)malloc(len);

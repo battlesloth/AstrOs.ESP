@@ -30,12 +30,12 @@ extern "C"
         ESPNOW_RECV,
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF
-    } espnow_event_id_t;
+    } EspNowQueueEventType;
 
     /* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
     typedef struct
     {
-        espnow_event_id_t id;
+        EspNowQueueEventType eventType;
         uint8_t src[ESP_NOW_ETH_ALEN];
         uint8_t dest[ESP_NOW_ETH_ALEN];
         esp_now_send_status_t status;
@@ -51,6 +51,24 @@ extern "C"
         char crypto_key[16];
         bool is_paired;
     } espnow_peer_t;
+
+    // |----ID-----|-number-|--of---|-type--|-payload size-|---payload---|
+    // | uint8[16] | uint8  | uint8 | uint8 |    uint8     |  uint8[180] |
+    typedef enum
+    {
+        REGISTRATION,
+        HEARTBEAT,
+    } AstrOsPacketType;
+
+    typedef struct
+    {
+        uint8_t id[16];
+        int packetNumber;
+        int totalPackets;
+        AstrOsPacketType packetType;
+        int payloadSize;
+        uint8_t *payload;
+    } astros_packet_t;
 
 #ifdef __cplusplus
 }
