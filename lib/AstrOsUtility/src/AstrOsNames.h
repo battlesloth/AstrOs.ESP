@@ -5,7 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <random>
-#include "esp_random.h"
+#include <time.h>
 
 typedef std::vector<std::string> str_vec_t;
 
@@ -20,7 +20,7 @@ str_vec_t astrOsRandomizeNames()
 {
     str_vec_t result = {"Anakin", "Obi-Wan", "Ahsoka", "Ezra", "Rey", "Luke", "Mara", "Jaina", "Jacen", "Grogu"};
 
-    unsigned seed = esp_random();
+    unsigned int seed = static_cast<unsigned int>(time(NULL));
 
     // Use a mersenne_twister_engine to generate random numbers
     std::mt19937 generator(seed);

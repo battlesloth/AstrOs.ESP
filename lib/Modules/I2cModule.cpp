@@ -1,7 +1,7 @@
 #include <I2cModule.h>
 #include <AnimationCommand.h>
 #include <DisplayCommand.h>
-#include <AstrOsConstants.h>
+#include <AstrOsUtility.h>
 
 #include "esp_system.h"
 #include <esp_log.h>
@@ -59,7 +59,7 @@ void I2cModule::SendCommand(const char *cmd)
 }
 
 esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)
-{   
+{
     esp_err_t ret = ESP_OK;
     if (pthread_mutex_lock(&i2cMutex) == 0)
     {
@@ -70,7 +70,7 @@ esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)
         i2c_master_stop(cmd);
         ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
         i2c_cmd_link_delete(cmd);
-        pthread_mutex_unlock(&i2cMutex); 
+        pthread_mutex_unlock(&i2cMutex);
     }
     return ret;
 }

@@ -19,7 +19,6 @@
 #include "esp_wifi_types.h"
 
 #include <AstrOsInterface.h>
-#include <KangarooInterface.h>
 #include <AnimationController.h>
 #include <AnimationCommand.h>
 #include <DisplayCommand.h>
@@ -27,9 +26,9 @@
 #include <ServoModule.h>
 #include <I2cModule.h>
 #include <AstrOsUtility.h>
+#include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsNetwork.h>
-#include <AstrOsConstants.h>
 #include <AstrOsNames.h>
 #include <StorageManager.h>
 
@@ -65,7 +64,6 @@ static QueueHandle_t espnowQueue;
 static const int RX_BUF_SIZE = 1024;
 
 #define ASTRO_PORT UART_NUM_0
-#define KANGAROO_PORT UART_NUM_1
 
 /**********************************
  * timers
@@ -88,7 +86,7 @@ static esp_timer_handle_t heartbeatTimer;
 #define LONG_PRESS_THRESHOLD_MS 10000  // 10 seconds
 
 /**********************************
- * Kangaroo Interface
+ * Serial Settings
  **********************************/
 
 #ifdef DARTHSERVO

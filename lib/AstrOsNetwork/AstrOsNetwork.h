@@ -1,21 +1,17 @@
 #ifndef ASTROSNETWORK_H
 #define ASTROSNETWORK_H
 
-
-#include "AstrOsUtility.h" 
-
 #include <esp_http_server.h>
 #include <freertos/event_groups.h>
 #include <string>
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
- 
 
 class AstrOsNetwork
 {
 
-private:  
+private:
     std::string ssid;
     std::string password;
     httpd_handle_t webServer;
@@ -23,6 +19,7 @@ private:
     bool stopApWebServer();
     bool startStaWebServer();
     bool stopStaWebServer();
+
 public:
     AstrOsNetwork();
     ~AstrOsNetwork();

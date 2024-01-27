@@ -1,6 +1,7 @@
 #include <SerialModule.h>
 #include <AnimationCommand.h>
 #include <AstrOsUtility.h>
+#include <AstrOsUtility_Esp.h>
 #include <SoftwareSerial.h>
 
 #include "esp_system.h"
@@ -136,7 +137,9 @@ void SerialModule::SendData(int ch, std::string msg)
             ESP_LOGI(TAG, "Wrote %d bytes", txBytes);
 
             xSemaphoreGive(serialMutex);
-        } else {
+        }
+        else
+        {
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
     }
