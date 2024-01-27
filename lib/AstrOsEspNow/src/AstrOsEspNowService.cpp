@@ -1,8 +1,9 @@
-#include <AstrOsEspNow.h>
-#include <AstrOsEspNowUtility.h>
-#include <AstrOsUtility.h>
+#include "AstrOsEspNowService.h"
+#include "AstrOsUtility.h"
+#include <AstrOsMessaging.h>
 
 #include <esp_err.h>
+#include <esp_now.h>
 #include <esp_log.h>
 #include <string.h>
 

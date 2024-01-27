@@ -1,7 +1,8 @@
-#ifndef ASTROSESPNOW_H
-#define ASTROSESPNOW_H
+#ifndef ASTROSESPNOWSERVICE_H
+#define ASTROSESPNOWSERVICE_H
 
 #include "AstrOsEspNowUtility.h"
+#include "AstrOsMessaging.h"
 #include <esp_err.h>
 
 class AstrOsEspNow

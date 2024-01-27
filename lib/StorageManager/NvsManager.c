@@ -1,5 +1,5 @@
 #include "AstrOsUtility.h"
-#include "AstrOsEspNowUtility.h"
+#include "AstrOsEspNow_c.h"
 
 #include <stdbool.h>
 #include <nvs_flash.h>

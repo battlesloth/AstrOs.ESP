@@ -52,24 +52,6 @@ extern "C"
         bool is_paired;
     } espnow_peer_t;
 
-    // |----ID-----|-number-|--of---|-type--|-payload size-|---payload---|
-    // | uint8[16] | uint8  | uint8 | uint8 |    uint8     |  uint8[180] |
-    typedef enum
-    {
-        REGISTRATION,
-        HEARTBEAT,
-    } AstrOsPacketType;
-
-    typedef struct
-    {
-        uint8_t id[16];
-        int packetNumber;
-        int totalPackets;
-        AstrOsPacketType packetType;
-        int payloadSize;
-        uint8_t *payload;
-    } astros_packet_t;
-
 #ifdef __cplusplus
 }
 #endif

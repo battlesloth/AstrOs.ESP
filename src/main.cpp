@@ -28,7 +28,6 @@
 #include <I2cModule.h>
 #include <AstrOsUtility.h>
 #include <AstrOsEspNow.h>
-#include <AstrOsEspNowUtility.h>
 #include <AstrOsNetwork.h>
 #include <AstrOsConstants.h>
 #include <AstrOsNames.h>
