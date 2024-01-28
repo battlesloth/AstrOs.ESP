@@ -21,7 +21,7 @@
 #include <AstrOsInterface.h>
 #include <AnimationController.h>
 #include <AnimationCommand.h>
-#include <DisplayCommand.h>
+#include <AstrOsDisplay.hpp>
 #include <SerialModule.h>
 #include <ServoModule.h>
 #include <I2cModule.h>
@@ -245,6 +245,8 @@ void init(void)
 
     ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
+
+    AstrOs_Display.init(hardwareQueue);
 
     serial_config_t serialConf;
 
@@ -708,24 +710,14 @@ void espnowQueueTask(void *arg)
             case ESPNOW_DISCOVERY_MODE_ON:
             {
                 discoveryMode = true;
-                queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
-                DisplayCommand cmd = DisplayCommand();
-                cmd.setValue("Discovery", "", "Mode On");
-                strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
-                msg.data[sizeof(msg.data) - 1] = '\0';
-                xQueueSend(hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+                AstrOs_Display.displayUpdate("Discovery", "Mode On");
                 ESP_LOGI(TAG, "Discovery mode on");
                 break;
             }
             case ESPNOW_DISCOVERY_MODE_OFF:
             {
                 discoveryMode = false;
-                queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
-                DisplayCommand cmd = DisplayCommand();
-                cmd.setValue("", rank, "");
-                strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
-                msg.data[sizeof(msg.data) - 1] = '\0';
-                xQueueSend(hardwareQueue, &msg, pdMS_TO_TICKS(2000));
+                AstrOs_Display.displayUpdate(rank);
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -849,6 +841,8 @@ void espnowQueueTask(void *arg)
                             }
                         }
                     }
+
+                    /*
                     // TODO: test code, remove
                     else if (discoveryMode && isMaster)
                     {
@@ -866,6 +860,7 @@ void espnowQueueTask(void *arg)
                             free(regMsg.data);
                         }
                     }
+                    */
                 }
                 else if (esp_now_is_peer_exist(msg.src))
                 {
@@ -961,50 +956,6 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     }
 }
 
-/* Parse received ESPNOW data. */
-int espnowDataParse(uint8_t *data, uint16_t data_len, uint8_t *state, uint16_t *seq, int *magic)
-{
-    /*espnow_data_t *buf = (espnow_data_t *)data;
-    uint16_t crc, crc_cal = 0;
-
-    if (data_len < sizeof(espnow_data_t))
-    {
-        ESP_LOGE(TAG, "Receive ESPNOW data too short, len:%d", data_len);
-        return -1;
-    }
-
-    *state = buf->state;
-    *seq = buf->seq_num;
-    *magic = buf->magic;
-    crc = buf->crc;
-    buf->crc = 0;
-    crc_cal = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, data_len);
-
-    if (crc_cal == crc)
-    {
-        return buf->type;
-    }
-*/
-    return -1;
-}
-
-/*Prepare ESPNOW data to be sent.
-void espnowDataPrepare(espnow_send_param_t *send_param)
-{
-    espnow_data_t *buf = (espnow_data_t *)send_param->buffer;
-
-    assert(send_param->len >= sizeof(espnow_data_t));
-
-    buf->type = IS_BROADCAST_ADDR(send_param->dest_mac) ? ESPNOW_DATA_BROADCAST : ESPNOW_DATA_UNICAST;
-    buf->state = send_param->state;
-    buf->seq_num = espnow_seq[buf->type]++;
-    buf->crc = 0;
-    buf->magic = send_param->magic;
-    // Fill all remaining bytes after the data with random values
-    esp_fill_random(buf->payload, send_param->len - sizeof(espnow_data_t));
-    buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
-}
-*/
 static esp_err_t wifiInit(void)
 {
 

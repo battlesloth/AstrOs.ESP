@@ -1,6 +1,6 @@
 #include <I2cModule.h>
 #include <AnimationCommand.h>
-#include <DisplayCommand.h>
+#include <AstrOsDisplay.hpp>
 #include <AstrOsUtility.h>
 
 #include "esp_system.h"

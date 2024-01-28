@@ -1,5 +1,5 @@
-#ifndef DISPLAYCOMMAND_H
-#define DISPLAYCOMMAND_H
+#ifndef DISPLAYCOMMAND_HPP
+#define DISPLAYCOMMAND_HPP
 
 #include <string>
 #include <vector>

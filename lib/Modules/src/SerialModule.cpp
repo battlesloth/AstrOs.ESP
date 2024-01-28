@@ -2,7 +2,7 @@
 #include <AnimationCommand.h>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
-#include <SoftwareSerial.h>
+// #include <SoftwareSerial.h>
 
 #include "esp_system.h"
 #include "driver/uart.h"
@@ -17,7 +17,7 @@ static const int RX_BUF_SIZE = 1024;
 
 SerialModule SerialMod;
 
-SwSerial *softSerial;
+// SwSerial *softSerial;
 
 SerialModule::SerialModule() {}
 
@@ -56,8 +56,8 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
 
     result = SerialModule::InstallSerial(UART_NUM_2, tx[1], rx[1], baud[1]);
 
-    softSerial = sw_new((gpio_num_t)tx[2], (gpio_num_t)rx[2], true, 512);
-    sw_open(softSerial, 9600);
+    // softSerial = sw_new((gpio_num_t)tx[2], (gpio_num_t)rx[2], true, 512);
+    // sw_open(softSerial, 9600);
 
     return result;
 }
@@ -125,7 +125,7 @@ void SerialModule::SendData(int ch, std::string msg)
                 port = UART_NUM_2;
                 break;
             case 3:
-                SerialModule::SoftSerialWrite(msg.c_str());
+                // SerialModule::SoftSerialWrite(msg.c_str());
                 xSemaphoreGive(serialMutex);
                 return;
             default:
@@ -145,7 +145,7 @@ void SerialModule::SendData(int ch, std::string msg)
     }
 }
 
-void SerialModule::SoftSerialWrite(const char *msg)
+/*void SerialModule::SoftSerialWrite(const char *msg)
 {
     int len = 0;
     while (msg[len] != '\0')
@@ -155,4 +155,4 @@ void SerialModule::SoftSerialWrite(const char *msg)
     }
     sw_write(softSerial, '\0');
     ESP_LOGI(TAG, "Soft Serial Wrote %d characters", len);
-}
+}*/

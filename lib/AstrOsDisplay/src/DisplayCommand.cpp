@@ -1,4 +1,4 @@
-#include <DisplayCommand.h>
+#include <DisplayCommand.hpp>
 #include <sstream>
 #include <string>
 #include <vector>

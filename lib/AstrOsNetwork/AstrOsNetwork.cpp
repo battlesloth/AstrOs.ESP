@@ -2,7 +2,7 @@
 #include "AstrOsUtility.h"
 #include "StorageManager.h"
 #include "uuid.h"
-#include "DisplayCommand.h"
+#include "AstrOsDisplay.hpp"
 #include "AstrOsUtility_Esp.h"
 
 #include <stdio.h>
