@@ -4,32 +4,34 @@
 #include <cstring>
 #include <cstdint>
 
-uint8_t *AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string name, std::string message)
+astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string name, std::string message)
 {
     switch (type)
     {
-    case AstrOsPacketType::BASIC:
+    case AstrOsPacketType::REGISTRATION_REQ:
+        return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ)[0];
         break;
     case AstrOsPacketType::REGISTRATION:
-        return AstrOsEspNowMessageService::generatePackets(type, "REGISTRATION|" + name)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + "|" + name + "|" + message)[0];
         break;
     case AstrOsPacketType::REGISTRATION_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, "REGISTRATION_ACK|" + name)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + "|" + name + "|" + message)[0];
         break;
     case AstrOsPacketType::HEARTBEAT:
-        return AstrOsEspNowMessageService::generatePackets(type, "HEARTBEAT|" + name)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::HEARTBEAT) + "|" + name)[0];
         break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, message)[0];
         break;
     }
 
-    return NULL;
+    astros_espnow_data_t data = {NULL, 0};
+    return data;
 }
 
-std::vector<uint8_t *> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string message)
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string message)
 {
-    std::vector<uint8_t *> packets;
+    std::vector<astros_espnow_data_t> packets;
 
     int messageLength = message.length();
     int totalPackets = ceil((float)messageLength / (float)ASTROS_PACKET_PAYLOAD_SIZE);
@@ -65,7 +67,9 @@ std::vector<uint8_t *> AstrOsEspNowMessageService::generatePackets(AstrOsPacketT
         offset += 1;
         memcpy(packet + offset, payload.c_str(), payloadSize);
 
-        packets.push_back(packet);
+        astros_espnow_data_t data = {packet, static_cast<size_t>(payloadSize + 20)};
+
+        packets.push_back(data);
     }
 
     free(id);
@@ -83,7 +87,34 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
     parsedPacket.payloadSize = packet[19];
     parsedPacket.payload = packet + 20;
 
+    if (!validatePacket(parsedPacket))
+    {
+        parsedPacket.packetType = AstrOsPacketType::UNKNOWN;
+    }
+
     return parsedPacket;
+}
+
+bool AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)
+{
+
+    switch (packet.packetType)
+    {
+    case AstrOsPacketType::BASIC:
+        return true;
+    case AstrOsPacketType::REGISTRATION_REQ:
+        return memcmp(packet.payload, AstrOsENC::REGISTRATION_REQ, strlen(AstrOsENC::REGISTRATION_REQ)) == 0;
+    case AstrOsPacketType::REGISTRATION:
+        return memcmp(packet.payload, AstrOsENC::REGISTRATION, strlen(AstrOsENC::REGISTRATION)) == 0;
+    case AstrOsPacketType::REGISTRATION_ACK:
+        return memcmp(packet.payload, AstrOsENC::REGISTRATION_ACK, strlen(AstrOsENC::REGISTRATION_ACK)) == 0;
+    case AstrOsPacketType::HEARTBEAT:
+        return memcmp(packet.payload, AstrOsENC::HEARTBEAT, strlen(AstrOsENC::HEARTBEAT)) == 0;
+    default:
+        return false;
+    }
+
+    return false;
 }
 
 uint8_t *AstrOsEspNowMessageService::generateId()

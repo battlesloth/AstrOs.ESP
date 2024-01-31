@@ -38,10 +38,10 @@ static const char *TAG = AstrOsConstants::ModuleName;
  * Jedi Knight or Padawan
  **********************************/
 #ifdef JEDI_KNIGHT
-#define isMaster true
+#define isMasterNode true
 #define rank "Jedi Knight"
 #else
-#define isMaster false
+#define isMasterNode false
 #define rank "Padawan"
 #endif
 
@@ -131,9 +131,7 @@ static esp_timer_handle_t heartbeatTimer;
  * ESP-NOW
  **********************************/
 
-static SemaphoreHandle_t masterMacMutex;
-static uint8_t master_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static std::string name = "";
 
 /**********************************
  * Method definitions
@@ -151,8 +149,6 @@ static esp_err_t espnowInit(void);
 static void espnowDeinit();
 static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
-int espnowDataParse(uint8_t *data, int data_len, uint8_t *state, uint16_t *seq, int *magic);
-void espnowDataPrepare(uint8_t *data);
 
 void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
@@ -165,6 +161,15 @@ void i2cQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
 esp_err_t mountSdCard(void);
+
+/**********************************
+ * callbacks
+ *********************************/
+
+bool cachePeer(espnow_peer_t peer)
+{
+    return Storage.saveEspNowPeer(peer);
+}
 
 extern "C"
 {
@@ -192,12 +197,6 @@ void init(void)
 {
     ESP_LOGI(TAG, "init called");
 
-    masterMacMutex = xSemaphoreCreateMutex();
-    if (masterMacMutex == NULL)
-    {
-        ESP_LOGE(TAG, "Failed to initialize the serial mutex");
-    }
-
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
     io_conf.mode = GPIO_MODE_INPUT;
@@ -215,18 +214,6 @@ void init(void)
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
     ESP_ERROR_CHECK(Storage.Init());
-
-    uint8_t mac[ESP_NOW_ETH_ALEN] = {0};
-
-    if (Storage.loadMasterMacAddress(mac))
-    {
-        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(mac));
-        memcpy(master_mac, mac, ESP_NOW_ETH_ALEN);
-    }
-    else
-    {
-        ESP_LOGI(TAG, "Master MAC address not found in storage");
-    }
 
     ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
@@ -272,7 +259,33 @@ void init(void)
     ESP_ERROR_CHECK(wifiInit());
     ESP_ERROR_CHECK(espnowInit());
 
-    AstrOs_EspNow.init();
+    uint8_t mac[ESP_NOW_ETH_ALEN] = {0};
+
+    if (Storage.loadMasterMacAddress(mac))
+    {
+        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(mac));
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Master MAC address not found in storage");
+    }
+
+    int peerCount = 0;
+    espnow_peer_t peerList[10] = {};
+
+    // Load current peer list.
+    peerCount = Storage.loadEspNowPeerConfigs(peerList);
+
+    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
+
+    astros_espnow_config_t config = {
+        .masterMac = mac,
+        .name = name,
+        .isMaster = isMasterNode,
+        .peers = peerList,
+        .peerCount = peerCount};
+
+    AstrOs_EspNow.init(config, &cachePeer);
 }
 
 /******************************************
@@ -315,13 +328,11 @@ static void heartbeatTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "Heartbeat");
 
-    if (!isMaster) // && !IS_BROADCAST_ADDR(master_mac))
+    if (!isMasterNode)
     {
         queue_espnow_msg_t msg;
         msg.eventType = ESPNOW_SEND_HEARTBEAT;
-        msg.data = (uint8_t *)malloc(11);
-        msg.data_len = 11;
-        memcpy(msg.data, "heartbeat", 10);
+        msg.data = (uint8_t *)malloc(0);
 
         if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
         {
@@ -673,28 +684,7 @@ void espnowQueueTask(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(5 * 1000));
 
-    queue_hw_cmd_t displayUpdate = {HARDWARE_COMMAND::DISPLAY_COMMAND, NULL};
-    DisplayCommand cmd = DisplayCommand();
-    cmd.setValue("", rank, "");
-    strncpy(displayUpdate.data, cmd.toString().c_str(), sizeof(displayUpdate.data));
-    displayUpdate.data[sizeof(displayUpdate.data) - 1] = '\0';
-    xQueueSend(hardwareQueue, &displayUpdate, pdMS_TO_TICKS(2000));
-
-    // Add broadcast peer information to peer list.
-    AstrOs_EspNow.addPeer(broadcast_mac);
-
-    int peerCount = 0;
-    espnow_peer_t peerList[10] = {};
-
-    // Load current peer list.
-    peerCount = Storage.loadEspNowPeerConfigs(peerList);
-
-    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
-
-    for (int i = 0; i < peerCount; i++)
-    {
-        AstrOs_EspNow.addPeer(peerList[i].mac_addr);
-    }
+    AstrOs_Display.displayUpdate(rank);
 
     bool discoveryMode = false;
     queue_espnow_msg_t msg;
@@ -723,30 +713,7 @@ void espnowQueueTask(void *arg)
             }
             case ESPNOW_SEND_HEARTBEAT:
             {
-                uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
-                bool gotMac = false;
-
-                while (!gotMac)
-                {
-                    if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-                    {
-                        memcpy(destMac, master_mac, ESP_NOW_ETH_ALEN);
-                        gotMac = true;
-                        xSemaphoreGive(masterMacMutex);
-                    }
-                    else
-                    {
-                        vTaskDelay(10 / portTICK_PERIOD_MS);
-                    }
-                }
-
-                if (esp_now_send(destMac, msg.data, msg.data_len) != ESP_OK)
-                {
-                    ESP_LOGE(TAG, "Send error");
-                }
-
-                free(destMac);
-
+                AstrOs_EspNow.sendHeartbeat(discoveryMode);
                 break;
             }
             case ESPNOW_SEND:
@@ -766,101 +733,13 @@ void espnowQueueTask(void *arg)
                 {
                     ESP_LOGI(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
-                    /* If MAC address does not exist in peer list, add it to peer list. */
-                    if (esp_now_is_peer_exist(msg.src) == false && discoveryMode)
+                    // only handle broadcast messages in discovery mode
+                    if (!discoveryMode)
                     {
-                        if (peerCount == ESPNOW_PEER_LIMIT)
-                        {
-                            ESP_LOGI(TAG, "Max peers have already been added.");
-                            break;
-                        }
-
-                        ESP_LOGI(TAG, "Adding new peer:" MACSTR, MAC2STR(msg.src));
-
-                        AstrOs_EspNow.addPeer(msg.src);
-
-                        // add to peer cache
-                        espnow_peer_t newPeer;
-
-                        // peer id is 0 indexed
-                        newPeer.id = peerCount;
-
-                        if (isMaster)
-                        {
-                            std::string name = astrOsGetName(newPeer.id);
-                            char nameBuf[16];
-
-                            memcpy(newPeer.name, name.c_str(), name.length() + 1);
-                        }
-                        else
-                        {
-                            memcpy(newPeer.name, "master\0", 8);
-                        }
-
-                        memcpy(newPeer.mac_addr, msg.src, ESP_NOW_ETH_ALEN);
-                        memset(newPeer.crypto_key, 0, ESP_NOW_KEY_LEN);
-                        newPeer.is_paired = true;
-
-                        Storage.saveEspNowPeer(newPeer);
-
-                        peerList[peerCount] = newPeer;
-
-                        peerCount++;
-
-                        if (isMaster)
-                        { // send registration message
-                            ESP_LOGI(TAG, "Generating registration message in response to " MACSTR, MAC2STR(msg.src));
-                            queue_espnow_msg_t regMsg = AstrOs_EspNow.generateRegisterMessage(broadcast_mac);
-
-                            if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-                            {
-                                ESP_LOGW(TAG, "Send espnow queue fail");
-                                free(regMsg.data);
-                            }
-                        }
-                        else
-                        {
-                            uint8_t cachedMac[ESP_NOW_ETH_ALEN] = {0};
-                            memccpy(cachedMac, msg.src, 0, ESP_NOW_ETH_ALEN);
-
-                            Storage.saveMasterMacAddress(cachedMac);
-
-                            bool macSet = false;
-                            while (!macSet)
-                            {
-                                if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-                                {
-                                    memcpy(master_mac, msg.src, ESP_NOW_ETH_ALEN);
-                                    macSet = true;
-                                    xSemaphoreGive(masterMacMutex);
-                                }
-                                else
-                                {
-                                    vTaskDelay(10 / portTICK_PERIOD_MS);
-                                }
-                            }
-                        }
+                        break;
                     }
 
-                    /*
-                    // TODO: test code, remove
-                    else if (discoveryMode && isMaster)
-                    {
-                        // send registration message
-                        queue_espnow_msg_t regMsg;
-                        regMsg.eventType = ESPNOW_SEND;
-                        memccpy(regMsg.dest, msg.src, 0, ESP_NOW_ETH_ALEN);
-                        regMsg.data = (uint8_t *)malloc(11);
-                        regMsg.data_len = 11;
-                        memcpy(regMsg.data, "registered", 10);
-
-                        if (xQueueSend(espnowQueue, &regMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-                        {
-                            ESP_LOGW(TAG, "Send espnow queue fail");
-                            free(regMsg.data);
-                        }
-                    }
-                    */
+                    AstrOs_EspNow.handleMessage(msg.src, msg.data, msg.data_len);
                 }
                 else if (esp_now_is_peer_exist(msg.src))
                 {
