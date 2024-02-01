@@ -43,7 +43,7 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config, bool (*cachePeer_cb)
         return err;
     }
 
-    AstrOsEspNow::mac = std::string(reinterpret_cast<char *>(localMac), ESP_NOW_ETH_ALEN);
+    AstrOsEspNow::mac = AstrOsEspNow::macToString(localMac);
 
     free(localMac);
 
@@ -263,8 +263,7 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
         }
     }
 
-    std::string macStr(reinterpret_cast<char *>(src), ESP_NOW_ETH_ALEN);
-
+    std::string macStr = AstrOsEspNow::macToString(src);
     std::string padewanName = "test";
     astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, padewanName, macStr);
 
@@ -317,8 +316,13 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t l
 
     if (name.empty() || mac.empty())
     {
-        ESP_LOGE(TAG, "Invalid registration payload");
+        ESP_LOGE(TAG, "Invalid registration payload: %s, %s", name.c_str(), mac.c_str());
         return false;
+    }
+
+    if (AstrOsEspNow::mac != mac)
+    {
+        ESP_LOGI(TAG, "Registraion received for different device: %s", mac.c_str());
     }
 
     AstrOsEspNow::name = name;
@@ -337,4 +341,13 @@ bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src)
 bool AstrOsEspNow::handleHeartbeat(u_int8_t *src)
 {
     return true;
+}
+
+std::string AstrOsEspNow::macToString(uint8_t *mac)
+{
+    char *macStr = (char *)malloc(17);
+    sprintf(macStr, MACSTR, MAC2STR(mac));
+    std::string macString(macStr, 17);
+    free(macStr);
+    return macString;
 }

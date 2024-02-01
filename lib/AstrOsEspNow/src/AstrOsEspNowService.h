@@ -32,6 +32,7 @@ private:
 
     queue_espnow_msg_t generatePacket(AstrOsPacketType type, uint8_t *data, uint8_t data_len);
     astros_packet_t parsePacket(uint8_t *data);
+    std::string macToString(uint8_t *mac);
 
     void sendRegistration(u_int8_t *macAddress, std::string name);
     void sendRegistrationAck();
