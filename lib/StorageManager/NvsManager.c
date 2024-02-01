@@ -88,7 +88,7 @@ bool nvsLoadServiceConfig(svc_config_t *config)
     err = nvs_get_str(nvsHandle, "name", config->name, &defaultSize);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
-        config->name[0] = 0;
+        memcpy(config->name, "AstrOs\0", 7);
         result = false;
     }
 

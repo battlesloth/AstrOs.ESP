@@ -25,6 +25,8 @@ AstrOsEspNow::~AstrOsEspNow()
 
 esp_err_t AstrOsEspNow::init(astros_espnow_config_t config, bool (*cachePeer_cb)(espnow_peer_t), void (*displayUpdate_cb)(std::string, std::string, std::string))
 {
+    ESP_LOGI(TAG, "Initializing AstrOsEspNow");
+
     esp_err_t err = ESP_OK;
 
     AstrOsEspNow::name = config.name;
@@ -71,6 +73,8 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config, bool (*cachePeer_cb)
             return err;
         }
     }
+
+    ESP_LOGI(TAG, "AstrOsEspNow initialized");
 
     return err;
 }

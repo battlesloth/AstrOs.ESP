@@ -232,8 +232,6 @@ void init(void)
     ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
 
-    AstrOs_Display.init(hardwareQueue);
-
     serial_config_t serialConf;
 
     serialConf.baudRate1 = 9600;
@@ -279,12 +277,16 @@ void init(void)
 
     astros_espnow_config_t config = {
         .masterMac = svcConfig.masterMacAddress,
-        .name = svcConfig.name,
+        .name = std::string(reinterpret_cast<char *>(svcConfig.name), strlen(svcConfig.name)),
         .isMaster = isMasterNode,
         .peers = peerList,
         .peerCount = peerCount};
 
+    ESP_LOGE(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
+    ESP_LOGE(TAG, "Name: %s", config.name.c_str());
+
     AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault);
+    AstrOs_Display.init(hardwareQueue);
 }
 
 /******************************************
@@ -560,6 +562,7 @@ void hardwareQueueTask(void *arg)
         if (xQueueReceive(hardwareQueue, &(msg), 0))
         {
             ESP_LOGI(TAG, "Hardware Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+
             switch (msg.cmd)
             {
             case HARDWARE_COMMAND::SEND_SERIAL:
@@ -682,6 +685,8 @@ void espnowQueueTask(void *arg)
     espnowQueue = (QueueHandle_t)arg;
 
     vTaskDelay(pdMS_TO_TICKS(5 * 1000));
+
+    ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.setDefault(rank, "", AstrOs_EspNow.name);
     AstrOs_Display.displayDefault();
@@ -924,7 +929,7 @@ static esp_err_t espnowInit(void)
         return err;
     }
 
-    ESP_LOGI(TAG, "espnowInit called");
+    ESP_LOGI(TAG, "espnowInit complete");
 
     return err;
 }
