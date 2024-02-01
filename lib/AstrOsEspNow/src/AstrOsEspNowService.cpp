@@ -53,10 +53,6 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
 
     this->mac = AstrOsStringUtils::macToString(localMac);
 
-    std::transform(this->mac.begin(), this->mac.end(), this->mac.begin(),
-                   [](unsigned char c)
-                   { return std::tolower(c); });
-
     free(localMac);
 
     masterMacMutex = xSemaphoreCreateMutex();
@@ -259,7 +255,7 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t l
         return false;
     }
 
-    if (this->mac != mac)
+    if (!AstrOsStringUtils::caseInsensitiveCmp(mac, this->mac))
     {
         ESP_LOGI(TAG, "Registraion received for different device: %s, this device is %s", mac.c_str(), this->mac.c_str());
         return false;
