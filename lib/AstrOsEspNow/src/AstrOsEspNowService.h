@@ -45,7 +45,7 @@ private:
     bool sendRegistration(u_int8_t *macAddress, std::string name);
     bool handleRegistration(u_int8_t *src, u_int8_t *payload, size_t len);
     bool sendRegistrationAck();
-    bool handleRegistrationAck(u_int8_t *src);
+    bool handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len);
     bool handleHeartbeat(u_int8_t *src);
 
 public:

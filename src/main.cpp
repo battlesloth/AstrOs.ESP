@@ -11,6 +11,7 @@
 #include <nvs_flash.h>
 #include <esp_event.h>
 #include <esp_random.h>
+#include <string.h>
 
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -28,7 +29,6 @@
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
-#include <AstrOsNetwork.h>
 #include <AstrOsNames.h>
 #include <StorageManager.h>
 
@@ -821,15 +821,6 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
         return;
     }
 
-    if (IS_BROADCAST_ADDR(dest_addr))
-    {
-        ESP_LOGI(TAG, "Receive broadcast ESPNOW data");
-    }
-    else
-    {
-        ESP_LOGI(TAG, "Receive unicast ESPNOW data");
-    }
-
     msg.eventType = ESPNOW_RECV;
     memcpy(msg.src, src_addr, ESP_NOW_ETH_ALEN);
     memcpy(msg.dest, dest_addr, ESP_NOW_ETH_ALEN);
@@ -841,7 +832,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     }
     memcpy(msg.data, data, len);
     msg.data_len = len;
-    if (xQueueSend(espnowQueue, &msg, ESPNOW_MAXDELAY) != pdTRUE)
+    if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
     {
         ESP_LOGW(TAG, "Send receive queue fail");
         free(msg.data);

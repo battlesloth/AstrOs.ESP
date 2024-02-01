@@ -114,7 +114,6 @@ void SerialModule::SendData(int ch, std::string msg)
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
             uart_port_t port;
-            esp_err_t err;
 
             switch (ch)
             {

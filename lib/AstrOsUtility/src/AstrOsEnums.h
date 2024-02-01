@@ -7,14 +7,6 @@ extern "C"
 
     typedef enum
     {
-        START_WIFI_AP,
-        STOP_WIFI_AP,
-        CONNECT_TO_NETWORK,
-        DISCONNECT_FROM_NETWORK,
-        SWITCH_TO_NETWORK,
-        SWITCH_TO_WIFI_AP,
-        SWITCH_TO_DISCOVERY,
-        SWITCH_TO_ESPNOW,
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF
     } SERVICE_COMMAND;

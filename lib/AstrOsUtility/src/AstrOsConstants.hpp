@@ -11,8 +11,6 @@ namespace AstrOsConstants
 
     constexpr const char *ModuleName = "AstrOs-esp32";
     constexpr const char *SerialNumber = "0001";
-    constexpr const char *ApSsid = "AstrOs-";
-    constexpr const char *Password = "password";
 
     /***********************************
      *  Kangaroo X2 commands

@@ -109,6 +109,22 @@ esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
 
 bool AstrOsEspNow::cachePeer(u_int8_t *macAddress, std::string name)
 {
+
+    if (peers.size() > 10)
+    {
+        ESP_LOGE(TAG, "Peer cache is full");
+        return false;
+    }
+
+    for (auto &peer : peers)
+    {
+        if (memcmp(peer.mac_addr, macAddress, ESP_NOW_ETH_ALEN) == 0)
+        {
+            ESP_LOGI(TAG, "Peer already cached");
+            return true;
+        }
+    }
+
     // add to peer cache
     espnow_peer_t newPeer;
 
@@ -185,7 +201,7 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
             break;
         }
         ESP_LOGI(TAG, "Registration ack received from " MACSTR, MAC2STR(src));
-        return this->handleRegistrationAck(src);
+        return this->handleRegistrationAck(src, packet.payload, packet.payloadSize);
     case AstrOsPacketType::HEARTBEAT:
         if (!isMasterNode)
         {
@@ -238,16 +254,14 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t l
 
     auto parts = AstrOsStringUtils::splitString(payloadStr, '|');
 
-    if (parts.size() > 2)
-    {
-        name = parts[1];
-        mac = parts[2];
-    }
-    else
+    if (parts.size() < 3)
     {
         ESP_LOGE(TAG, "Invalid registration payload: %s", payloadStr.c_str());
         return false;
     }
+
+    name = parts[1];
+    mac = parts[2];
 
     if (name.empty() || mac.empty())
     {
@@ -318,8 +332,37 @@ bool AstrOsEspNow::sendRegistrationAck()
     return result;
 }
 
-bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src)
+bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len)
 {
+    std::string payloadStr(reinterpret_cast<char *>(payload), len);
+
+    std::vector<std::string> parts = AstrOsStringUtils::splitString(payloadStr, '|');
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid registration ack payload: %s", payloadStr.c_str());
+        return false;
+    }
+
+    name = parts[1];
+    mac = parts[2];
+
+    if (name.empty() || mac.empty())
+    {
+        ESP_LOGE(TAG, "Invalid registration ack payload: %s, %s", name.c_str(), mac.c_str());
+        return false;
+    }
+
+    std::string sourceMac = AstrOsStringUtils::macToString(src);
+
+    if (!AstrOsStringUtils::caseInsensitiveCmp(mac, sourceMac))
+    {
+        ESP_LOGI(TAG, "Invalid registration ack, mac mismatch: %s != %s", mac.c_str(), sourceMac.c_str());
+        return false;
+    }
+
+    return this->cachePeer(src, name);
+
     return true;
 }
 

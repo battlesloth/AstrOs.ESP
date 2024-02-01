@@ -177,7 +177,7 @@ bool nvsSetControllerFingerprint(const char *fingerprint)
 {
     esp_err_t err;
     nvs_handle_t nvsHandle;
-    size_t defaultSize = 0;
+
     err = nvs_open("config", NVS_READWRITE, &nvsHandle);
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))

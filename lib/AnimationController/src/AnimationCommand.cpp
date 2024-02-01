@@ -3,17 +3,14 @@
 #include <string>
 #include <vector>
 
-#include <esp_log.h>
-
-static const char *TAG = "AnimationCommand";
-
-CommandTemplate::CommandTemplate(CommandType type, std::string val):val(std::move(val)){
+CommandTemplate::CommandTemplate(CommandType type, std::string val) : val(std::move(val))
+{
     CommandTemplate::type = type;
 }
 
-CommandTemplate::~CommandTemplate(){}
+CommandTemplate::~CommandTemplate() {}
 
-AnimationCommand::AnimationCommand(std::string val):commandTemplate(std::move(val))
+AnimationCommand::AnimationCommand(std::string val) : commandTemplate(std::move(val))
 {
     AnimationCommand::parseCommandType();
 }
@@ -22,9 +19,9 @@ AnimationCommand::~AnimationCommand()
 {
 }
 
-CommandTemplate* AnimationCommand::GetCommandTemplatePtr()
+CommandTemplate *AnimationCommand::GetCommandTemplatePtr()
 {
-    CommandTemplate* ct = new CommandTemplate(commandType, commandTemplate);
+    CommandTemplate *ct = new CommandTemplate(commandType, commandTemplate);
     return ct;
 }
 
@@ -33,7 +30,6 @@ void AnimationCommand::parseCommandType()
     str_vec_t script = AnimationCommand::splitTemplate();
     AnimationCommand::commandType = static_cast<CommandType>(std::stoi(script.at(0)));
     AnimationCommand::duration = std::stoi(script.at(1));
-   
 }
 
 str_vec_t AnimationCommand::splitTemplate()
@@ -47,17 +43,18 @@ str_vec_t AnimationCommand::splitTemplate()
     result.push_back(commandTemplate.substr(start, end - start));
     start = end + 1;
     end = commandTemplate.find("|", start);
-    
+
     result.push_back(commandTemplate.substr(start, end));
-    
+
     return result;
 }
 
 BaseCommand::BaseCommand() {}
 BaseCommand::~BaseCommand() {}
 
-str_vec_t BaseCommand::SplitTemplate(std::string val){
-    
+str_vec_t BaseCommand::SplitTemplate(std::string val)
+{
+
     str_vec_t parts;
 
     auto start = 0U;
@@ -74,8 +71,8 @@ str_vec_t BaseCommand::SplitTemplate(std::string val){
     return parts;
 }
 
-template <typename ...Args>
-std::string BaseCommand::stringFormat(const std::string& format, Args && ...args)
+template <typename... Args>
+std::string BaseCommand::stringFormat(const std::string &format, Args &&...args)
 {
     auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
     std::string output(size + 1, '\0');
@@ -83,38 +80,47 @@ std::string BaseCommand::stringFormat(const std::string& format, Args && ...args
     return output;
 }
 
-SerialCommand::SerialCommand(std::string val) {
+SerialCommand::SerialCommand(std::string val)
+{
 
     str_vec_t parts = SplitTemplate(val);
 
     SerialCommand::type = static_cast<CommandType>(std::stoi(parts.at(0)));
-    
+
     SerialCommand::serialChannel = std::stoi(parts.at(2));
 
-    if (SerialCommand::type == CommandType::Kangaroo){
+    if (SerialCommand::type == CommandType::Kangaroo)
+    {
         SerialCommand::ch = std::stoi(parts.at(3));
         SerialCommand::cmd = std::stoi(parts.at(4));
         SerialCommand::spd = std::stoi(parts.at(5));
         SerialCommand::pos = std::stoi(parts.at(6));
-    } else {
+    }
+    else
+    {
         SerialCommand::value = parts.at(3);
     }
 }
 
-SerialCommand::SerialCommand(){}
+SerialCommand::SerialCommand() {}
 
 SerialCommand::~SerialCommand() {}
 
-std::string SerialCommand::GetValue(){
+std::string SerialCommand::GetValue()
+{
 
-    if (SerialCommand::type == CommandType::Kangaroo){
+    if (SerialCommand::type == CommandType::Kangaroo)
+    {
         return ToKangarooCommand();
-    } else {
+    }
+    else
+    {
         return SerialCommand::value;
-    } 
+    }
 }
 
-std::string SerialCommand::ToKangarooCommand() {
+std::string SerialCommand::ToKangarooCommand()
+{
     switch (SerialCommand::cmd)
     {
     case KANGAROO_ACTION::START:
@@ -124,17 +130,23 @@ std::string SerialCommand::ToKangarooCommand() {
     case KANGAROO_ACTION::SPEED:
         return stringFormat("%d,s%d%c", SerialCommand::ch, SerialCommand::spd, '\n');
     case KANGAROO_ACTION::POSITION:
-        if (SerialCommand::spd > 0){
+        if (SerialCommand::spd > 0)
+        {
             return stringFormat("%d,p%d s%d%c", SerialCommand::ch, SerialCommand::pos, SerialCommand::spd, '\n');
-        } else {
+        }
+        else
+        {
             return stringFormat("%d,p%d%c", SerialCommand::ch, SerialCommand::pos, '\n');
         }
     case KANGAROO_ACTION::SPEED_INCREMENTAL:
         return stringFormat("%d,si%d%c", SerialCommand::ch, SerialCommand::spd, '\n');
     case KANGAROO_ACTION::POSITION_INCREMENTAL:
-        if (SerialCommand::spd > 0){
+        if (SerialCommand::spd > 0)
+        {
             return stringFormat("%d,pi%d s%d%c", SerialCommand::ch, SerialCommand::pos, SerialCommand::spd, '\n');
-        } else {
+        }
+        else
+        {
             return stringFormat("%d,pi%d%c", SerialCommand::ch, SerialCommand::pos, '\n');
         }
     default:
@@ -142,17 +154,19 @@ std::string SerialCommand::ToKangarooCommand() {
     }
 }
 
-ServoCommand::ServoCommand(std::string val) {
+ServoCommand::ServoCommand(std::string val)
+{
 
     str_vec_t parts = SplitTemplate(val);
 
     ServoCommand::channel = std::stoi(parts.at(2));
     ServoCommand::position = std::stoi(parts.at(3));
-    ServoCommand::speed = std::stoi(parts.at(4)); 
+    ServoCommand::speed = std::stoi(parts.at(4));
 }
 ServoCommand::~ServoCommand() {}
 
-I2cCommand::I2cCommand(std::string val) {
+I2cCommand::I2cCommand(std::string val)
+{
     str_vec_t parts = SplitTemplate(val);
 
     I2cCommand::channel = std::stoi(parts.at(2));
