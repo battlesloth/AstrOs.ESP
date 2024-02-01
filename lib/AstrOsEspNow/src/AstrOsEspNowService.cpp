@@ -345,7 +345,7 @@ bool AstrOsEspNow::handleHeartbeat(u_int8_t *src)
 
 std::string AstrOsEspNow::macToString(uint8_t *mac)
 {
-    char *macStr = (char *)malloc(17);
+    char *macStr = (char *)malloc(18);
     sprintf(macStr, MACSTR, MAC2STR(mac));
     std::string macString(macStr, 17);
     free(macStr);
