@@ -6,5 +6,6 @@
 #include "AstrOsHelpers.h"
 #include "AstrOsHtml.hpp"
 #include "AstrOsStructs.h"
+#include "AstrOsStringUtils.hpp"
 
 #endif

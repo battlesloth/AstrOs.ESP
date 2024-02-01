@@ -14,7 +14,9 @@ extern "C"
         SWITCH_TO_NETWORK,
         SWITCH_TO_WIFI_AP,
         SWITCH_TO_DISCOVERY,
-        SWITCH_TO_ESPNOW
+        SWITCH_TO_ESPNOW,
+        ESPNOW_DISCOVERY_MODE_ON,
+        ESPNOW_DISCOVERY_MODE_OFF
     } SERVICE_COMMAND;
 
     typedef enum

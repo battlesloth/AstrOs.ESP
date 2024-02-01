@@ -46,6 +46,11 @@ static const char *TAG = AstrOsConstants::ModuleName;
 #endif
 
 /**********************************
+ * States
+ **********************************/
+static bool discoveryMode = false;
+
+/**********************************
  * queues
  **********************************/
 
@@ -165,6 +170,15 @@ bool cachePeer(espnow_peer_t peer)
     return Storage.saveEspNowPeer(peer);
 }
 
+void updateSeviceConfig(std::string name, uint8_t *mac)
+{
+    svc_config_t svcConfig;
+    memcpy(svcConfig.masterMacAddress, mac, ESP_NOW_ETH_ALEN);
+    strncpy(svcConfig.name, name.c_str(), sizeof(svcConfig.name));
+    svcConfig.name[sizeof(svcConfig.name) - 1] = '\0';
+    Storage.saveServiceConfig(svcConfig);
+}
+
 void displaySetDefault(std::string line1, std::string line2, std::string line3)
 {
     return AstrOs_Display.setDefault(line1, line2, line3);
@@ -280,12 +294,13 @@ void init(void)
         .name = std::string(reinterpret_cast<char *>(svcConfig.name), strlen(svcConfig.name)),
         .isMaster = isMasterNode,
         .peers = peerList,
-        .peerCount = peerCount};
+        .peerCount = peerCount,
+        .serviceQueue = serviceQueue};
 
     ESP_LOGE(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
     ESP_LOGE(TAG, "Name: %s", config.name.c_str());
 
-    AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault);
+    AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault, &updateSeviceConfig);
     AstrOs_Display.init(hardwareQueue);
 }
 
@@ -410,7 +425,6 @@ static void animationTimerCallback(void *arg)
 void buttonListenerTask(void *arg)
 {
     uint32_t buttonStartTime = 0;
-    bool discoveryModeActive = false;
     bool buttonHandled = true;
 
     while (1)
@@ -441,23 +455,19 @@ void buttonListenerTask(void *arg)
                 }
                 else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(MEDIUM_PRESS_THRESHOLD_MS))
                 {
-                    queue_espnow_msg_t msg;
-                    msg.data = (uint8_t *)malloc(sizeof(uint8_t));
-                    if (discoveryModeActive)
+                    queue_svc_cmd_t cmd;
+                    if (discoveryMode)
                     {
-                        msg.eventType = ESPNOW_DISCOVERY_MODE_OFF;
-                        discoveryModeActive = false;
+                        cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
                     }
                     else
                     {
-                        msg.eventType = ESPNOW_DISCOVERY_MODE_ON;
-                        discoveryModeActive = true;
+                        cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON;
                     }
 
-                    if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                    if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
                     {
                         ESP_LOGW(TAG, "Send espnow queue fail");
-                        free(msg.data);
                     }
 
                     ESP_LOGI(TAG, "Discovery Switch Sent");
@@ -509,9 +519,20 @@ void serviceQueueTask(void *arg)
 
             switch (msg.cmd)
             {
-            case SERVICE_COMMAND::SWITCH_TO_DISCOVERY:
-                ESP_LOGI(TAG, "Switch to discovery requested");
+            case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
+            {
+                discoveryMode = true;
+                AstrOs_Display.displayUpdate("Discovery", "Mode On");
+                ESP_LOGI(TAG, "Discovery mode on");
                 break;
+            }
+            case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF:
+            {
+                discoveryMode = false;
+                AstrOs_Display.displayDefault();
+                ESP_LOGI(TAG, "Discovery mode off");
+                break;
+            }
             default:
                 break;
             }
@@ -691,7 +712,6 @@ void espnowQueueTask(void *arg)
     AstrOs_Display.setDefault(rank, "", AstrOs_EspNow.name);
     AstrOs_Display.displayDefault();
 
-    bool discoveryMode = false;
     queue_espnow_msg_t msg;
 
     while (1)
@@ -702,20 +722,6 @@ void espnowQueueTask(void *arg)
 
             switch (msg.eventType)
             {
-            case ESPNOW_DISCOVERY_MODE_ON:
-            {
-                discoveryMode = true;
-                AstrOs_Display.displayUpdate("Discovery", "Mode On");
-                ESP_LOGI(TAG, "Discovery mode on");
-                break;
-            }
-            case ESPNOW_DISCOVERY_MODE_OFF:
-            {
-                discoveryMode = false;
-                AstrOs_Display.displayDefault();
-                ESP_LOGI(TAG, "Discovery mode off");
-                break;
-            }
             case ESPNOW_SEND_HEARTBEAT:
             {
                 AstrOs_EspNow.sendHeartbeat(discoveryMode);
@@ -749,6 +755,8 @@ void espnowQueueTask(void *arg)
                 else if (esp_now_is_peer_exist(msg.src))
                 {
                     ESP_LOGI(TAG, "Received unicast data from peer: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
+
+                    AstrOs_EspNow.handleMessage(msg.src, msg.data, msg.data_len);
                 }
                 else
                 {

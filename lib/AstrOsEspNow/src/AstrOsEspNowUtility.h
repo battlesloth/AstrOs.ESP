@@ -29,9 +29,7 @@ extern "C"
     {
         ESPNOW_SEND,
         ESPNOW_SEND_HEARTBEAT,
-        ESPNOW_RECV,
-        ESPNOW_DISCOVERY_MODE_ON,
-        ESPNOW_DISCOVERY_MODE_OFF
+        ESPNOW_RECV
     } EspNowQueueEventType;
 
     /* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */

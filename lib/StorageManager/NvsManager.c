@@ -384,7 +384,18 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
     char peerCountConfig[] = "peer-count";
 
     err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
-    logError(TAG, __FUNCTION__, __LINE__, err);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            peers = 0;
+        }
+        else
+        {
+            nvs_close(nvsHandle);
+            return false;
+        }
+    }
 
     peers++;
 
