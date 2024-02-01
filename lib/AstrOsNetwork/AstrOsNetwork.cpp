@@ -178,8 +178,8 @@ esp_err_t credentialsHandler(httpd_req_t *req)
             err = httpd_query_key_value(buf, "pass", pass, 65);
             logError(TAG, __FUNCTION__, __LINE__, err);
 
-            percentDecode(svcConfig.networkSSID, _ssid);
-            percentDecode(svcConfig.networkPass, pass);
+            // percentDecode(svcConfig.networkSSID, _ssid);
+            // percentDecode(svcConfig.networkPass, pass);
         }
         free(buf);
     }

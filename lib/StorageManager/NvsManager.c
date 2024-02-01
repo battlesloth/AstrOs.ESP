@@ -24,56 +24,10 @@ static void setKeyId(char *key, uint8_t id, uint8_t startPos)
 
 bool nvsSaveServiceConfig(svc_config_t config)
 {
-    if (config.networkSSID[0] != '\0' &&
-        config.networkPass[0] != '\0')
-    {
-        nvs_handle_t nvsHandle;
-        esp_err_t err;
 
-        err = nvs_open("config", NVS_READWRITE, &nvsHandle);
-
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        err = nvs_set_str(nvsHandle, "networkSSID", config.networkSSID);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        err = nvs_set_str(nvsHandle, "networkPass", config.networkPass);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        err = nvs_commit(nvsHandle);
-        if (logError(TAG, __FUNCTION__, __LINE__, err))
-        {
-            nvs_close(nvsHandle);
-            return false;
-        }
-
-        nvs_close(nvsHandle);
-
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-}
-
-bool nvsLoadServiceConfig(svc_config_t *config)
-{
-    esp_err_t err;
     nvs_handle_t nvsHandle;
-    size_t defaultSize = 0;
+    esp_err_t err;
+
     err = nvs_open("config", NVS_READWRITE, &nvsHandle);
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -82,49 +36,14 @@ bool nvsLoadServiceConfig(svc_config_t *config)
         return false;
     }
 
-    defaultSize = 33;
-    err = nvs_get_str(nvsHandle, "networkSSID", config->networkSSID, &defaultSize);
+    err = nvs_set_blob(nvsHandle, "masterMac", config.masterMacAddress, 6);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
         return false;
     }
 
-    defaultSize = 65;
-    err = nvs_get_str(nvsHandle, "networkPass", config->networkPass, &defaultSize);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    nvs_close(nvsHandle);
-
-    return true;
-}
-
-bool nvsClearServiceConfig()
-{
-
-    esp_err_t err;
-    nvs_handle_t nvsHandle;
-    size_t defaultSize = 0;
-    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
-
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    err = nvs_erase_key(nvsHandle, "networkSSID");
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    err = nvs_erase_key(nvsHandle, "networkPass");
+    err = nvs_set_str(nvsHandle, "name", config.name);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -137,6 +56,118 @@ bool nvsClearServiceConfig()
         nvs_close(nvsHandle);
         return false;
     }
+
+    nvs_close(nvsHandle);
+
+    return true;
+}
+
+bool nvsLoadServiceConfig(svc_config_t *config)
+{
+    esp_err_t err;
+    nvs_handle_t nvsHandle;
+    size_t defaultSize = 0;
+    bool result = true;
+
+    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    defaultSize = 6;
+    err = nvs_get_blob(nvsHandle, "masterMac", config->masterMacAddress, &defaultSize);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        memset(config->masterMacAddress, 255, 6);
+        result = false;
+    }
+
+    defaultSize = 16;
+    err = nvs_get_str(nvsHandle, "name", config->name, &defaultSize);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        config->name[0] = 0;
+        result = false;
+    }
+
+    nvs_close(nvsHandle);
+
+    return result;
+}
+
+bool nvsClearServiceConfig()
+{
+    esp_err_t err;
+    nvs_handle_t nvsHandle;
+
+    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
+
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_erase_key(nvsHandle, "masterMac");
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = nvs_erase_key(nvsHandle, "name");
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    int peers = 0;
+    char peerCountConfig[] = "peer-count";
+
+    err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    char nameConfig[] = "p-00-name";
+    char macConfig[] = "p-00-mac";
+    char cryptoKeyConfig[] = "p-00-crypt";
+    char isPairedConfig[] = "p-00-paired";
+
+    for (size_t i = 0; i < peers; i++)
+    {
+        setKeyId(nameConfig, i, 2);
+        setKeyId(macConfig, i, 2);
+        setKeyId(cryptoKeyConfig, i, 2);
+        setKeyId(isPairedConfig, i, 2);
+
+        err = nvs_erase_key(nvsHandle, nameConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
+
+        err = nvs_erase_key(nvsHandle, macConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
+
+        err = nvs_erase_key(nvsHandle, cryptoKeyConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
+
+        err = nvs_erase_key(nvsHandle, isPairedConfig);
+        logError(TAG, __FUNCTION__, __LINE__, err);
+    }
+
+    err = nvs_erase_key(nvsHandle, peerCountConfig);
+    logError(TAG, __FUNCTION__, __LINE__, err);
+
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
     nvs_close(nvsHandle);
     return true;
 }
@@ -329,127 +360,6 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.speed = 1;
 
         config[i] = channel;
-    }
-
-    nvs_close(nvsHandle);
-    return true;
-}
-
-bool nvsSaveMasterMacAddress(uint8_t *mac)
-{
-    esp_err_t err;
-    nvs_handle_t nvsHandle;
-
-    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
-
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    err = nvs_set_blob(nvsHandle, "masterMac", mac, 6);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    err = nvs_commit(nvsHandle);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    nvs_close(nvsHandle);
-    return true;
-}
-
-bool nvsLoadMasterMacAddress(uint8_t *mac)
-{
-    esp_err_t err;
-    nvs_handle_t nvsHandle;
-    size_t defaultSize = 6;
-
-    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        memset(mac, 255, 6);
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    err = nvs_get_blob(nvsHandle, "masterMac", mac, &defaultSize);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        memset(mac, 255, 6);
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    nvs_close(nvsHandle);
-    return true;
-}
-
-bool nvsClearEspNowPeerConfig()
-{
-    esp_err_t err;
-    nvs_handle_t nvsHandle;
-
-    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
-
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    int peers = 0;
-    char peerCountConfig[] = "peer-count";
-
-    err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
-    }
-
-    char nameConfig[] = "p-00-name";
-    char macConfig[] = "p-00-mac";
-    char cryptoKeyConfig[] = "p-00-crypt";
-    char isPairedConfig[] = "p-00-paired";
-
-    for (size_t i = 0; i < peers; i++)
-    {
-        setKeyId(nameConfig, i, 2);
-        setKeyId(macConfig, i, 2);
-        setKeyId(cryptoKeyConfig, i, 2);
-        setKeyId(isPairedConfig, i, 2);
-
-        err = nvs_erase_key(nvsHandle, nameConfig);
-        logError(TAG, __FUNCTION__, __LINE__, err);
-
-        err = nvs_erase_key(nvsHandle, macConfig);
-        logError(TAG, __FUNCTION__, __LINE__, err);
-
-        err = nvs_erase_key(nvsHandle, cryptoKeyConfig);
-        logError(TAG, __FUNCTION__, __LINE__, err);
-
-        err = nvs_erase_key(nvsHandle, isPairedConfig);
-        logError(TAG, __FUNCTION__, __LINE__, err);
-    }
-
-    err = nvs_erase_key(nvsHandle, peerCountConfig);
-    logError(TAG, __FUNCTION__, __LINE__, err);
-
-    err = nvs_erase_key(nvsHandle, "masterMac");
-
-    err = nvs_commit(nvsHandle);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        nvs_close(nvsHandle);
-        return false;
     }
 
     nvs_close(nvsHandle);

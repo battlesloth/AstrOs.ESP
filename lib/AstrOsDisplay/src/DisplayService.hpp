@@ -10,11 +10,16 @@ class AstrOsDisplayService
 {
 private:
     QueueHandle_t hardwareQueue;
+    std::string defaultLine1;
+    std::string defaultLine2;
+    std::string defaultLine3;
 
 public:
     AstrOsDisplayService(/* args */);
     ~AstrOsDisplayService();
     void init(QueueHandle_t hardwareQueue);
+    void setDefault(std::string line1, std::string line2, std::string line3);
+    void displayDefault();
     void displayUpdate(std::string line1, std::string line2 = "", std::string line3 = "");
 };
 

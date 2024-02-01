@@ -17,6 +17,18 @@ void AstrOsDisplayService::init(QueueHandle_t hardwareQueue)
     AstrOsDisplayService::hardwareQueue = hardwareQueue;
 }
 
+void AstrOsDisplayService::setDefault(std::string line1, std::string line2, std::string line3)
+{
+    AstrOsDisplayService::defaultLine1 = line1;
+    AstrOsDisplayService::defaultLine2 = line2;
+    AstrOsDisplayService::defaultLine3 = line3;
+}
+
+void AstrOsDisplayService::displayDefault()
+{
+    AstrOsDisplayService::displayUpdate(defaultLine1, defaultLine2, defaultLine3);
+}
+
 void AstrOsDisplayService::displayUpdate(std::string line1, std::string line2, std::string line3)
 {
 

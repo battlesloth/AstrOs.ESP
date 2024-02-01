@@ -39,10 +39,6 @@ public:
     bool saveServoConfig(int boardId, servo_channel *servos, int arraySize);
     bool loadServoConfig(int boardId, servo_channel *servos, int arraySize);
 
-    bool saveMasterMacAddress(uint8_t *mac);
-    bool loadMasterMacAddress(uint8_t *mac);
-
-    bool clearEspNowPeerConfig();
     bool saveEspNowPeer(espnow_peer_t config);
     bool saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize);
     int loadEspNowPeerConfigs(espnow_peer_t *config);

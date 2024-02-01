@@ -126,21 +126,6 @@ bool StorageManager::loadServoConfig(int boardId, servo_channel *servos, int arr
  * ESP-NOW configs
  ********************************/
 
-bool StorageManager::saveMasterMacAddress(uint8_t *mac)
-{
-    return nvsSaveMasterMacAddress(mac);
-}
-
-bool StorageManager::loadMasterMacAddress(uint8_t *mac)
-{
-    return nvsLoadMasterMacAddress(mac);
-}
-
-bool StorageManager::clearEspNowPeerConfig()
-{
-    return nvsClearEspNowPeerConfig();
-}
-
 bool StorageManager::saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
 {
     return nvsSaveEspNowPeerConfigs(config, arraySize);

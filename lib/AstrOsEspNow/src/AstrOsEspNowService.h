@@ -17,10 +17,8 @@ typedef struct
 class AstrOsEspNow
 {
 private:
-
     uint8_t masterMac[ESP_NOW_ETH_ALEN];
     bool isMasterNode;
-    std::string name;
     std::string mac;
     std::vector<espnow_peer_t> peers;
 
@@ -29,6 +27,8 @@ private:
 
     bool cachePeer(u_int8_t *macAddress, std::string name);
     bool (*cachePeerCallback)(espnow_peer_t);
+
+    void (*displayUpdateCallback)(std::string, std::string, std::string);
 
     queue_espnow_msg_t generatePacket(AstrOsPacketType type, uint8_t *data, uint8_t data_len);
     astros_packet_t parsePacket(uint8_t *data);
@@ -43,10 +43,11 @@ private:
 public:
     AstrOsEspNow();
     ~AstrOsEspNow();
-    esp_err_t init(astros_espnow_config_t config, bool (*func_ptr)(espnow_peer_t));
+    esp_err_t init(astros_espnow_config_t config, bool (*cachePeer_cb)(espnow_peer_t), void (*displayUpdate_cb)(std::string, std::string, std::string));
     esp_err_t addPeer(uint8_t *macAddress);
     void sendHeartbeat(bool discoveryMode);
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
+    std::string name;
 };
 
 extern AstrOsEspNow AstrOs_EspNow;

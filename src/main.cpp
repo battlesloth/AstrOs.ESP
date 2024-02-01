@@ -128,12 +128,6 @@ static esp_timer_handle_t heartbeatTimer;
 #endif
 
 /**********************************
- * ESP-NOW
- **********************************/
-
-static std::string name = "";
-
-/**********************************
  * Method definitions
  *********************************/
 void init(void);
@@ -169,6 +163,11 @@ esp_err_t mountSdCard(void);
 bool cachePeer(espnow_peer_t peer)
 {
     return Storage.saveEspNowPeer(peer);
+}
+
+void displaySetDefault(std::string line1, std::string line2, std::string line3)
+{
+    return AstrOs_Display.setDefault(line1, line2, line3);
 }
 
 extern "C"
@@ -259,15 +258,15 @@ void init(void)
     ESP_ERROR_CHECK(wifiInit());
     ESP_ERROR_CHECK(espnowInit());
 
-    uint8_t mac[ESP_NOW_ETH_ALEN] = {0};
+    svc_config_t svcConfig;
 
-    if (Storage.loadMasterMacAddress(mac))
+    if (Storage.loadServiceConfig(&svcConfig))
     {
-        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(mac));
+        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(svcConfig.masterMacAddress));
     }
     else
     {
-        ESP_LOGI(TAG, "Master MAC address not found in storage");
+        ESP_LOGI(TAG, "Service config not found in storage");
     }
 
     int peerCount = 0;
@@ -279,13 +278,13 @@ void init(void)
     ESP_LOGI(TAG, "Loaded %d peers", peerCount);
 
     astros_espnow_config_t config = {
-        .masterMac = mac,
-        .name = name,
+        .masterMac = svcConfig.masterMacAddress,
+        .name = svcConfig.name,
         .isMaster = isMasterNode,
         .peers = peerList,
         .peerCount = peerCount};
 
-    AstrOs_EspNow.init(config, &cachePeer);
+    AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault);
 }
 
 /******************************************
@@ -434,7 +433,7 @@ void buttonListenerTask(void *arg)
                 {
                     ESP_LOGI(TAG, "Clearing ESP-NOW peer config");
 
-                    Storage.clearEspNowPeerConfig();
+                    Storage.clearServiceConfig();
 
                     esp_restart();
                 }
@@ -684,7 +683,8 @@ void espnowQueueTask(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(5 * 1000));
 
-    AstrOs_Display.displayUpdate(rank);
+    AstrOs_Display.setDefault(rank, "", AstrOs_EspNow.name);
+    AstrOs_Display.displayDefault();
 
     bool discoveryMode = false;
     queue_espnow_msg_t msg;
@@ -707,7 +707,7 @@ void espnowQueueTask(void *arg)
             case ESPNOW_DISCOVERY_MODE_OFF:
             {
                 discoveryMode = false;
-                AstrOs_Display.displayUpdate(rank);
+                AstrOs_Display.displayDefault();
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }

@@ -29,15 +29,6 @@ extern "C"
     // gets the servo config
     bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize);
 
-    // saves the master mac address
-    bool nvsSaveMasterMacAddress(uint8_t *mac);
-
-    // gets the master mac address
-    bool nvsLoadMasterMacAddress(uint8_t *mac);
-
-    // clear all configured peers
-    bool nvsClearEspNowPeerConfig();
-
     // saves single espnow peer config
     bool nvsSaveEspNowPeer(espnow_peer_t config);
 

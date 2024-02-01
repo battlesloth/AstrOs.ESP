@@ -23,14 +23,15 @@ AstrOsEspNow::~AstrOsEspNow()
 {
 }
 
-esp_err_t AstrOsEspNow::init(astros_espnow_config_t config, bool (*func_ptr)(espnow_peer_t))
+esp_err_t AstrOsEspNow::init(astros_espnow_config_t config, bool (*cachePeer_cb)(espnow_peer_t), void (*displayUpdate_cb)(std::string, std::string, std::string))
 {
     esp_err_t err = ESP_OK;
 
     AstrOsEspNow::name = config.name;
     AstrOsEspNow::isMasterNode = config.isMaster;
-    AstrOsEspNow::cachePeerCallback = func_ptr;
     AstrOsEspNow::peers = std::vector<espnow_peer_t>(config.peerCount);
+    AstrOsEspNow::cachePeerCallback = cachePeer_cb;
+    AstrOsEspNow::displayUpdateCallback = displayUpdate_cb;
 
     uint8_t *localMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
 
@@ -316,12 +317,10 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t l
         return false;
     }
 
-    if (mac.compare(AstrOsEspNow::mac) == 0)
-    {
-        AstrOsEspNow::name = name;
-        AstrOsEspNow::updateMasterMac(src);
-        AstrOsEspNow::sendRegistrationAck();
-    }
+    AstrOsEspNow::name = name;
+    AstrOsEspNow::updateMasterMac(src);
+    AstrOsEspNow::displayUpdateCallback("Padawan", "", name);
+    AstrOsEspNow::sendRegistrationAck();
 
     return true;
 }

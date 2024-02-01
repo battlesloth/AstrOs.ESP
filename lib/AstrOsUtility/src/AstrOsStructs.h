@@ -35,8 +35,8 @@ extern "C"
 
     typedef struct
     {
-        char networkSSID[33];
-        char networkPass[65];
+        uint8_t masterMacAddress[6];
+        char name[16];
     } svc_config_t;
 
     typedef struct
