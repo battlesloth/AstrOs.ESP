@@ -560,9 +560,9 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::FORWARD_HEARTBEAT:
             {
                 ESP_LOGI(TAG, "Forwarding heartbeat %s", msg.data);
-                auto val = AstrOsStringUtils::getMessageValueAt(msg.data, UNIT_SEPARATOR, 1);
+                auto val = AstrOsStringUtils::getMessageValueAt(msg.data, msg.dataSize, UNIT_SEPARATOR, 1);
                 auto forward = AstrOsSerialMessageService::generateHeartBeatMsg(val);
-
+                ESP_LOGI(TAG, "Forwarding heartbeat %s", val.c_str());
                 queue_msg_t serialMsg;
                 serialMsg.message_id = 1;
                 serialMsg.data = (uint8_t *)malloc(forward.messageSize + 1);

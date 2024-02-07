@@ -376,7 +376,7 @@ void AstrOsEspNow::sendHeartbeat(bool discoveryMode)
     // if master mac is not broadcast address, then assume we are registered
     if (!IS_BROADCAST_ADDR(destMac))
     {
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::HEARTBEAT);
+        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::HEARTBEAT, this->name, this->mac);
         if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending heartbeat");
@@ -403,6 +403,10 @@ bool AstrOsEspNow::handleHeartbeat(astros_packet_t packet)
     queue_svc_cmd_t cmd;
 
     cmd.cmd = SERVICE_COMMAND::FORWARD_HEARTBEAT;
+
+    std::string test(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
+
+    ESP_LOGI(TAG, "Heartbeat payload: %s, size%d", test.c_str(), packet.payloadSize);
 
     cmd.data = (uint8_t *)malloc(packet.payloadSize);
     memcpy(cmd.data, packet.payload, packet.payloadSize);

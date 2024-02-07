@@ -16,9 +16,9 @@ public:
         return std::string(macStr);
     }
 
-    static std::string getMessageValueAt(const uint8_t *data, char delimiter, int index)
+    static std::string getMessageValueAt(uint8_t *data, int dataSize, char delimiter, int index)
     {
-        std::string message = std::string((char *)data);
+        std::string message = std::string(reinterpret_cast<char *>(data), dataSize);
         std::vector<std::string> parts = splitString(message, delimiter);
         if (index > parts.size() - 1)
         {
