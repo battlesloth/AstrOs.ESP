@@ -13,7 +13,7 @@ private:
     std::string command;
 
 public:
-    DisplayCommand(const char *cmd);
+    DisplayCommand(std::string);
     DisplayCommand();
     ~DisplayCommand();
     void setValue(std::string line1, std::string line2 = "", std::string line3 = "");

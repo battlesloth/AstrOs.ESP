@@ -1,4 +1,6 @@
-#include "AstrOsEspNowMessageService.h"
+#include "AstrOsEspNowMessageService.hpp"
+#include "AstrOsMessageUtil.hpp"
+
 #include <cmath>
 #include <string>
 #include <cstring>
@@ -12,13 +14,13 @@ astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketT
         return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ)[0];
         break;
     case AstrOsPacketType::REGISTRATION:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + "|" + name + "|" + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
         break;
     case AstrOsPacketType::REGISTRATION_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + "|" + name + "|" + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
         break;
     case AstrOsPacketType::HEARTBEAT:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::HEARTBEAT) + "|" + name)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::HEARTBEAT) + UNIT_SEPARATOR + name)[0];
         break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, message)[0];

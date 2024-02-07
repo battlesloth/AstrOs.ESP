@@ -3,8 +3,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
-#include "esp_timer.h"
-#include "esp_netif.h"
+#include <esp_timer.h>
+#include <esp_netif.h>
 #include <driver/rmt.h>
 #include <esp_log.h>
 #include <driver/uart.h>
@@ -13,11 +13,11 @@
 #include <esp_random.h>
 #include <string.h>
 
-#include "esp_netif.h"
-#include "esp_wifi.h"
-#include "esp_now.h"
-#include "esp_crc.h"
-#include "esp_wifi_types.h"
+#include <esp_netif.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <esp_crc.h>
+#include <esp_wifi_types.h>
 
 #include <AstrOsInterface.h>
 #include <AnimationController.h>
@@ -40,9 +40,11 @@ static const char *TAG = AstrOsConstants::ModuleName;
 #ifdef JEDI_KNIGHT
 #define isMasterNode true
 #define rank "Jedi Knight"
+#define ASTRO_PORT UART_NUM_1
 #else
 #define isMasterNode false
 #define rank "Padawan"
+#define ASTRO_PORT UART_NUM_0
 #endif
 
 /**********************************
@@ -55,7 +57,7 @@ static bool discoveryMode = false;
  **********************************/
 
 static QueueHandle_t animationQueue;
-static QueueHandle_t hardwareQueue;
+// static QueueHandle_t hardwareQueue;
 static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
@@ -67,8 +69,6 @@ static QueueHandle_t espnowQueue;
  **********************************/
 
 static const int RX_BUF_SIZE = 1024;
-
-#define ASTRO_PORT UART_NUM_0
 
 /**********************************
  * timers
@@ -93,11 +93,8 @@ static esp_timer_handle_t heartbeatTimer;
 /**********************************
  * Serial Settings
  **********************************/
+#define ASTROS_INTEFACE_BAUD_RATE (115200)
 
-#ifdef DARTHSERVO
-#define KI_TX_PIN (GPIO_NUM_16)
-#define KI_RX_PIN (GPIO_NUM_3)
-#else
 #define BAUD_RATE_1 (9600)
 #define TX_PIN_1 (GPIO_NUM_2)
 #define RX_PIN_1 (GPIO_NUM_0)
@@ -107,30 +104,22 @@ static esp_timer_handle_t heartbeatTimer;
 #define BAUD_RATE_3 (9600)
 #define TX_PIN_3 (GPIO_NUM_12)
 #define RX_PIN_3 (GPIO_NUM_13)
-#endif
 
 /**********************************
  * I2C Settings
  **********************************/
-#ifdef DARTHSERVO
-#define SDA_PIN (GPIO_NUM_18)
-#define SCL_PIN (GPIO_NUM_17)
-#else
+
 #define SDA_PIN (GPIO_NUM_21)
 #define SCL_PIN (GPIO_NUM_22)
-#endif
+
 #define I2C_PORT I2C_NUM_0
 
 /**********************************
  * Servo Settings
  **********************************/
-#ifdef DARTHSERVO
+
 #define SERVO_BOARD_0_ADDR 0x40
 #define SERVO_BOARD_1_ADDR 0x41
-#else
-#define SERVO_BOARD_0_ADDR 0x40
-#define SERVO_BOARD_1_ADDR 0x41
-#endif
 
 /**********************************
  * Method definitions
@@ -152,7 +141,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
 void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
-void hardwareQueueTask(void *arg);
+// void hardwareQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
@@ -196,7 +185,7 @@ void app_main()
     xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
+    // xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
     xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
     xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
     xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
@@ -220,7 +209,7 @@ void init(void)
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
-    hardwareQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_hw_cmd_t));
+    // hardwareQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_hw_cmd_t));
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
@@ -228,7 +217,7 @@ void init(void)
 
     ESP_ERROR_CHECK(Storage.Init());
 
-    ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     AstrOs.Init(animationQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
@@ -248,13 +237,20 @@ void init(void)
 
     serial_config_t serialConf;
 
-    serialConf.baudRate1 = 9600;
+    if (isMasterNode)
+    {
+        serialConf.baudRate1 = ASTROS_INTEFACE_BAUD_RATE;
+    }
+    else
+    {
+        serialConf.baudRate1 = 9600;
+    }
     serialConf.txPin1 = TX_PIN_1;
     serialConf.rxPin1 = RX_PIN_1;
-    serialConf.baudRate2 = 9600;
+    serialConf.baudRate2 = BAUD_RATE_2;
     serialConf.txPin2 = TX_PIN_2;
     serialConf.rxPin2 = RX_PIN_2;
-    serialConf.baudRate3 = 9600;
+    serialConf.baudRate3 = BAUD_RATE_3;
     serialConf.txPin3 = TX_PIN_3;
     serialConf.rxPin3 = RX_PIN_3;
 
@@ -301,7 +297,7 @@ void init(void)
     ESP_LOGE(TAG, "Name: %s", config.name.c_str());
 
     AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault, &updateSeviceConfig);
-    AstrOs_Display.init(hardwareQueue);
+    AstrOs_Display.init(i2cQueue);
 }
 
 /******************************************
@@ -356,6 +352,26 @@ static void heartbeatTimerCallback(void *arg)
             free(msg.data);
         }
     }
+    else
+    {
+        auto heartbeat = AstrOsSerialMessageService::generateHeartBeatMsg("master");
+
+        queue_msg_t serialMsg;
+        serialMsg.message_id = 1;
+        serialMsg.dataSize = heartbeat.messageSize + 1;
+        serialMsg.data = (uint8_t *)malloc(heartbeat.messageSize + 1);
+
+        memcpy(serialMsg.data, heartbeat.message, heartbeat.messageSize);
+        serialMsg.data[heartbeat.messageSize] = '\n';
+
+        free(heartbeat.message);
+
+        if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send serial queue fail");
+            free(serialMsg.data);
+        }
+    }
 }
 
 static void maintenanceTimerCallback(void *arg)
@@ -380,18 +396,22 @@ static void animationTimerCallback(void *arg)
         case CommandType::GenericSerial:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
-            queue_msg_t msg = {0, 0};
-            strncpy(msg.data, val.c_str(), sizeof(msg.data));
+            queue_msg_t msg;
+            msg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
+            memcpy(msg.data, val.c_str(), strlen(val.c_str()));
             msg.data[sizeof(msg.data) - 1] = '\0';
+
             xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
             break;
         }
         case CommandType::PWM:
         {
             ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
-            queue_msg_t servoMsg = {0, 0};
-            strncpy(servoMsg.data, val.c_str(), sizeof(servoMsg.data));
+            queue_msg_t servoMsg;
+            servoMsg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
+            memcpy(servoMsg.data, val.c_str(), strlen(val.c_str()));
             servoMsg.data[sizeof(servoMsg.data) - 1] = '\0';
+
             xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
             break;
         }
@@ -399,8 +419,10 @@ static void animationTimerCallback(void *arg)
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
             queue_msg_t i2cMsg = {0, 0};
-            strncpy(i2cMsg.data, val.c_str(), sizeof(i2cMsg.data));
+            i2cMsg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
+            memcpy(i2cMsg.data, val.c_str(), strlen(val.c_str()));
             i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
+
             xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
             break;
         }
@@ -464,6 +486,8 @@ void buttonListenerTask(void *arg)
                     {
                         cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON;
                     }
+
+                    cmd.data = nullptr;
 
                     if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
                     {
@@ -533,9 +557,33 @@ void serviceQueueTask(void *arg)
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
+            case SERVICE_COMMAND::FORWARD_HEARTBEAT:
+            {
+                ESP_LOGI(TAG, "Forwarding heartbeat %s", msg.data);
+                auto val = AstrOsStringUtils::getMessageValueAt(msg.data, UNIT_SEPARATOR, 1);
+                auto forward = AstrOsSerialMessageService::generateHeartBeatMsg(val);
+
+                queue_msg_t serialMsg;
+                serialMsg.message_id = 1;
+                serialMsg.data = (uint8_t *)malloc(forward.messageSize + 1);
+                memcpy(serialMsg.data, forward.message, forward.messageSize);
+                serialMsg.data[forward.messageSize] = '\n';
+
+                free(forward.message);
+
+                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send serial queue fail");
+                    free(serialMsg.data);
+                }
+
+                break;
+            }
             default:
                 break;
             }
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -570,7 +618,7 @@ void animationQueueTask(void *arg)
     }
 }
 
-void hardwareQueueTask(void *arg)
+/*void hardwareQueueTask(void *arg)
 {
 
     QueueHandle_t hardwareQueue;
@@ -631,6 +679,7 @@ void hardwareQueueTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+*/
 
 void serialQueueTask(void *arg)
 {
@@ -645,7 +694,17 @@ void serialQueueTask(void *arg)
         {
             ESP_LOGI(TAG, "Serial Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
             ESP_LOGI(TAG, "Serial command received on queue => %s", msg.data);
-            SerialMod.SendCommand(msg.data);
+
+            if (msg.message_id == 0)
+            {
+                SerialMod.SendCommand(msg.data);
+            }
+            else if (msg.message_id == 1)
+            {
+                SerialMod.SendBytes(2, msg.data, msg.dataSize);
+            }
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -665,6 +724,8 @@ void servoQueueTask(void *arg)
             ESP_LOGI(TAG, "Servo Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
             ESP_LOGI(TAG, "Servo Command received on queue => %s", msg.data);
             ServoMod.QueueCommand(msg.data);
+
+            free(msg.data);
         }
 
         ServoMod.MoveServos();

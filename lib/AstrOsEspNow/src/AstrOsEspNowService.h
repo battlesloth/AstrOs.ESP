@@ -46,7 +46,7 @@ private:
     bool handleRegistration(u_int8_t *src, u_int8_t *payload, size_t len);
     bool sendRegistrationAck();
     bool handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len);
-    bool handleHeartbeat(u_int8_t *src);
+    bool handleHeartbeat(astros_packet_t packet);
 
 public:
     AstrOsEspNow();

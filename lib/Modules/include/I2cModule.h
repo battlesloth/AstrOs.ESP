@@ -20,12 +20,13 @@ private:
     esp_err_t write(uint8_t addr, uint8_t *data_wr, size_t size);
     void writeSsd1306(int line, std::string value);
     void clearSsd1306(int line);
+
 public:
     I2cModule(/* args */);
     ~I2cModule();
     esp_err_t Init();
-    void SendCommand(const char *cmd);
-    void WriteDisplay(const char *cmd);
+    void SendCommand(uint8_t *cmd);
+    void WriteDisplay(uint8_t *cmd);
 };
 
 extern I2cModule I2cMod;

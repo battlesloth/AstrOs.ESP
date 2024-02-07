@@ -49,9 +49,9 @@ esp_err_t I2cModule::Init()
     return result;
 }
 
-void I2cModule::SendCommand(const char *cmd)
+void I2cModule::SendCommand(uint8_t *cmd)
 {
-    auto command = I2cCommand(cmd);
+    auto command = I2cCommand(std::string(reinterpret_cast<char *>(cmd)));
 
     ESP_LOGI(TAG, "Sending Command => %s", cmd);
 
@@ -75,10 +75,10 @@ esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)
     return ret;
 }
 
-void I2cModule::WriteDisplay(const char *cmd)
+void I2cModule::WriteDisplay(uint8_t *cmd)
 {
 #ifdef USE_I2C_OLED
-    auto command = DisplayCommand(cmd);
+    auto command = DisplayCommand(std::string(reinterpret_cast<char *>(cmd)));
 
     if (command.useLine1)
     {

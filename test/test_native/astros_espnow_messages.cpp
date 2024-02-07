@@ -165,8 +165,10 @@ TEST(EspNowMessages, RegistrationMessage)
     EXPECT_EQ(28, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "REGISTRATION" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "macaddress";
 
-    EXPECT_STREQ("REGISTRATION|test|macaddress", payloadString.c_str());
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
     free(value.data);
 }
@@ -182,8 +184,10 @@ TEST(EspNowMessages, RegistrationAckMessage)
     EXPECT_EQ(32, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "REGISTRATION_ACK" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "macaddress";
 
-    EXPECT_STREQ("REGISTRATION_ACK|test|macaddress", payloadString.c_str());
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
     free(value.data);
 }
@@ -199,17 +203,10 @@ TEST(EspNowMessages, HeartbeatMessage)
     EXPECT_EQ(14, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "HEARTBEAT" << UNIT_SEPARATOR << "test";
 
-    EXPECT_STREQ("HEARTBEAT|test", payloadString.c_str());
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
     free(value.data);
-}
-
-int main(int argc, char **argv)
-{
-    testing::InitGoogleTest(&argc, argv);
-    if (RUN_ALL_TESTS())
-        ;
-
-    return 0;
 }

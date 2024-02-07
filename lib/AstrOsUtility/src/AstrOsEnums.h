@@ -8,7 +8,8 @@ extern "C"
     typedef enum
     {
         ESPNOW_DISCOVERY_MODE_ON,
-        ESPNOW_DISCOVERY_MODE_OFF
+        ESPNOW_DISCOVERY_MODE_OFF,
+        FORWARD_HEARTBEAT,
     } SERVICE_COMMAND;
 
     typedef enum

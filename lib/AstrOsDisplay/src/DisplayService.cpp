@@ -13,9 +13,9 @@ AstrOsDisplayService::~AstrOsDisplayService()
 {
 }
 
-void AstrOsDisplayService::init(QueueHandle_t hardwareQueue)
+void AstrOsDisplayService::init(QueueHandle_t i2cQueue)
 {
-    AstrOsDisplayService::hardwareQueue = hardwareQueue;
+    AstrOsDisplayService::i2cQqueue = i2cQueue;
 }
 
 void AstrOsDisplayService::setDefault(std::string line1, std::string line2, std::string line3)
@@ -47,10 +47,17 @@ void AstrOsDisplayService::displayUpdate(std::string line1, std::string line2, s
         cmd.setValue(line1, line2, line3);
     }
 
-    queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, '0'};
-    strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
-    msg.data[sizeof(msg.data) - 1] = '\0';
-    if (xQueueSend(AstrOsDisplayService::hardwareQueue, &msg, pdMS_TO_TICKS(100)) == pdFALSE)
+    // queue_hw_cmd_t msg = {HARDWARE_COMMAND::DISPLAY_COMMAND, '0'};
+    // strncpy(msg.data, cmd.toString().c_str(), sizeof(msg.data));
+    // msg.data[sizeof(msg.data) - 1] = '\0';
+
+    auto strValue = cmd.toString();
+    queue_msg_t i2cMsg;
+    i2cMsg.data = (uint8_t *)malloc(strValue.length() + 1);
+    memcpy(i2cMsg.data, strValue.c_str(), strValue.length());
+    i2cMsg.data[strValue.length()] = '\0';
+
+    if (xQueueSend(AstrOsDisplayService::i2cQqueue, &i2cMsg, pdMS_TO_TICKS(100)) == pdFALSE)
     {
         ESP_LOGE(TAG, "Failed to send display command to hardware queue");
     }

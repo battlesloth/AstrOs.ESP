@@ -6,7 +6,8 @@
 
 typedef std::vector<std::string> str_vec_t;
 
-enum CommandType{
+enum CommandType
+{
     None,
     PWM,
     I2C,
@@ -14,12 +15,13 @@ enum CommandType{
     Kangaroo
 };
 
-class CommandTemplate{
-    public:
-        CommandTemplate(CommandType type, std::string val);
-        ~CommandTemplate();
-        CommandType type;
-        std::string val;
+class CommandTemplate
+{
+public:
+    CommandTemplate(CommandType type, std::string val);
+    ~CommandTemplate();
+    CommandType type;
+    std::string val;
 };
 
 class AnimationCommand
@@ -27,6 +29,7 @@ class AnimationCommand
 private:
     void parseCommandType();
     str_vec_t splitTemplate();
+
 public:
     AnimationCommand(std::string val);
     ~AnimationCommand();
@@ -34,62 +37,59 @@ public:
     CommandType commandType;
     std::string commandTemplate;
 
-    CommandTemplate* GetCommandTemplatePtr();
+    CommandTemplate *GetCommandTemplatePtr();
 
     int duration;
 };
 
-
 class BaseCommand
 {
-    public:
-        BaseCommand();
-        virtual ~BaseCommand();
-        str_vec_t SplitTemplate(std::string val);
-        template <typename ...Args>
-        std::string stringFormat(const std::string& format, Args && ...args);
-        CommandType type;
+public:
+    BaseCommand();
+    virtual ~BaseCommand();
+    str_vec_t SplitTemplate(std::string val);
+    template <typename... Args>
+    std::string stringFormat(const std::string &format, Args &&...args);
+    CommandType type;
 };
 
-class SerialCommand: public BaseCommand
+class SerialCommand : public BaseCommand
 {
-    private:
-        std::string value;
-        int ch;
-        int cmd;
-        int spd;
-        int pos;
-        std::string ToKangarooCommand();
-    public:
-        SerialCommand(std::string val);
-        SerialCommand();
-        ~SerialCommand();
-        std::string GetValue();
-        int serialChannel;
+private:
+    int ch;
+    int cmd;
+    int spd;
+    int pos;
+    std::string ToKangarooCommand();
+
+public:
+    SerialCommand(std::string val);
+    SerialCommand();
+    ~SerialCommand();
+    std::string GetValue();
+    int serialChannel;
+    std::string value;
 };
 
-class ServoCommand: public BaseCommand
+class ServoCommand : public BaseCommand
 {
-    private:
-        
-    public:
-        ServoCommand(std::string val);
-        ~ServoCommand();
-        int channel;
-        int position;
-        int speed;
+private:
+public:
+    ServoCommand(std::string val);
+    ~ServoCommand();
+    int channel;
+    int position;
+    int speed;
 };
 
-class I2cCommand: public BaseCommand
+class I2cCommand : public BaseCommand
 {
-    private:
-       
-    public:
-        I2cCommand(std::string val);
-        ~I2cCommand();
-        int channel;
-        std::string value;
+private:
+public:
+    I2cCommand(std::string val);
+    ~I2cCommand();
+    int channel;
+    std::string value;
 };
-
 
 #endif

@@ -96,16 +96,21 @@ esp_err_t SerialModule::InstallSerial(uart_port_t port, int tx, int rx, int baud
     return err;
 }
 
-void SerialModule::SendCommand(const char *cmd)
+void SerialModule::SendCommand(uint8_t *cmd)
 {
     ESP_LOGI(TAG, "Sending Command => %s", cmd);
 
-    auto command = SerialCommand(cmd);
+    auto command = SerialCommand(std::string(reinterpret_cast<char *>(cmd)));
 
-    SerialModule::SendData(command.serialChannel, command.GetValue().c_str());
+    SerialModule::SendData(command.serialChannel, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()), command.GetValue().size());
 }
 
-void SerialModule::SendData(int ch, std::string msg)
+void SerialModule::SendBytes(int ch, uint8_t *data, size_t size)
+{
+    SerialModule::SendData(ch, data, size);
+}
+
+void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
 {
     bool sent = false;
 
@@ -125,6 +130,7 @@ void SerialModule::SendData(int ch, std::string msg)
                 break;
             case 3:
                 // SerialModule::SoftSerialWrite(msg.c_str());
+                sent = true;
                 xSemaphoreGive(serialMutex);
                 return;
             default:
@@ -132,9 +138,9 @@ void SerialModule::SendData(int ch, std::string msg)
                 break;
             }
 
-            const int txBytes = uart_write_bytes(port, msg.c_str(), msg.length() + 1);
+            const int txBytes = uart_write_bytes(port, data, size);
             ESP_LOGI(TAG, "Wrote %d bytes", txBytes);
-
+            sent = true;
             xSemaphoreGive(serialMutex);
         }
         else

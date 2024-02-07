@@ -15,9 +15,9 @@ DisplayCommand::DisplayCommand()
     line3 = "";
 }
 
-DisplayCommand::DisplayCommand(const char *cmd)
+DisplayCommand::DisplayCommand(std::string cmd)
 {
-    DisplayCommand::command = std::string(cmd);
+    DisplayCommand::command = cmd;
     DisplayCommand::parseCommand();
 }
 

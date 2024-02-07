@@ -22,7 +22,7 @@ namespace AstrOsENC
     constexpr const static char *HEARTBEAT = "HEARTBEAT";
 }
 
-typedef enum
+enum class AstrOsPacketType
 {
     UNKNOWN,
     BASIC,
@@ -30,7 +30,7 @@ typedef enum
     REGISTRATION,
     REGISTRATION_ACK,
     HEARTBEAT,
-} AstrOsPacketType;
+};
 
 typedef struct
 {

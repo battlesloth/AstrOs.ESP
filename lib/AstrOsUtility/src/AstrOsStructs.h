@@ -12,7 +12,8 @@ extern "C"
     typedef struct
     {
         SERVICE_COMMAND cmd;
-        char data[100];
+        uint8_t *data;
+        size_t dataSize;
     } queue_svc_cmd_t;
 
     typedef struct
@@ -42,7 +43,8 @@ extern "C"
     typedef struct
     {
         int message_id;
-        char data[100];
+        uint8_t *data;
+        size_t dataSize;
     } queue_msg_t;
 
     typedef struct

@@ -207,8 +207,8 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         {
             break;
         }
-        ESP_LOGI(TAG, "Heartbeat received from " MACSTR, MAC2STR(src));
-        return this->handleHeartbeat(src);
+        ESP_LOGI(TAG, "Heartbeat received from " MACSTR ", ", MAC2STR(src));
+        return this->handleHeartbeat(packet);
     default:
         return false;
     }
@@ -252,7 +252,7 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t l
     std::string name;
     std::string mac;
 
-    auto parts = AstrOsStringUtils::splitString(payloadStr, '|');
+    auto parts = AstrOsStringUtils::splitString(payloadStr, UNIT_SEPARATOR);
 
     if (parts.size() < 3)
     {
@@ -323,6 +323,7 @@ bool AstrOsEspNow::sendRegistrationAck()
 
     queue_svc_cmd_t cmd;
     cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
+    cmd.data = nullptr;
 
     if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
     {
@@ -336,7 +337,7 @@ bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_
 {
     std::string payloadStr(reinterpret_cast<char *>(payload), len);
 
-    std::vector<std::string> parts = AstrOsStringUtils::splitString(payloadStr, '|');
+    std::vector<std::string> parts = AstrOsStringUtils::splitString(payloadStr, UNIT_SEPARATOR);
 
     if (parts.size() < 3)
     {
@@ -396,7 +397,22 @@ void AstrOsEspNow::sendHeartbeat(bool discoveryMode)
     free(destMac);
 }
 
-bool AstrOsEspNow::handleHeartbeat(u_int8_t *src)
+bool AstrOsEspNow::handleHeartbeat(astros_packet_t packet)
 {
+
+    queue_svc_cmd_t cmd;
+
+    cmd.cmd = SERVICE_COMMAND::FORWARD_HEARTBEAT;
+
+    cmd.data = (uint8_t *)malloc(packet.payloadSize);
+    memcpy(cmd.data, packet.payload, packet.payloadSize);
+    cmd.dataSize = packet.payloadSize;
+
+    if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "Send service queue fail");
+        return false;
+    }
+
     return true;
 }
