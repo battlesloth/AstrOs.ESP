@@ -9,7 +9,7 @@ extern "C"
     {
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF,
-        FORWARD_HEARTBEAT,
+        FORWARD_TO_SERIAL
     } SERVICE_COMMAND;
 
     typedef enum

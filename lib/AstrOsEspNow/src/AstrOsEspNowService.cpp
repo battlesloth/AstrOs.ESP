@@ -1,4 +1,4 @@
-#include <AstrOsEspNowService.h>
+#include <AstrOsEspNowService.hpp>
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsMessaging.h>
 #include <AstrOsUtility.h>
@@ -202,18 +202,58 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         }
         ESP_LOGI(TAG, "Registration ack received from " MACSTR, MAC2STR(src));
         return this->handleRegistrationAck(src, packet.payload, packet.payloadSize);
-    case AstrOsPacketType::HEARTBEAT:
+    case AstrOsPacketType::POLL:
+        if (isMasterNode)
+        {
+            break;
+        }
+        ESP_LOGI(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
+        return this->handlePoll(packet);
+    case AstrOsPacketType::POLL_ACK:
         if (!isMasterNode)
         {
             break;
         }
-        ESP_LOGI(TAG, "Heartbeat received from " MACSTR ", ", MAC2STR(src));
-        return this->handleHeartbeat(packet);
+        ESP_LOGI(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
+        return this->handlePollAck(packet);
+
     default:
         return false;
     }
 
     return true;
+}
+
+void AstrOsEspNow::sendRegistrationRequest()
+{
+    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+
+    getMasterMac(destMac);
+
+    // if master mac is broadcast address, then send registration request
+    if (IS_BROADCAST_ADDR(destMac))
+    {
+        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ);
+        if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Error sending registraion request");
+        }
+        free(data.data);
+    }
+    // if we are already registered, then turn off discovery mode
+    else
+    {
+        queue_svc_cmd_t cmd;
+        cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
+        cmd.data = nullptr;
+
+        if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "Send service queue fail");
+        }
+    }
+
+    free(destMac);
 }
 
 bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
@@ -367,56 +407,141 @@ bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_
     return true;
 }
 
-void AstrOsEspNow::sendHeartbeat(bool discoveryMode)
+void AstrOsEspNow::pollPadawans()
 {
-    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
-
-    getMasterMac(destMac);
-
-    // if master mac is not broadcast address, then assume we are registered
-    if (!IS_BROADCAST_ADDR(destMac))
+    for (auto &peer : peers)
     {
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::HEARTBEAT, this->name, this->mac);
-        if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+        if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
+        {
+            continue;
+        }
+
+        peer.pollAckThisCycle = false;
+
+        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, this->name, this->mac);
+
+        if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending heartbeat");
         }
-        free(data.data);
-    }
-    // if master mac is broadcast address and we are in discovery mode, then send registration request
-    else if (discoveryMode)
-    {
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ);
-        if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Error sending registraion request");
-        }
-        free(data.data);
-    }
 
-    free(destMac);
+        free(data.data);
+    }
 }
 
-bool AstrOsEspNow::handleHeartbeat(astros_packet_t packet)
+bool AstrOsEspNow::handlePoll(astros_packet_t packet)
 {
+    bool result = true;
+
+    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+
+    this->getMasterMac(destMac);
+
+    if (IS_BROADCAST_ADDR(destMac))
+    {
+        ESP_LOGE(TAG, "Cannot send poll ack to broadcast address");
+        free(destMac);
+        return false;
+    }
+
+    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->name, this->mac);
+
+    if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error sending registration ack");
+        result = false;
+    }
+
+    free(data.data);
+    free(destMac);
+
+    return result;
+}
+
+bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
+{
+    std::string payload = std::string((char *)packet.payload, packet.payloadSize);
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3 || parts[0] != "POLL_ACK")
+    {
+        return false;
+    }
+
+    auto padawan = parts[1];
+    auto fingerprint = parts[2];
+
+    bool found = false;
+
+    for (auto &peer : peers)
+    {
+        if (memcmp(peer.name, padawan.c_str(), ESP_NOW_ETH_ALEN) == 0)
+        {
+            peer.pollAckThisCycle = true;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+    {
+        ESP_LOGI(TAG, "Padawan not found in peer list: %s", padawan.c_str());
+        return false;
+    }
 
     queue_svc_cmd_t cmd;
 
-    cmd.cmd = SERVICE_COMMAND::FORWARD_HEARTBEAT;
+    cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
+    auto msg = AstrOsSerialMessageService::generatePollAckMsg(padawan, fingerprint);
+    auto size = msg.length();
 
-    std::string test(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
-
-    ESP_LOGI(TAG, "Heartbeat payload: %s, size%d", test.c_str(), packet.payloadSize);
-
-    cmd.data = (uint8_t *)malloc(packet.payloadSize);
-    memcpy(cmd.data, packet.payload, packet.payloadSize);
-    cmd.dataSize = packet.payloadSize;
+    cmd.data = (uint8_t *)malloc(size);
+    memcpy(cmd.data, msg.c_str(), size);
+    cmd.dataSize = size;
 
     if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
     {
         ESP_LOGE(TAG, "Send service queue fail");
+        free(cmd.data);
         return false;
     }
 
     return true;
+}
+
+void AstrOsEspNow::pollRepsonseTimeExpired()
+{
+    for (auto &peer : peers)
+    {
+        if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
+        {
+            continue;
+        }
+
+        if (!peer.pollAckThisCycle)
+        {
+            ESP_LOGI(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
+
+            queue_svc_cmd_t cmd;
+
+            cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
+
+            auto msg = AstrOsSerialMessageService::generatePollNakMsg(peer.name);
+            auto size = msg.length();
+
+            cmd.data = (uint8_t *)malloc(size);
+            memcpy(cmd.data, msg.c_str(), size);
+            cmd.dataSize = size;
+
+            if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
+            {
+                ESP_LOGE(TAG, "Send service queue fail");
+            }
+        }
+        else
+        {
+            peer.pollAckThisCycle = false;
+        }
+    }
 }

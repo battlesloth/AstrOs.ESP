@@ -192,19 +192,38 @@ TEST(EspNowMessages, RegistrationAckMessage)
     free(value.data);
 }
 
-TEST(EspNowMessages, HeartbeatMessage)
+TEST(EspNowMessages, PollMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::HEARTBEAT, "test");
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, "test");
     auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
 
-    EXPECT_EQ(AstrOsPacketType::HEARTBEAT, parsed.packetType);
+    EXPECT_EQ(AstrOsPacketType::POLL, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
     EXPECT_EQ(1, parsed.totalPackets);
-    EXPECT_EQ(14, parsed.payloadSize);
+    EXPECT_EQ(9, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
-    expected << "HEARTBEAT" << UNIT_SEPARATOR << "test";
+    expected << "POLL" << UNIT_SEPARATOR << "test";
+
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+
+    free(value.data);
+}
+
+TEST(EspNowMessages, PollAckMessage)
+{
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, "test", "fingerprint");
+    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+
+    EXPECT_EQ(AstrOsPacketType::POLL_ACK, parsed.packetType);
+    EXPECT_EQ(1, parsed.packetNumber);
+    EXPECT_EQ(1, parsed.totalPackets);
+    EXPECT_EQ(25, parsed.payloadSize);
+
+    std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "POLL_ACK" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "fingerprint";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 

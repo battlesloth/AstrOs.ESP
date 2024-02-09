@@ -46,7 +46,8 @@ private:
     bool handleRegistration(u_int8_t *src, u_int8_t *payload, size_t len);
     bool sendRegistrationAck();
     bool handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len);
-    bool handleHeartbeat(astros_packet_t packet);
+    bool handlePoll(astros_packet_t packet);
+    bool handlePollAck(astros_packet_t packet);
 
 public:
     AstrOsEspNow();
@@ -56,8 +57,10 @@ public:
                    bool (*cachePeer_cb)(espnow_peer_t),
                    void (*displayUpdate_cb)(std::string, std::string, std::string),
                    void (*updateSeviceConfig_cb)(std::string, uint8_t *));
-    void sendHeartbeat(bool discoveryMode);
+    void sendRegistrationRequest();
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
+    void pollPadawans();
+    void pollRepsonseTimeExpired();
 };
 
 extern AstrOsEspNow AstrOs_EspNow;

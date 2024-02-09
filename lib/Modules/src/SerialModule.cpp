@@ -107,7 +107,7 @@ void SerialModule::SendCommand(uint8_t *cmd)
 
 void SerialModule::SendBytes(int ch, uint8_t *data, size_t size)
 {
-    SerialModule::SendData(ch, data, size);
+    SerialModule::SendData(ch, reinterpret_cast<const uint8_t *>(data), size);
 }
 
 void SerialModule::SendData(int ch, const uint8_t *data, size_t size)

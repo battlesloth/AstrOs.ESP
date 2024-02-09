@@ -1,8 +1,10 @@
 #include "AstrOsSerialMessageService.hpp"
 #include "AstrOsMessageUtil.hpp"
+#include <AstrOsStringUtils.hpp>
 
 #include <cmath>
 #include <string>
+#include <sstream>
 #include <cstring>
 #include <cstdint>
 
@@ -14,72 +16,64 @@ AstrOsSerialMessageService::~AstrOsSerialMessageService()
 {
 }
 
-astros_serial_message_t AstrOsSerialMessageService::generateHeartBeatMsg(std::string name)
+std::string AstrOsSerialMessageService::generateRegistrationSyncMsg(std::vector<astros_peer_data_t> peers)
 {
-    std::string message = std::string(AstrOsSC::HEARTBEAT) + UNIT_SEPARATOR + name;
-    return AstrOsSerialMessageService::generateSerialMsg(AstrOsSerialMessageType::HEARTBEAT, message);
-}
-
-astros_serial_message_t AstrOsSerialMessageService::generateRegistrationSyncMsg(std::vector<astros_peer_data_t> peers)
-{
-    std::string message = std::string(AstrOsSC::REGISTRATION_SYNC) + UNIT_SEPARATOR;
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::REGISTRATION_SYNC, AstrOsSC::REGISTRATION_SYNC);
+    ss << GROUP_SEPARATOR;
 
     for (const auto &p : peers)
     {
-        message += p.name + ':' + p.mac + UNIT_SEPARATOR;
+        ss << p.name << UNIT_SEPARATOR << p.mac << RECORD_SEPARATOR;
     }
+
+    std::string message = ss.str();
 
     message.pop_back();
 
-    return AstrOsSerialMessageService::generateSerialMsg(AstrOsSerialMessageType::REGISTRATION_SYNC, message);
+    return message;
 }
 
-astros_serial_message_t AstrOsSerialMessageService::generateSerialMsg(AstrOsSerialMessageType type, std::string message)
+std::string AstrOsSerialMessageService::generatePollAckMsg(std::string name, std::string fingerprint)
 {
-    astros_serial_message_t msg;
-
-    msg.messageType = type;
-    msg.messageSize = 3 + message.length();
-    msg.message = (uint8_t *)malloc(msg.messageSize);
-
-    int payloadSize = message.length();
-    int offset = 0;
-    memcpy(msg.message, &type, 1);
-    offset += 1;
-    memcpy(msg.message + offset, &payloadSize, 2);
-    offset += 2;
-    memcpy(msg.message + offset, message.c_str(), message.length());
-    offset += message.length();
-
-    return msg;
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, AstrOsSC::POLL_ACK);
+    ss << GROUP_SEPARATOR << name << UNIT_SEPARATOR << fingerprint;
+    return ss.str();
 }
 
-astros_serial_message_t AstrOsSerialMessageService::parseSerialMsg(uint8_t *data)
+std::string AstrOsSerialMessageService::generatePollNakMsg(char *name)
 {
-    astros_serial_message_t msg;
-    msg.messageType = (AstrOsSerialMessageType)data[0];
-    int payloadSize = (data[2] << 8) | data[1];
-    msg.messageSize = payloadSize;
-    msg.message = (uint8_t *)malloc(payloadSize);
-    memcpy(msg.message, data + SERIAL_MESSAGE_HEADER_SIZE, payloadSize);
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_NAK, AstrOsSC::POLL_NAK);
+    ss << GROUP_SEPARATOR << name;
+    return ss.str();
+}
 
-    if (!validateSerialMsg(msg))
+std::string AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType type, std::string validation)
+{
+    std::stringstream ss;
+    ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation;
+    return ss.str();
+}
+
+bool AstrOsSerialMessageService::validateSerialMsg(std::string header)
+{
+    auto parts = AstrOsStringUtils::splitString(header, RECORD_SEPARATOR);
+
+    if (parts.size() != 2)
     {
-        msg.messageType = AstrOsSerialMessageType::UNKNOWN;
+        return false;
     }
 
-    return msg;
-}
-
-bool AstrOsSerialMessageService::validateSerialMsg(astros_serial_message_t msg)
-{
-
-    switch (msg.messageType)
+    switch (static_cast<AstrOsSerialMessageType>(stoi(parts[0])))
     {
-    case AstrOsSerialMessageType::HEARTBEAT:
-        return memcmp(msg.message, AstrOsSC::HEARTBEAT, strlen(AstrOsSC::HEARTBEAT)) == 0;
     case AstrOsSerialMessageType::REGISTRATION_SYNC:
-        return memcmp(msg.message, AstrOsSC::REGISTRATION_SYNC, strlen(AstrOsSC::REGISTRATION_SYNC)) == 0;
+        return memcmp(parts[2].c_str(), AstrOsSC::REGISTRATION_SYNC, strlen(AstrOsSC::REGISTRATION_SYNC)) == 0;
+    case AstrOsSerialMessageType::POLL_ACK:
+        return memcmp(parts[2].c_str(), AstrOsSC::POLL_ACK, strlen(AstrOsSC::POLL_ACK)) == 0;
+    case AstrOsSerialMessageType::POLL_NAK:
+        return memcmp(parts[2].c_str(), AstrOsSC::POLL_NAK, strlen(AstrOsSC::POLL_NAK)) == 0;
     default:
         return false;
     }

@@ -19,8 +19,11 @@ astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketT
     case AstrOsPacketType::REGISTRATION_ACK:
         return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
         break;
-    case AstrOsPacketType::HEARTBEAT:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::HEARTBEAT) + UNIT_SEPARATOR + name)[0];
+    case AstrOsPacketType::POLL:
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL) + UNIT_SEPARATOR + name)[0];
+        break;
+    case AstrOsPacketType::POLL_ACK:
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
         break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, message)[0];
@@ -110,8 +113,10 @@ bool AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)
         return memcmp(packet.payload, AstrOsENC::REGISTRATION, strlen(AstrOsENC::REGISTRATION)) == 0;
     case AstrOsPacketType::REGISTRATION_ACK:
         return memcmp(packet.payload, AstrOsENC::REGISTRATION_ACK, strlen(AstrOsENC::REGISTRATION_ACK)) == 0;
-    case AstrOsPacketType::HEARTBEAT:
-        return memcmp(packet.payload, AstrOsENC::HEARTBEAT, strlen(AstrOsENC::HEARTBEAT)) == 0;
+    case AstrOsPacketType::POLL:
+        return memcmp(packet.payload, AstrOsENC::POLL, strlen(AstrOsENC::POLL)) == 0;
+    case AstrOsPacketType::POLL_ACK:
+        return memcmp(packet.payload, AstrOsENC::POLL_ACK, strlen(AstrOsENC::POLL_ACK)) == 0;
     default:
         return false;
     }

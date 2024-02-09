@@ -74,9 +74,11 @@ static const int RX_BUF_SIZE = 1024;
  * timers
  **********************************/
 
+static esp_timer_handle_t pollingTimer;
+static bool polling = false;
+
 static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
-static esp_timer_handle_t heartbeatTimer;
 
 /**********************************
  * animation
@@ -97,7 +99,7 @@ static esp_timer_handle_t heartbeatTimer;
 
 #define BAUD_RATE_1 (9600)
 #define TX_PIN_1 (GPIO_NUM_2)
-#define RX_PIN_1 (GPIO_NUM_0)
+#define RX_PIN_1 (GPIO_NUM_15)
 #define BAUD_RATE_2 (9600)
 #define TX_PIN_2 (GPIO_NUM_32)
 #define RX_PIN_2 (GPIO_NUM_33)
@@ -127,9 +129,9 @@ static esp_timer_handle_t heartbeatTimer;
 void init(void);
 
 static void initTimers(void);
+static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
-static void heartbeatTimerCallback(void *arg);
 
 // ESP-NOW
 static esp_err_t wifiInit(void);
@@ -306,6 +308,13 @@ void init(void)
 
 static void initTimers(void)
 {
+
+    const esp_timer_create_args_t pTimerArgs = {
+        .callback = &pollingTimerCallback,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "polling",
+        .skip_unhandled_events = true};
+
     const esp_timer_create_args_t aTimerArgs = {
         .callback = &animationTimerCallback,
         .dispatch_method = ESP_TIMER_TASK,
@@ -318,11 +327,9 @@ static void initTimers(void)
         .name = "maintenance",
         .skip_unhandled_events = true};
 
-    const esp_timer_create_args_t heartbeatTimerArgs = {
-        .callback = &heartbeatTimerCallback,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "heartbeat",
-        .skip_unhandled_events = true};
+    ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(pollingTimer, 2 * 1000 * 1000));
+    ESP_LOGI("init_timer", "Started polling timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&aTimerArgs, &animationTimer));
     ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5 * 1000 * 1000));
@@ -331,45 +338,46 @@ static void initTimers(void)
     ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started maintenance timer");
-
-    ESP_ERROR_CHECK(esp_timer_create(&heartbeatTimerArgs, &heartbeatTimer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(heartbeatTimer, 2 * 1000 * 1000));
 }
 
-static void heartbeatTimerCallback(void *arg)
+static void pollingTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "Heartbeat");
 
-    if (!isMasterNode)
+    // only poll during discovery mode
+    if (isMasterNode && !discoveryMode)
     {
         queue_espnow_msg_t msg;
-        msg.eventType = ESPNOW_SEND_HEARTBEAT;
         msg.data = (uint8_t *)malloc(0);
 
-        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+        if (!polling)
+        {
+            msg.eventType = POLL_PADAWANS;
+            polling = true;
+        }
+        else
+        {
+            msg.eventType = EXPIRE_POLLS;
+            polling = false;
+        }
+
+        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
         {
             ESP_LOGW(TAG, "Send espnow queue fail");
             free(msg.data);
         }
     }
-    else
+    else if (!isMasterNode && discoveryMode)
     {
-        auto heartbeat = AstrOsSerialMessageService::generateHeartBeatMsg("master");
+        queue_espnow_msg_t msg;
+        msg.data = (uint8_t *)malloc(0);
 
-        queue_msg_t serialMsg;
-        serialMsg.message_id = 1;
-        serialMsg.dataSize = heartbeat.messageSize + 1;
-        serialMsg.data = (uint8_t *)malloc(heartbeat.messageSize + 1);
+        msg.eventType = SEND_REGISTRAION_REQ;
 
-        memcpy(serialMsg.data, heartbeat.message, heartbeat.messageSize);
-        serialMsg.data[heartbeat.messageSize] = '\n';
-
-        free(heartbeat.message);
-
-        if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
         {
-            ESP_LOGW(TAG, "Send serial queue fail");
-            free(serialMsg.data);
+            ESP_LOGW(TAG, "Send espnow queue fail");
+            free(msg.data);
         }
     }
 }
@@ -557,19 +565,14 @@ void serviceQueueTask(void *arg)
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
-            case SERVICE_COMMAND::FORWARD_HEARTBEAT:
+            case SERVICE_COMMAND::FORWARD_TO_SERIAL:
             {
-                ESP_LOGI(TAG, "Forwarding heartbeat %s", msg.data);
-                auto val = AstrOsStringUtils::getMessageValueAt(msg.data, msg.dataSize, UNIT_SEPARATOR, 1);
-                auto forward = AstrOsSerialMessageService::generateHeartBeatMsg(val);
-                ESP_LOGI(TAG, "Forwarding heartbeat %s", val.c_str());
                 queue_msg_t serialMsg;
                 serialMsg.message_id = 1;
-                serialMsg.data = (uint8_t *)malloc(forward.messageSize + 1);
-                memcpy(serialMsg.data, forward.message, forward.messageSize);
-                serialMsg.data[forward.messageSize] = '\n';
-
-                free(forward.message);
+                serialMsg.data = (uint8_t *)malloc(msg.dataSize + 1);
+                memcpy(serialMsg.data, msg.data, msg.dataSize);
+                serialMsg.data[msg.dataSize] = '\n';
+                serialMsg.dataSize = msg.dataSize + 1;
 
                 if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                 {
@@ -693,7 +696,6 @@ void serialQueueTask(void *arg)
         if (xQueueReceive(serialQueue, &(msg), 0))
         {
             ESP_LOGI(TAG, "Serial Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "Serial command received on queue => %s", msg.data);
 
             if (msg.message_id == 0)
             {
@@ -701,7 +703,10 @@ void serialQueueTask(void *arg)
             }
             else if (msg.message_id == 1)
             {
-                SerialMod.SendBytes(2, msg.data, msg.dataSize);
+                std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
+
+                ESP_LOGI(TAG, "Serial message: %s", str.c_str());
+                SerialMod.SendBytes(1, msg.data, msg.dataSize);
             }
 
             free(msg.data);
@@ -783,9 +788,19 @@ void espnowQueueTask(void *arg)
 
             switch (msg.eventType)
             {
-            case ESPNOW_SEND_HEARTBEAT:
+            case SEND_REGISTRAION_REQ:
             {
-                AstrOs_EspNow.sendHeartbeat(discoveryMode);
+                AstrOs_EspNow.sendRegistrationRequest();
+                break;
+            }
+            case POLL_PADAWANS:
+            {
+                AstrOs_EspNow.pollPadawans();
+                break;
+            }
+            case EXPIRE_POLLS:
+            {
+                AstrOs_EspNow.pollRepsonseTimeExpired();
                 break;
             }
             case ESPNOW_SEND:

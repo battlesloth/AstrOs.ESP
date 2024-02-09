@@ -28,8 +28,10 @@ extern "C"
     typedef enum
     {
         ESPNOW_SEND,
-        ESPNOW_SEND_HEARTBEAT,
-        ESPNOW_RECV
+        ESPNOW_RECV,
+        SEND_REGISTRAION_REQ,
+        POLL_PADAWANS,
+        EXPIRE_POLLS
     } EspNowQueueEventType;
 
     /* When ESPNOW sending or receiving callback function is called, post event to ESPNOW task. */
@@ -50,6 +52,7 @@ extern "C"
         uint8_t mac_addr[ESP_NOW_ETH_ALEN];
         char crypto_key[16];
         bool is_paired;
+        bool pollAckThisCycle;
     } espnow_peer_t;
 
 #ifdef __cplusplus

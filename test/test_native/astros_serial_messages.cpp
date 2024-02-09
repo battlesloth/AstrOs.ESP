@@ -1,37 +1,50 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <AstrOsMessaging.h>
+#include <AstrOsUtility.h>
 
 using ::testing::MatchesRegex;
 using ::testing::StartsWith;
 
-TEST(SerialMessages, InvalidMessage)
+TEST(SerialMessages, PollAckMessage)
 {
-    uint8_t *testData = (uint8_t *)"TEST_MESSAGE";
+    auto value = AstrOsSerialMessageService::generatePollAckMsg("test", "fingerprint");
 
-    auto parsed = AstrOsSerialMessageService::parseSerialMsg(testData);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
-    EXPECT_EQ(AstrOsSerialMessageType::UNKNOWN, parsed.messageType);
+    auto headerParts = AstrOsStringUtils::splitString(records[0], RECORD_SEPARATOR);
 
-    free(parsed.message);
+    EXPECT_EQ(2, headerParts.size());
+    EXPECT_EQ(static_cast<int>(AstrOsSerialMessageType::POLL_ACK), std::stoi(headerParts[0]));
+    EXPECT_EQ(AstrOsSC::POLL_ACK, headerParts[1]);
+
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    EXPECT_EQ(2, payloadParts.size());
+    EXPECT_EQ("test", payloadParts[0]);
+    EXPECT_EQ("fingerprint", payloadParts[1]);
 }
 
-TEST(SerialMessages, HeartbeatMessage)
+TEST(SerialMessages, PollNakMessage)
 {
-    auto value = AstrOsSerialMessageService::generateHeartBeatMsg("test");
-    auto parsed = AstrOsSerialMessageService::parseSerialMsg(value.message);
-    free(value.message);
+    char *test = (char *)malloc(5);
 
-    EXPECT_EQ(AstrOsSerialMessageType::HEARTBEAT, parsed.messageType);
-    EXPECT_EQ(14, parsed.messageSize);
+    memcpy(test, "test\0", 5);
 
-    std::string payloadString(reinterpret_cast<char *>(parsed.message), parsed.messageSize);
-    std::stringstream expected;
-    expected << "HEARTBEAT" << UNIT_SEPARATOR << "test";
+    auto value = AstrOsSerialMessageService::generatePollNakMsg(test);
 
-    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
-    free(parsed.message);
+    auto headerParts = AstrOsStringUtils::splitString(records[0], RECORD_SEPARATOR);
+
+    EXPECT_EQ(2, headerParts.size());
+    EXPECT_EQ(static_cast<int>(AstrOsSerialMessageType::POLL_NAK), std::stoi(headerParts[0]));
+    EXPECT_EQ(AstrOsSC::POLL_NAK, headerParts[1]);
+
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+    EXPECT_EQ(1, payloadParts.size());
+    EXPECT_EQ("test", payloadParts[0]);
+
+    free(test);
 }
 
 TEST(SerialMessages, RegistrationSyncMessage)
@@ -43,17 +56,26 @@ TEST(SerialMessages, RegistrationSyncMessage)
     peers.push_back(peer2);
 
     auto value = AstrOsSerialMessageService::generateRegistrationSyncMsg(peers);
-    auto parsed = AstrOsSerialMessageService::parseSerialMsg(value.message);
-    free(value.message);
 
-    EXPECT_EQ(AstrOsSerialMessageType::REGISTRATION_SYNC, parsed.messageType);
-    EXPECT_EQ(65, parsed.messageSize);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
-    std::string payloadString(reinterpret_cast<char *>(parsed.message), parsed.messageSize);
-    std::stringstream expected;
-    expected << "REGISTRATION_SYNC" << UNIT_SEPARATOR << "test1:00:00:00:00:00:01" << UNIT_SEPARATOR << "test2:00:00:00:00:00:02";
+    auto headerParts = AstrOsStringUtils::splitString(records[0], RECORD_SEPARATOR);
 
-    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+    EXPECT_EQ(2, headerParts.size());
 
-    free(parsed.message);
+    EXPECT_EQ(static_cast<int>(AstrOsSerialMessageType::REGISTRATION_SYNC), std::stoi(headerParts[0]));
+
+    EXPECT_EQ(AstrOsSC::REGISTRATION_SYNC, headerParts[1]);
+
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+
+    EXPECT_EQ(2, payloadParts.size());
+
+    auto record1 = AstrOsStringUtils::splitString(payloadParts[0], UNIT_SEPARATOR);
+    auto record2 = AstrOsStringUtils::splitString(payloadParts[1], UNIT_SEPARATOR);
+
+    EXPECT_EQ("test1", record1[0]);
+    EXPECT_EQ("00:00:00:00:00:01", record1[1]);
+    EXPECT_EQ("test2", record2[0]);
+    EXPECT_EQ("00:00:00:00:00:02", record2[1]);
 }

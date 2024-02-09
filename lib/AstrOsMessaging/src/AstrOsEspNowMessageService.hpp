@@ -19,7 +19,8 @@ namespace AstrOsENC
     constexpr const static char *REGISTRATION_REQ = "REGISTRATION_REQ";
     constexpr const static char *REGISTRATION = "REGISTRATION";
     constexpr const static char *REGISTRATION_ACK = "REGISTRATION_ACK";
-    constexpr const static char *HEARTBEAT = "HEARTBEAT";
+    constexpr const static char *POLL = "POLL";
+    constexpr const static char *POLL_ACK = "POLL_ACK";
 }
 
 enum class AstrOsPacketType
@@ -29,7 +30,8 @@ enum class AstrOsPacketType
     REGISTRATION_REQ,
     REGISTRATION,
     REGISTRATION_ACK,
-    HEARTBEAT,
+    POLL,
+    POLL_ACK
 };
 
 typedef struct
