@@ -751,7 +751,7 @@ void i2cQueueTask(void *arg)
         if (xQueueReceive(i2cQueue, &(msg), 0))
         {
             ESP_LOGI(TAG, "I2C Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "I2C Command received on queue => %s", msg.data);
+            ESP_LOGI(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
             if (msg.message_id == 0)
             {
                 I2cMod.SendCommand(msg.data);

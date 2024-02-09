@@ -53,6 +53,7 @@ void AstrOsDisplayService::displayUpdate(std::string line1, std::string line2, s
 
     auto strValue = cmd.toString();
     queue_msg_t i2cMsg;
+    i2cMsg.message_id = 1;
     i2cMsg.data = (uint8_t *)malloc(strValue.length() + 1);
     memcpy(i2cMsg.data, strValue.c_str(), strValue.length());
     i2cMsg.data[strValue.length()] = '\0';
