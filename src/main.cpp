@@ -136,7 +136,7 @@ static void maintenanceTimerCallback(void *arg);
 // ESP-NOW
 static esp_err_t wifiInit(void);
 static esp_err_t espnowInit(void);
-static void espnowDeinit();
+// static void espnowDeinit();
 static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
@@ -311,18 +311,21 @@ static void initTimers(void)
 
     const esp_timer_create_args_t pTimerArgs = {
         .callback = &pollingTimerCallback,
+        .arg = NULL,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "polling",
         .skip_unhandled_events = true};
 
     const esp_timer_create_args_t aTimerArgs = {
         .callback = &animationTimerCallback,
+        .arg = NULL,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "animation",
         .skip_unhandled_events = true};
 
     const esp_timer_create_args_t mTimerArgs = {
         .callback = &maintenanceTimerCallback,
+        .arg = NULL,
         .dispatch_method = ESP_TIMER_TASK,
         .name = "maintenance",
         .skip_unhandled_events = true};
@@ -426,7 +429,7 @@ static void animationTimerCallback(void *arg)
         case CommandType::I2C:
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
-            queue_msg_t i2cMsg = {0, 0};
+            queue_msg_t i2cMsg;
             i2cMsg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
             memcpy(i2cMsg.data, val.c_str(), strlen(val.c_str()));
             i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
@@ -1009,9 +1012,11 @@ static esp_err_t espnowInit(void)
     return err;
 }
 
+/*
 static void espnowDeinit()
 {
     ESP_LOGI(TAG, "espnowDeinit called");
     vSemaphoreDelete(espnowQueue);
     esp_now_deinit();
 }
+*/

@@ -74,7 +74,9 @@ esp_err_t SerialModule::InstallSerial(uart_port_t port, int tx, int rx, int baud
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT};
+        .rx_flow_ctrl_thresh = 122,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
 
     err = uart_param_config(port, &config);
 

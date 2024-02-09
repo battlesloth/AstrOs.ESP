@@ -239,10 +239,11 @@ esp_err_t AstrOsStorageManager::mountSdCard()
 {
     esp_err_t err;
 
-    esp_vfs_fat_mount_config_t mountConfig = {
-        .format_if_mount_failed = true,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024};
+    esp_vfs_fat_mount_config_t mountConfig;
+
+    mountConfig.format_if_mount_failed = true;
+    mountConfig.max_files = 5;
+    mountConfig.allocation_unit_size = 16 * 1024;
 
     const char mountPoint[] = MOUNT_POINT;
     ESP_LOGI(TAG, "Initalizing SD card");
@@ -251,14 +252,13 @@ esp_err_t AstrOsStorageManager::mountSdCard()
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
 
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = PIN_NUM_MOSI,
-        .miso_io_num = PIN_NUM_MISO,
-        .sclk_io_num = PIN_NUM_CLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
-    };
+    spi_bus_config_t bus_cfg;
+    bus_cfg.mosi_io_num = PIN_NUM_MOSI;
+    bus_cfg.miso_io_num = PIN_NUM_MISO;
+    bus_cfg.sclk_io_num = PIN_NUM_CLK;
+    bus_cfg.quadwp_io_num = -1;
+    bus_cfg.quadhd_io_num = -1;
+    bus_cfg.max_transfer_sz = 4000;
 
     spi_host_device_t device = static_cast<spi_host_device_t>(host.slot);
 

@@ -123,7 +123,7 @@ bool nvsClearServiceConfig()
         return false;
     }
 
-    int peers = 0;
+    int8_t peers = 0;
     char peerCountConfig[] = "peer-count";
 
     err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
@@ -306,8 +306,8 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     uint16_t min;
     uint16_t max;
-    bool set;
-    bool inverted;
+    uint8_t set;
+    uint8_t inverted;
 
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
@@ -339,12 +339,12 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         err = nvs_get_u8(nvsHandle, setConfig, &set);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
-            set = false;
+            set = 0;
         }
         err = nvs_get_u8(nvsHandle, invertedConfig, &inverted);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
-            inverted = false;
+            inverted = 0;
         }
 
         servo_channel channel;
@@ -352,8 +352,8 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.id = i;
         channel.minPos = min;
         channel.maxPos = max;
-        channel.set = set;
-        channel.inverted = inverted;
+        channel.set = set > 0;
+        channel.inverted = inverted > 0;
         channel.currentPos = channel.minPos;
         channel.requestedPos = channel.minPos;
         channel.moveFactor = 1;
@@ -379,7 +379,7 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
         return false;
     }
 
-    int peers = 0;
+    int8_t peers = 0;
 
     char peerCountConfig[] = "peer-count";
 
@@ -546,7 +546,7 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
         return 0;
     }
 
-    int peers = 0;
+    int8_t peers = 0;
     char peerCountConfig[] = "peer-count";
 
     err = nvs_get_i8(nvsHandle, peerCountConfig, &peers);
@@ -560,7 +560,7 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
     char name[16];
     uint8_t mac[6];
     char cryptoKey[16];
-    bool isPaired;
+    uint8_t isPaired;
 
     char nameConfig[] = "p-00-name";
     char macConfig[] = "p-00-mac";
@@ -598,7 +598,7 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
         err = nvs_get_u8(nvsHandle, isPairedConfig, &isPaired);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
-            isPaired = false;
+            isPaired = 0;
         }
 
         espnow_peer_t peer;
@@ -607,7 +607,7 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
         memcpy(peer.name, name, 16);
         memcpy(peer.mac_addr, mac, 6);
         memcpy(peer.crypto_key, cryptoKey, 16);
-        peer.is_paired = isPaired;
+        peer.is_paired = isPaired > 0;
 
         config[i] = peer;
     }

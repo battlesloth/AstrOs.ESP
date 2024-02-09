@@ -9,6 +9,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+static uint8_t broadcastMac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
 typedef struct
 {
     uint8_t *masterMac;
