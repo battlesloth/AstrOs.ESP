@@ -1,11 +1,11 @@
-#include <SerialModule.h>
-#include <AnimationCommand.h>
+#include <SerialModule.hpp>
+#include <AnimationCommand.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
 // #include <SoftwareSerial.h>
 
-#include "esp_system.h"
-#include "driver/uart.h"
+#include <esp_system.h>
+#include <driver/uart.h>
 #include <esp_log.h>
 #include <string>
 #include <string.h>

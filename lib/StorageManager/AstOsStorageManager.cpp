@@ -1,4 +1,4 @@
-#include <StorageManager.h>
+#include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsEspNowUtility.h>
 #include <AstrOsUtility_Esp.h>
@@ -38,10 +38,10 @@ static const char *TAG = "StorageManager";
 
 static sdmmc_card_t *card;
 
-StorageManager Storage;
+AstrOsStorageManager AstrOs_Storage;
 
-StorageManager::StorageManager() {}
-StorageManager::~StorageManager()
+AstrOsStorageManager::AstrOsStorageManager() {}
+AstrOsStorageManager::~AstrOsStorageManager()
 {
 
     const char mountPoint[] = MOUNT_POINT;
@@ -56,7 +56,7 @@ StorageManager::~StorageManager()
     spi_bus_free(device);
 }
 
-esp_err_t StorageManager::Init()
+esp_err_t AstrOsStorageManager::Init()
 {
 
     ESP_LOGI(TAG, "Initalizing Flash");
@@ -81,43 +81,43 @@ esp_err_t StorageManager::Init()
     ESP_LOGI(TAG, "Mounting SD Card");
 
 #ifndef DARTHSERVO
-    return StorageManager::mountSdCard();
+    return AstrOsStorageManager::mountSdCard();
 #else
     return err;
 #endif
 }
 
-bool StorageManager::saveServiceConfig(svc_config_t config)
+bool AstrOsStorageManager::saveServiceConfig(svc_config_t config)
 {
     return nvsSaveServiceConfig(config);
 }
 
-bool StorageManager::loadServiceConfig(svc_config_t *config)
+bool AstrOsStorageManager::loadServiceConfig(svc_config_t *config)
 {
     return nvsLoadServiceConfig(config);
 }
 
-bool StorageManager::clearServiceConfig()
+bool AstrOsStorageManager::clearServiceConfig()
 {
     return nvsClearServiceConfig();
 }
 
-bool StorageManager::setControllerFingerprint(const char *fingerprint)
+bool AstrOsStorageManager::setControllerFingerprint(const char *fingerprint)
 {
     return nvsSetControllerFingerprint(fingerprint);
 }
 
-bool StorageManager::getControllerFingerprint(char *fingerprint)
+bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
 {
     return nvsGetControllerFingerprint(fingerprint);
 }
 
-bool StorageManager::saveServoConfig(int boardId, servo_channel *servos, int arraySize)
+bool AstrOsStorageManager::saveServoConfig(int boardId, servo_channel *servos, int arraySize)
 {
     return nvsSaveServoConfig(boardId, servos, arraySize);
 }
 
-bool StorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
+bool AstrOsStorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
 {
     return nvsLoadServoConfig(boardId, servos, arraySize);
 }
@@ -126,67 +126,67 @@ bool StorageManager::loadServoConfig(int boardId, servo_channel *servos, int arr
  * ESP-NOW configs
  ********************************/
 
-bool StorageManager::saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
+bool AstrOsStorageManager::saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
 {
     return nvsSaveEspNowPeerConfigs(config, arraySize);
 }
 
-bool StorageManager::saveEspNowPeer(espnow_peer_t config)
+bool AstrOsStorageManager::saveEspNowPeer(espnow_peer_t config)
 {
     return nvsSaveEspNowPeer(config);
 }
 
-int StorageManager::loadEspNowPeerConfigs(espnow_peer_t *config)
+int AstrOsStorageManager::loadEspNowPeerConfigs(espnow_peer_t *config)
 {
     return nvsLoadEspNowPeerConfigs(config);
 }
 
-bool StorageManager::saveFile(std::string filename, std::string data)
+bool AstrOsStorageManager::saveFile(std::string filename, std::string data)
 {
 
 #ifdef USE_SPIFFS
-    return StorageManager::saveFileSpiffs(filename, data);
+    return AstrOsStorageManager::saveFileSpiffs(filename, data);
 #else
-    return StorageManager::saveFileSd(filename, data);
+    return AstrOsStorageManager::saveFileSd(filename, data);
 #endif
 }
 
-bool StorageManager::deleteFile(std::string filename)
+bool AstrOsStorageManager::deleteFile(std::string filename)
 {
 
 #ifdef USE_SPIFFS
-    return StorageManager::deleteFileSpiffs(filename);
+    return AstrOsStorageManager::deleteFileSpiffs(filename);
 #else
-    return StorageManager::deleteFileSd(filename);
+    return AstrOsStorageManager::deleteFileSd(filename);
 #endif
 }
 
-std::string StorageManager::readFile(std::string filename)
+std::string AstrOsStorageManager::readFile(std::string filename)
 {
 
 #ifdef USE_SPIFFS
-    return StorageManager::readFileSpiffs(filename);
+    return AstrOsStorageManager::readFileSpiffs(filename);
 #else
-    return StorageManager::readFileSd(filename);
+    return AstrOsStorageManager::readFileSd(filename);
 #endif
 }
 
-bool StorageManager::fileExists(std::string filename)
+bool AstrOsStorageManager::fileExists(std::string filename)
 {
 
 #ifdef USE_SPIFFS
-    return StorageManager::fileExistsSpiffs(filename);
+    return AstrOsStorageManager::fileExistsSpiffs(filename);
 #else
-    return StorageManager::fileExistsSd(filename);
+    return AstrOsStorageManager::fileExistsSd(filename);
 #endif
 }
 
-std::vector<std::string> StorageManager::listFiles(std::string folder)
+std::vector<std::string> AstrOsStorageManager::listFiles(std::string folder)
 {
 #ifdef USE_SPIFFS
-    return StorageManager::listFilesSpiffs(folder);
+    return AstrOsStorageManager::listFilesSpiffs(folder);
 #else
-    return StorageManager::listFilesSd(folder);
+    return AstrOsStorageManager::listFilesSd(folder);
 #endif
 }
 
@@ -194,7 +194,7 @@ std::vector<std::string> StorageManager::listFiles(std::string folder)
  * SD Card methods
  ***************************************************************/
 
-bool StorageManager::formatSdCard()
+bool AstrOsStorageManager::formatSdCard()
 {
     char drv[3] = {'0', ':', 0};
     const size_t workbuf_size = 4096;
@@ -235,7 +235,7 @@ bool StorageManager::formatSdCard()
     return true;
 }
 
-esp_err_t StorageManager::mountSdCard()
+esp_err_t AstrOsStorageManager::mountSdCard()
 {
     esp_err_t err;
 
@@ -290,11 +290,11 @@ esp_err_t StorageManager::mountSdCard()
     return err;
 }
 
-bool StorageManager::saveFileSd(std::string filename, std::string data)
+bool AstrOsStorageManager::saveFileSd(std::string filename, std::string data)
 {
     FILE *fd = NULL;
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     ESP_LOGI(TAG, "Saving %s", path.c_str());
 
@@ -320,10 +320,10 @@ bool StorageManager::saveFileSd(std::string filename, std::string data)
     return true;
 }
 
-bool StorageManager::deleteFileSd(std::string filename)
+bool AstrOsStorageManager::deleteFileSd(std::string filename)
 {
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     if (access(path.c_str(), F_OK) == 0)
     {
@@ -334,16 +334,16 @@ bool StorageManager::deleteFileSd(std::string filename)
     return true;
 }
 
-bool StorageManager::fileExistsSd(std::string filename)
+bool AstrOsStorageManager::fileExistsSd(std::string filename)
 {
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     return access(path.c_str(), F_OK) == 0;
 }
 
-std::string StorageManager::readFileSd(std::string filename)
+std::string AstrOsStorageManager::readFileSd(std::string filename)
 {
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     if (access(path.c_str(), F_OK) != 0)
     {
@@ -372,7 +372,7 @@ std::string StorageManager::readFileSd(std::string filename)
     return result;
 }
 
-std::vector<std::string> StorageManager::listFilesSd(std::string folder)
+std::vector<std::string> AstrOsStorageManager::listFilesSd(std::string folder)
 {
     std::vector<std::string> result;
 
@@ -380,7 +380,7 @@ std::vector<std::string> StorageManager::listFilesSd(std::string folder)
     struct dirent *entry;
     struct stat entry_stat;
 
-    std::string entryPath = StorageManager::setFilePath(folder);
+    std::string entryPath = AstrOsStorageManager::setFilePath(folder);
 
     DIR *dir = opendir(entryPath.c_str());
 
@@ -414,7 +414,7 @@ std::vector<std::string> StorageManager::listFilesSd(std::string folder)
  * SPIFFS methods
  ***************************************************************/
 
-bool StorageManager::saveFileSpiffs(std::string filename, std::string data)
+bool AstrOsStorageManager::saveFileSpiffs(std::string filename, std::string data)
 {
     esp_vfs_spiffs_conf_t config = {
         .base_path = "/spiffs",
@@ -431,7 +431,7 @@ bool StorageManager::saveFileSpiffs(std::string filename, std::string data)
 
     ESP_LOGE(TAG, "Creating file: %s", filename.c_str());
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     FILE *f = fopen(path.c_str(), "w");
     if (f == NULL)
@@ -448,7 +448,7 @@ bool StorageManager::saveFileSpiffs(std::string filename, std::string data)
     return true;
 }
 
-bool StorageManager::deleteFileSpiffs(std::string filename)
+bool AstrOsStorageManager::deleteFileSpiffs(std::string filename)
 {
     esp_vfs_spiffs_conf_t config = {
         .base_path = MOUNT_POINT,
@@ -463,7 +463,7 @@ bool StorageManager::deleteFileSpiffs(std::string filename)
         return false;
     }
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     struct stat st;
     if (stat(path.c_str(), &st) == 0)
@@ -478,7 +478,7 @@ bool StorageManager::deleteFileSpiffs(std::string filename)
     return false;
 }
 
-bool StorageManager::fileExistsSpiffs(std::string filename)
+bool AstrOsStorageManager::fileExistsSpiffs(std::string filename)
 {
     esp_vfs_spiffs_conf_t config = {
         .base_path = MOUNT_POINT,
@@ -493,7 +493,7 @@ bool StorageManager::fileExistsSpiffs(std::string filename)
         return false;
     }
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     struct stat st;
     if (stat(path.c_str(), &st) == 0)
@@ -508,7 +508,7 @@ bool StorageManager::fileExistsSpiffs(std::string filename)
     return false;
 }
 
-std::string StorageManager::readFileSpiffs(std::string filename)
+std::string AstrOsStorageManager::readFileSpiffs(std::string filename)
 {
     esp_vfs_spiffs_conf_t config = {
         .base_path = MOUNT_POINT,
@@ -523,7 +523,7 @@ std::string StorageManager::readFileSpiffs(std::string filename)
         return "error";
     }
 
-    std::string path = StorageManager::setFilePath(filename);
+    std::string path = AstrOsStorageManager::setFilePath(filename);
 
     FILE *file = fopen(path.c_str(), "r");
     if (file == NULL)
@@ -546,7 +546,7 @@ std::string StorageManager::readFileSpiffs(std::string filename)
     return result;
 }
 
-std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
+std::vector<std::string> AstrOsStorageManager::listFilesSpiffs(std::string folder)
 {
     std::vector<std::string> result;
 
@@ -563,7 +563,7 @@ std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
         return result;
     }
 
-    std::string path = StorageManager::setFilePath(folder);
+    std::string path = AstrOsStorageManager::setFilePath(folder);
 
     DIR *dir = opendir(path.c_str());
     if (dir == NULL)
@@ -593,7 +593,7 @@ std::vector<std::string> StorageManager::listFilesSpiffs(std::string folder)
  * Utility methods
  ***************************************************************/
 
-std::string StorageManager::setFilePath(std::string filename)
+std::string AstrOsStorageManager::setFilePath(std::string filename)
 {
 
     std::string out = MOUNT_POINT + std::string("/") + filename;

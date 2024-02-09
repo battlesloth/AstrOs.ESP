@@ -1,6 +1,6 @@
-#include <pca9685.h>
+#include <pca9685.hpp>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <driver/i2c.h>
 #include <math.h>
 

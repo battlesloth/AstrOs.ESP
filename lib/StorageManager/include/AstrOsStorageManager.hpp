@@ -1,5 +1,5 @@
-#ifndef STORAGEMANAGER_H
-#define STORAGEMANAGER_H
+#ifndef ASTROSSTORAGEMANAGER_HPP
+#define ASTROSSTORAGEMANAGER_HPP
 
 #include <esp_log.h>
 #include <string>
@@ -8,7 +8,7 @@
 #include <AstrOsUtility.h>
 #include <AstrOsEspNowUtility.h>
 
-class StorageManager
+class AstrOsStorageManager
 {
 private:
     esp_err_t mountSdCard();
@@ -25,8 +25,8 @@ private:
     std::vector<std::string> listFilesSpiffs(std::string folder);
 
 public:
-    StorageManager();
-    ~StorageManager();
+    AstrOsStorageManager();
+    ~AstrOsStorageManager();
     esp_err_t Init();
 
     bool loadServiceConfig(svc_config_t *config);
@@ -54,6 +54,6 @@ public:
     bool formatSdCard();
 };
 
-extern StorageManager Storage;
+extern AstrOsStorageManager AstrOs_Storage;
 
 #endif

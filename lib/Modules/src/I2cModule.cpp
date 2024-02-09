@@ -1,14 +1,14 @@
-#include <I2cModule.h>
-#include <AnimationCommand.h>
+#include <I2cModule.hpp>
+#include <AnimationCommand.hpp>
 #include <AstrOsDisplay.hpp>
 #include <AstrOsUtility.h>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <esp_log.h>
 #include <driver/i2c.h>
 #include <sstream>
 #include <string>
-#include "ssd1306.h"
+#include <ssd1306.h>
 
 static const char *TAG = "I2cModule";
 static pthread_mutex_t i2cMutex;

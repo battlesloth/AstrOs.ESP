@@ -1,7 +1,8 @@
 #ifndef ANIMATIONCOMMON_H
 #define ANIMATIONCOMMON_H
 
-typedef enum {
+typedef enum
+{
     NONE,
     START,
     HOME,

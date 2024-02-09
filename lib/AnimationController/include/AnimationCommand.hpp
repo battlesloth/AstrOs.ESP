@@ -1,5 +1,5 @@
-#ifndef ANIMATIONCOMMAND_H
-#define ANIMATIONCOMMAND_H
+#ifndef ANIMATIONCOMMAND_HPP
+#define ANIMATIONCOMMAND_HPP
 
 #include <string>
 #include <vector>

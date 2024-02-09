@@ -19,18 +19,18 @@
 #include <esp_crc.h>
 #include <esp_wifi_types.h>
 
-#include <AstrOsInterface.h>
-#include <AnimationController.h>
-#include <AnimationCommand.h>
+#include <AstrOsInterface.hpp>
+#include <AnimationController.hpp>
+#include <AnimationCommand.hpp>
 #include <AstrOsDisplay.hpp>
-#include <SerialModule.h>
-#include <ServoModule.h>
-#include <I2cModule.h>
+#include <SerialModule.hpp>
+#include <ServoModule.hpp>
+#include <I2cModule.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
-#include <StorageManager.h>
+#include <AstrOsStorageManager.hpp>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -158,7 +158,7 @@ esp_err_t mountSdCard(void);
 
 bool cachePeer(espnow_peer_t peer)
 {
-    return Storage.saveEspNowPeer(peer);
+    return AstrOs_Storage.saveEspNowPeer(peer);
 }
 
 void updateSeviceConfig(std::string name, uint8_t *mac)
@@ -167,7 +167,7 @@ void updateSeviceConfig(std::string name, uint8_t *mac)
     memcpy(svcConfig.masterMacAddress, mac, ESP_NOW_ETH_ALEN);
     strncpy(svcConfig.name, name.c_str(), sizeof(svcConfig.name));
     svcConfig.name[sizeof(svcConfig.name) - 1] = '\0';
-    Storage.saveServiceConfig(svcConfig);
+    AstrOs_Storage.saveServiceConfig(svcConfig);
 }
 
 void displaySetDefault(std::string line1, std::string line2, std::string line3)
@@ -217,7 +217,7 @@ void init(void)
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
-    ESP_ERROR_CHECK(Storage.Init());
+    ESP_ERROR_CHECK(AstrOs_Storage.Init());
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
@@ -270,20 +270,20 @@ void init(void)
 
     svc_config_t svcConfig;
 
-    if (Storage.loadServiceConfig(&svcConfig))
+    if (AstrOs_Storage.loadServiceConfig(&svcConfig))
     {
-        ESP_LOGI(TAG, "Master MAC address loaded from storage: " MACSTR, MAC2STR(svcConfig.masterMacAddress));
+        ESP_LOGI(TAG, "Master MAC address loaded from AstrOs_Storage. " MACSTR, MAC2STR(svcConfig.masterMacAddress));
     }
     else
     {
-        ESP_LOGI(TAG, "Service config not found in storage");
+        ESP_LOGI(TAG, "Service config not found in storage.");
     }
 
     int peerCount = 0;
     espnow_peer_t peerList[10] = {};
 
     // Load current peer list.
-    peerCount = Storage.loadEspNowPeerConfigs(peerList);
+    peerCount = AstrOs_Storage.loadEspNowPeerConfigs(peerList);
 
     ESP_LOGI(TAG, "Loaded %d peers", peerCount);
 
@@ -479,7 +479,7 @@ void buttonListenerTask(void *arg)
                 {
                     ESP_LOGI(TAG, "Clearing ESP-NOW peer config");
 
-                    Storage.clearServiceConfig();
+                    AstrOs_Storage.clearServiceConfig();
 
                     esp_restart();
                 }

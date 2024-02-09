@@ -1,11 +1,11 @@
-#ifndef SERVOMODULE_H
-#define SERVOMODULE_H
+#ifndef SERVOMODULE_HPP
+#define SERVOMODULE_HPP
 
-#include <AnimationCommand.h>
+#include <AnimationCommand.hpp>
 #include <AstrOsUtility.h>
-#include "Pca9685.h"
+#include <Pca9685.hpp>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <string>
 #include <driver/i2c.h>
 

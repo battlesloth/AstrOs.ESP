@@ -1,9 +1,9 @@
-#ifndef I2CMODULE_H
-#define I2CMODULE_H
+#ifndef I2CMODULE_HPP
+#define I2CMODULE_HPP
 
-#include <AnimationCommand.h>
+#include <AnimationCommand.hpp>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <string>
 
 #define WRITE_BIT I2C_MASTER_WRITE /*!< I2C master write */

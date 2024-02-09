@@ -1,5 +1,5 @@
-#include <AnimationCommand.h>
-#include <AnimationCommon.h>
+#include <AnimationCommand.hpp>
+#include <AnimationCommon.hpp>
 #include <string>
 #include <vector>
 

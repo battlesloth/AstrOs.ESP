@@ -1,6 +1,6 @@
 #include <AstrOsEspNowService.hpp>
 #include <AstrOsUtility_Esp.h>
-#include <AstrOsMessaging.h>
+#include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 
 #include <esp_err.h>

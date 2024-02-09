@@ -1,10 +1,10 @@
-#include "ServoModule.h"
-#include "AnimationCommand.h"
-#include "Pca9685.h"
-#include "AstrOsUtility.h"
-#include "StorageManager.h"
+#include "ServoModule.hpp"
+#include <AnimationCommand.hpp>
+#include <Pca9685.hpp>
+#include <AstrOsUtility.h>
+#include <AstrOsStorageManager.hpp>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <string>
 #include <string.h>
 #include <math.h>
@@ -75,8 +75,8 @@ void ServoModule::LoadServoConfig()
     if (pthread_mutex_lock(&channelsMutex) == 0)
     {
 
-        Storage.loadServoConfig(0, channels0, 16);
-        Storage.loadServoConfig(1, channels1, 16);
+        AstrOs_Storage.loadServoConfig(0, channels0, 16);
+        AstrOs_Storage.loadServoConfig(1, channels1, 16);
 
         for (size_t i = 0; i < 16; i++)
         {

@@ -1,8 +1,8 @@
-#ifndef ASTROSESPNOWSERVICE_H
-#define ASTROSESPNOWSERVICE_H
+#ifndef ASTROSESPNOWSERVICE_HPP
+#define ASTROSESPNOWSERVICE_HPP
 
 #include "AstrOsEspNowUtility.h"
-#include "AstrOsMessaging.h"
+#include "AstrOsMessaging.hpp"
 #include <esp_err.h>
 
 // needed for QueueHandle_t, must be in this order

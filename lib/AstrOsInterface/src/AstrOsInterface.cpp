@@ -1,5 +1,5 @@
 
-#include <AstrOsInterface.h>
+#include <AstrOsInterface.hpp>
 
 AstrOsInterface AstrOs;
 

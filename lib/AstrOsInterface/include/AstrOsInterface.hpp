@@ -1,5 +1,5 @@
-#ifndef ASTROSINTERFACE_H
-#define ASTROSINTERFACE_H
+#ifndef ASTROSINTERFACE_HPP
+#define ASTROSINTERFACE_HPP
 
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>

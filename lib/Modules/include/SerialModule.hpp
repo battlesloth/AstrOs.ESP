@@ -1,11 +1,11 @@
-#ifndef SERIALMODULE_H
-#define SERIALMODULE_H
+#ifndef SERIALMODULE_HPP
+#define SERIALMODULE_HPP
 
-#include <AnimationCommand.h>
+#include <AnimationCommand.hpp>
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <string>
-#include "driver/uart.h"
+#include <driver/uart.h>
 
 typedef struct
 {

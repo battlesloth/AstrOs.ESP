@@ -2,9 +2,9 @@
 #include <esp_log.h>
 #include <algorithm>
 
-#include <AnimationController.h>
-#include <AnimationCommand.h>
-#include <StorageManager.h>
+#include <AnimationController.hpp>
+#include <AnimationCommand.hpp>
+#include <AstrOsStorageManager.hpp>
 
 static const char *TAG = "AnimationController";
 
@@ -37,7 +37,7 @@ bool AnimationController::queueScript(std::string scriptId)
         return false;
     }
 
-    //bool loadScript = !scriptLoaded;
+    // bool loadScript = !scriptLoaded;
 
     queueRear = (queueRear + 1) % queueCapacity;
 
@@ -45,10 +45,10 @@ bool AnimationController::queueScript(std::string scriptId)
 
     queueSize++;
 
-   // if (loadScript)
-   // {
-   //     loadNextScript();
-   // }
+    // if (loadScript)
+    // {
+    //     loadNextScript();
+    // }
 
     queueing = false;
     return true;
@@ -77,21 +77,23 @@ void AnimationController::loadNextScript()
 
     std::string path = "scripts/" + std::string(scriptQueue[queueFront]);
 
-    std::string script = Storage.readFile(path);
+    std::string script = AstrOs_Storage.readFile(path);
 
     queueFront = (queueFront + 1) % queueCapacity;
     queueSize--;
 
-    if (script == "error"){
+    if (script == "error")
+    {
         ESP_LOGI(TAG, "Script not loaded");
         scriptLoaded = false;
-    } else{
+    }
+    else
+    {
 
         AnimationController::parseScript(script);
 
         ESP_LOGI(TAG, "Loaded: %s", script.c_str());
         ESP_LOGI(TAG, "Events loaded: %d", scriptEvents.size());
-
 
         scriptLoaded = true;
     }
@@ -134,9 +136,6 @@ void AnimationController::loadNextScript()
     /*****************************************
      * End Test Script
      *****************************************/
-
-
-
 }
 
 bool AnimationController::scriptIsLoaded()
@@ -150,7 +149,7 @@ bool AnimationController::scriptIsLoaded()
     return scriptLoaded;
 }
 
-CommandTemplate* AnimationController::getNextCommandPtr()
+CommandTemplate *AnimationController::getNextCommandPtr()
 {
 
     if (scriptEvents.empty())
@@ -161,7 +160,7 @@ CommandTemplate* AnimationController::getNextCommandPtr()
     else if (scriptEvents.size() == 1)
     {
 
-        CommandTemplate* lastCmd = scriptEvents.back().GetCommandTemplatePtr();
+        CommandTemplate *lastCmd = scriptEvents.back().GetCommandTemplatePtr();
         scriptEvents.pop_back();
 
         scriptLoaded = false;
@@ -177,7 +176,7 @@ CommandTemplate* AnimationController::getNextCommandPtr()
             delayTillNextEvent = 10;
         }
 
-        CommandTemplate* cmd = scriptEvents.back().GetCommandTemplatePtr();
+        CommandTemplate *cmd = scriptEvents.back().GetCommandTemplatePtr();
         scriptEvents.pop_back();
         return cmd;
     }
@@ -188,8 +187,9 @@ int AnimationController::msTillNextServoCommand()
     return delayTillNextEvent;
 }
 
-void AnimationController::parseScript(std::string script){
-  
+void AnimationController::parseScript(std::string script)
+{
+
     scriptEvents.clear();
 
     auto start = 0U;
@@ -204,4 +204,3 @@ void AnimationController::parseScript(std::string script){
 
     std::reverse(scriptEvents.begin(), scriptEvents.end());
 }
-

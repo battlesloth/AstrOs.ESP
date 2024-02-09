@@ -1,10 +1,9 @@
-#ifndef ANIMATIONCONTROLLER_H
-#define ANIMATIONCONTROLLER_H
+#ifndef ANIMATIONCONTROLLER_HPP
+#define ANIMATIONCONTROLLER_HPP
 
-#include <AnimationCommand.h>
+#include <AnimationCommand.hpp>
 
 #include <string>
-
 
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
@@ -12,7 +11,8 @@
 
 #define QUEUE_CAPACITY 30
 
-typedef struct {
+typedef struct
+{
     int domeLimit;
     QueueHandle_t animation_cmd;
     QueueHandle_t kangaroo_cmd;
@@ -22,7 +22,6 @@ typedef struct {
 class AnimationController
 {
 private:
-    
     // script queue
     bool queueing;
     int queueFront;
@@ -35,20 +34,21 @@ private:
     bool scriptLoaded;
     int delayTillNextEvent;
     std::vector<AnimationCommand> scriptEvents;
-  
+
     // functions
     bool queueIsEmpty();
     bool queueIsFull();
     void handleLastServoEvent();
     void loadNextScript();
     void parseScript(std::string script);
+
 public:
     AnimationController();
-    ~AnimationController();    
+    ~AnimationController();
     void panicStop();
     bool queueScript(std::string script);
     bool scriptIsLoaded();
-    CommandTemplate* getNextCommandPtr();
+    CommandTemplate *getNextCommandPtr();
     int msTillNextServoCommand();
 };
 
