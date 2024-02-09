@@ -1,7 +1,7 @@
 #ifndef PCA9685_HPP
 #define PCA9685_HPP
 
-#include "esp_system.h"
+#include <esp_system.h>
 #include <driver/i2c.h>
 
 #define ACK_CHECK_EN 0x1  /*!< I2C master will check ack from slave */

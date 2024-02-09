@@ -3,7 +3,7 @@
 
 #include <AnimationCommand.hpp>
 #include <AstrOsUtility.h>
-#include <Pca9685.hpp>
+#include <pca9685.hpp>
 
 #include <esp_system.h>
 #include <string>
