@@ -36,7 +36,7 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
 
     this->name = config.name;
     this->isMasterNode = config.isMaster;
-    this->peers = std::vector<espnow_peer_t>(config.peerCount);
+    this->peers = std::vector<espnow_peer_t>(0);
     this->serviceQueue = config.serviceQueue;
 
     this->cachePeerCallback = cachePeer_cb;
@@ -75,11 +75,16 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
     // Load current peer list.
     for (int i = 0; i < config.peerCount; i++)
     {
-        err = this->addPeer(config.peers[i].mac_addr);
+
+        auto peer = config.peers[i];
+
+        err = this->addPeer(peer.mac_addr);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             return err;
         }
+
+        peers.push_back(peer);
     }
 
     ESP_LOGI(TAG, "AstrOsEspNow initialized");
@@ -422,7 +427,7 @@ void AstrOsEspNow::pollPadawans()
 
         if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
-            ESP_LOGE(TAG, "Error sending heartbeat");
+            ESP_LOGE(TAG, "Error sending poll message to " MACSTR, MAC2STR(peer.mac_addr));
         }
 
         free(data.data);
