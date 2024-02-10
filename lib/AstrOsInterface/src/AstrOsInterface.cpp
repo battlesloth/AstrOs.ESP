@@ -12,7 +12,7 @@ void AstrOsInterface::Init(QueueHandle_t animationQueue)
     AstrOsInterface::animationQueue = animationQueue;
 }
 
-void AstrOsInterface::handleMessage(char *data)
+void AstrOsInterface::handleMessage(std::string message)
 {
 
     // queue_msg_t msg = {1, data};

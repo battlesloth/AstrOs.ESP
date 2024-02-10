@@ -547,25 +547,45 @@ void buttonListenerTask(void *arg)
 void astrosRxTask(void *arg)
 {
 
+    size_t bufferLength = 2000;
+    int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
+    uint8_t *commandBuffer = (uint8_t *)malloc(bufferLength);
+
     while (1)
     {
-
         const int rxBytes = uart_read_bytes(ASTRO_PORT, data, RX_BUF_SIZE, pdMS_TO_TICKS(1000));
 
         if (rxBytes > 0)
         {
             ESP_LOGI(TAG, "AstrOs RX Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
 
-            data[rxBytes] = '\0';
-            ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", rxBytes, data);
+            for (int i = 0; i < rxBytes; i++)
+            {
+                if (data[i] == '\n')
+                {
+                    commandBuffer[bufferIndex] = '\0';
+                    ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
 
-            char msg[rxBytes];
-            memcpy(msg, data, rxBytes);
-            AstrOs.handleMessage(msg);
+                    AstrOs.handleMessage(std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
+
+                    bufferIndex = 0;
+                }
+                else
+                {
+                    commandBuffer[bufferIndex] = data[i];
+                    bufferIndex++;
+                    if (bufferIndex >= bufferLength)
+                    {
+                        ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        bufferIndex = 0;
+                    }
+                }
+            }
         }
     }
     free(data);
+    free(commandBuffer);
 }
 
 void serviceQueueTask(void *arg)
