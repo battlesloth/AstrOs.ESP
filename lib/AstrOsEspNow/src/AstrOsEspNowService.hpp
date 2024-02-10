@@ -15,6 +15,7 @@ typedef struct
 {
     uint8_t *masterMac;
     std::string name;
+    std::string fingerprint;
     bool isMaster;
     espnow_peer_t *peers;
     int peerCount;
@@ -24,6 +25,8 @@ typedef struct
 class AstrOsEspNow
 {
 private:
+    std::string name;
+    std::string fingerprint;
     uint8_t masterMac[ESP_NOW_ETH_ALEN];
     bool isMasterNode;
     std::string mac;
@@ -54,7 +57,6 @@ private:
 public:
     AstrOsEspNow();
     ~AstrOsEspNow();
-    std::string name;
     esp_err_t init(astros_espnow_config_t config,
                    bool (*cachePeer_cb)(espnow_peer_t),
                    void (*displayUpdate_cb)(std::string, std::string, std::string),

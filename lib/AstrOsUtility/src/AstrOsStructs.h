@@ -38,6 +38,7 @@ extern "C"
     {
         uint8_t masterMacAddress[6];
         char name[16];
+        char fingerprint[37];
     } svc_config_t;
 
     typedef struct

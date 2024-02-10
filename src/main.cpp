@@ -279,6 +279,9 @@ void init(void)
         ESP_LOGI(TAG, "Service config not found in storage.");
     }
 
+    auto name = std::string(svcConfig.name, strlen(svcConfig.name));
+    auto fingerprint = std::string(svcConfig.fingerprint, strlen(svcConfig.fingerprint));
+    // reinterpret_cast<char *>
     int peerCount = 0;
     espnow_peer_t peerList[10] = {};
 
@@ -289,7 +292,8 @@ void init(void)
 
     astros_espnow_config_t config = {
         .masterMac = svcConfig.masterMacAddress,
-        .name = std::string(reinterpret_cast<char *>(svcConfig.name), strlen(svcConfig.name)),
+        .name = name,
+        .fingerprint = fingerprint,
         .isMaster = isMasterNode,
         .peers = peerList,
         .peerCount = peerCount,
@@ -300,6 +304,7 @@ void init(void)
 
     AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault, &updateSeviceConfig);
     AstrOs_Display.init(i2cQueue);
+    AstrOs_Display.setDefault(rank, "", name);
 }
 
 /******************************************
@@ -357,6 +362,24 @@ static void pollingTimerCallback(void *arg)
         {
             msg.eventType = POLL_PADAWANS;
             polling = true;
+
+            char *fingerprint = (char *)malloc(37);
+            AstrOs_Storage.getControllerFingerprint(fingerprint);
+            auto msg = AstrOsSerialMessageService::generatePollAckMsg("master", std::string(fingerprint));
+            auto size = msg.size();
+
+            queue_msg_t serialMsg;
+            serialMsg.message_id = 1;
+            serialMsg.data = (uint8_t *)malloc(size + 1);
+            memcpy(serialMsg.data, msg.c_str(), size);
+            serialMsg.data[size] = '\n';
+            serialMsg.dataSize = size + 1;
+
+            if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send serial queue fail");
+                free(serialMsg.data);
+            }
         }
         else
         {
@@ -778,7 +801,6 @@ void espnowQueueTask(void *arg)
 
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
-    AstrOs_Display.setDefault(rank, "", AstrOs_EspNow.name);
     AstrOs_Display.displayDefault();
 
     queue_espnow_msg_t msg;

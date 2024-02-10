@@ -35,6 +35,7 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
     esp_err_t err = ESP_OK;
 
     this->name = config.name;
+    this->fingerprint = config.fingerprint;
     this->isMasterNode = config.isMaster;
     this->peers = std::vector<espnow_peer_t>(0);
     this->serviceQueue = config.serviceQueue;
@@ -449,7 +450,7 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->name, this->mac);
+    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->name, this->fingerprint);
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {

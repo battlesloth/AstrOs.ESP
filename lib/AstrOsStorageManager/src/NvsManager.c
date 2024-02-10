@@ -92,6 +92,21 @@ bool nvsLoadServiceConfig(svc_config_t *config)
         result = false;
     }
 
+    defaultSize = 37;
+    err = nvs_get_str(nvsHandle, "fingerprint", config->fingerprint, &defaultSize);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            memcpy(config->fingerprint, "error\0", 1);
+        }
+        else
+        {
+            nvs_close(nvsHandle);
+            return false;
+        }
+    }
+
     nvs_close(nvsHandle);
 
     return result;
