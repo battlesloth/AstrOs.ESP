@@ -98,7 +98,7 @@ bool nvsLoadServiceConfig(svc_config_t *config)
     {
         if (err == ESP_ERR_NVS_NOT_FOUND)
         {
-            memcpy(config->fingerprint, "error\0", 1);
+            memcpy(config->fingerprint, "error\0", 6);
         }
         else
         {
@@ -228,8 +228,15 @@ bool nvsGetControllerFingerprint(char *fingerprint)
     err = nvs_get_str(nvsHandle, "fingerprint", fingerprint, &defaultSize);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
-        nvs_close(nvsHandle);
-        return false;
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            memcpy(fingerprint, "error\0", 6);
+        }
+        else
+        {
+            nvs_close(nvsHandle);
+            return false;
+        }
     }
 
     nvs_close(nvsHandle);

@@ -304,8 +304,9 @@ void init(void)
         .peerCount = peerCount,
         .serviceQueue = serviceQueue};
 
-    ESP_LOGE(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
-    ESP_LOGE(TAG, "Name: %s", config.name.c_str());
+    ESP_LOGI(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
+    ESP_LOGI(TAG, "Name: %s", config.name.c_str());
+    ESP_LOGI(TAG, "Fingerprint: %s", config.fingerprint.c_str());
 
     AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault, &updateSeviceConfig);
     AstrOs_Display.init(i2cQueue);
