@@ -499,7 +499,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     queue_svc_cmd_t cmd;
 
     cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
-    auto msg = AstrOsSerialMessageService::generatePollAckMsg(padawan, fingerprint);
+    auto msg = AstrOsSerialMessageService::getPollAck(padawan, fingerprint);
     auto size = msg.length();
 
     cmd.data = (uint8_t *)malloc(size);
@@ -533,7 +533,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
             cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
 
-            auto msg = AstrOsSerialMessageService::generatePollNakMsg(peer.name);
+            auto msg = AstrOsSerialMessageService::getPollNak(peer.name);
             auto size = msg.length();
 
             cmd.data = (uint8_t *)malloc(size);

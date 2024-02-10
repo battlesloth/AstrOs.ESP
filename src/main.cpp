@@ -371,7 +371,7 @@ static void pollingTimerCallback(void *arg)
 
             char *fingerprint = (char *)malloc(37);
             AstrOs_Storage.getControllerFingerprint(fingerprint);
-            auto msg = AstrOsSerialMessageService::generatePollAckMsg("master", std::string(fingerprint));
+            auto msg = AstrOsSerialMessageService::getPollAck("master", std::string(fingerprint));
             auto size = msg.size();
 
             queue_msg_t serialMsg;
