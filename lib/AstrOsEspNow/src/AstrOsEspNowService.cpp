@@ -482,7 +482,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     for (auto &peer : peers)
     {
-        if (memcmp(peer.name, padawan.c_str(), ESP_NOW_ETH_ALEN) == 0)
+        if (memcmp(peer.name, padawan.c_str(), padawan.length()) == 0)
         {
             peer.pollAckThisCycle = true;
             found = true;
@@ -527,7 +527,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
         if (!peer.pollAckThisCycle)
         {
-            ESP_LOGI(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
+            ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
 
             queue_svc_cmd_t cmd;
 

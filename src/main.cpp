@@ -290,6 +290,11 @@ void init(void)
 
     ESP_LOGI(TAG, "Loaded %d peers", peerCount);
 
+    for (int i = 0; i < peerCount; i++)
+    {
+        ESP_LOGI(TAG, "Peer %s: " MACSTR, peerList[i].name, MAC2STR(peerList[i].mac_addr));
+    }
+
     astros_espnow_config_t config = {
         .masterMac = svcConfig.masterMacAddress,
         .name = name,
@@ -731,7 +736,7 @@ void serialQueueTask(void *arg)
             {
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
-                ESP_LOGI(TAG, "Serial message: %s", str.c_str());
+                ESP_LOGD(TAG, "Serial message: %s", str.c_str());
                 SerialMod.SendBytes(1, msg.data, msg.dataSize);
             }
 
@@ -880,21 +885,6 @@ void espnowQueueTask(void *arg)
 /******************************************
  * ESP-NOW
  *****************************************/
-
-int espnowDataParse(uint8_t *data, int data_len, uint8_t *state, uint16_t *seq, int *magic)
-{
-    if (data_len < 4)
-    {
-        ESP_LOGE(TAG, "Data length too short");
-        return -1;
-    }
-
-    *state = data[0];
-    *seq = data[1] | (data[2] << 8);
-    *magic = data[3];
-
-    return 0;
-}
 
 static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
