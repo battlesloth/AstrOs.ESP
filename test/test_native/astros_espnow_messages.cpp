@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include <AstrOsMessaging.h>
+#include <AstrOsMessaging.hpp>
 
 using ::testing::MatchesRegex;
 using ::testing::StartsWith;

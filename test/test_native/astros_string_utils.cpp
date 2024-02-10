@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <AstrOsStringUtils.hpp>
-#include <AstrOsMessaging.h>
+#include <AstrOsMessaging.hpp>
 
 #define UNIT_SEPARATOR (char)0x1F
 

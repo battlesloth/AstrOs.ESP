@@ -16,15 +16,141 @@ AstrOsSerialMessageService::~AstrOsSerialMessageService()
 {
 }
 
-std::string AstrOsSerialMessageService::generateRegistrationSyncMsg(std::vector<astros_peer_data_t> peers)
+/// @brief validates serial messages by comparing the header to the expected values. Header consists of 2 parts, type enum and validation string
+/// @param header serial message header
+/// @return is valid
+astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std::string msg)
+{
+
+    astros_serial_msg_validation_t result{"", AstrOsSerialMessageType::UNKNOWN, false};
+
+    auto msgParts = AstrOsStringUtils::splitString(msg, GROUP_SEPARATOR);
+
+    auto parts = AstrOsStringUtils::splitString(msgParts[0], RECORD_SEPARATOR);
+
+    if (parts.size() != 3)
+    {
+        return result;
+    }
+
+    auto type = static_cast<AstrOsSerialMessageType>(stoi(parts[0]));
+
+    switch (type)
+    {
+    case AstrOsSerialMessageType::REGISTRATION_SYNC:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::REGISTRATION_SYNC, strlen(AstrOsSC::REGISTRATION_SYNC)) == 0;
+        break;
+    case AstrOsSerialMessageType::REGISTRATION_SYNC_ACK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::REGISTRATION_SYNC_ACK, strlen(AstrOsSC::REGISTRATION_SYNC_ACK)) == 0;
+        break;
+    case AstrOsSerialMessageType::POLL_ACK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::POLL_ACK, strlen(AstrOsSC::POLL_ACK)) == 0;
+        break;
+    case AstrOsSerialMessageType::POLL_NAK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::POLL_NAK, strlen(AstrOsSC::POLL_NAK)) == 0;
+        break;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT, strlen(AstrOsSC::DEPLOY_SCRIPT)) == 0;
+        break;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT_ACK, strlen(AstrOsSC::DEPLOY_SCRIPT_ACK)) == 0;
+        break;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT_NAK, strlen(AstrOsSC::DEPLOY_SCRIPT_NAK)) == 0;
+        break;
+    case AstrOsSerialMessageType::RUN_SCRIPT:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT, strlen(AstrOsSC::RUN_SCRIPT)) == 0;
+        break;
+    case AstrOsSerialMessageType::RUN_SCRIPT_ACK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT_ACK, strlen(AstrOsSC::RUN_SCRIPT_ACK)) == 0;
+        break;
+    case AstrOsSerialMessageType::RUN_SCRIPT_NAK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT_NAK, strlen(AstrOsSC::RUN_SCRIPT_NAK)) == 0;
+    case AstrOsSerialMessageType::RUN_COMMAND:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND, strlen(AstrOsSC::RUN_COMMAND)) == 0;
+        break;
+    case AstrOsSerialMessageType::RUN_COMMAND_ACK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND_ACK, strlen(AstrOsSC::RUN_COMMAND_ACK)) == 0;
+        break;
+    case AstrOsSerialMessageType::RUN_COMMAND_NAK:
+        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND_NAK, strlen(AstrOsSC::RUN_COMMAND_NAK)) == 0;
+        break;
+    default:
+        result.valid = false;
+        return result;
+    }
+
+    if (result.valid)
+    {
+        result.msgId = parts[2];
+        result.type = type;
+    }
+
+    return result;
+}
+
+/// @brief generates a serial message header from the type and validation string
+/// @param type AstrOsSerialMessageType
+/// @param validation string
+/// @return header string
+std::string AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType type, std::string msgId)
+{
+    auto validation = AstrOsSerialMessageService::getValidationString(type);
+
+    std::stringstream ss;
+    ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation << RECORD_SEPARATOR << msgId << GROUP_SEPARATOR;
+    return ss.str();
+}
+
+/// @brief gets the validation string for a given message type
+/// @param type AstrOsSerialMessageType
+/// @return char* validation string
+const char *AstrOsSerialMessageService::getValidationString(AstrOsSerialMessageType type)
+{
+    switch (type)
+    {
+    case AstrOsSerialMessageType::REGISTRATION_SYNC:
+        return AstrOsSC::REGISTRATION_SYNC;
+    case AstrOsSerialMessageType::REGISTRATION_SYNC_ACK:
+        return AstrOsSC::REGISTRATION_SYNC_ACK;
+    case AstrOsSerialMessageType::POLL_ACK:
+        return AstrOsSC::POLL_ACK;
+    case AstrOsSerialMessageType::POLL_NAK:
+        return AstrOsSC::POLL_NAK;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT:
+        return AstrOsSC::DEPLOY_SCRIPT;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK:
+        return AstrOsSC::DEPLOY_SCRIPT_ACK;
+    case AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK:
+        return AstrOsSC::DEPLOY_SCRIPT_NAK;
+    case AstrOsSerialMessageType::RUN_SCRIPT:
+        return AstrOsSC::RUN_SCRIPT;
+    case AstrOsSerialMessageType::RUN_SCRIPT_ACK:
+        return AstrOsSC::RUN_SCRIPT_ACK;
+    case AstrOsSerialMessageType::RUN_SCRIPT_NAK:
+        return AstrOsSC::RUN_SCRIPT_NAK;
+    case AstrOsSerialMessageType::RUN_COMMAND:
+        return AstrOsSC::RUN_COMMAND;
+    case AstrOsSerialMessageType::RUN_COMMAND_ACK:
+        return AstrOsSC::RUN_COMMAND_ACK;
+    case AstrOsSerialMessageType::RUN_COMMAND_NAK:
+        return AstrOsSC::RUN_COMMAND_NAK;
+    default:
+        return "";
+    }
+}
+
+/// @brief generates a registration sync acknowledgment message which contains a list of registered controlellers
+/// @param peers list of registered controllers
+/// @return serial message
+std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId, std::vector<astros_peer_data_t> controllers)
 {
     std::stringstream ss;
-    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::REGISTRATION_SYNC, AstrOsSC::REGISTRATION_SYNC);
-    ss << GROUP_SEPARATOR;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::REGISTRATION_SYNC_ACK, msgId);
 
-    for (const auto &p : peers)
+    for (const auto &p : controllers)
     {
-        ss << p.name << UNIT_SEPARATOR << p.mac << RECORD_SEPARATOR;
+        ss << p.name << UNIT_SEPARATOR << p.mac << UNIT_SEPARATOR << p.fingerprint << RECORD_SEPARATOR;
     }
 
     std::string message = ss.str();
@@ -34,49 +160,102 @@ std::string AstrOsSerialMessageService::generateRegistrationSyncMsg(std::vector<
     return message;
 }
 
-std::string AstrOsSerialMessageService::generatePollAckMsg(std::string name, std::string fingerprint)
+/// @brief generates a poll acknowledgment message which contains the name and fingerprint of the peer
+/// @param name peer controller
+/// @param fingerprint configuration fingerprint
+/// @return serial message
+std::string AstrOsSerialMessageService::getPollAck(std::string controller, std::string fingerprint)
 {
     std::stringstream ss;
-    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, AstrOsSC::POLL_ACK);
-    ss << GROUP_SEPARATOR << name << UNIT_SEPARATOR << fingerprint;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
+    ss << controller << UNIT_SEPARATOR << fingerprint;
     return ss.str();
 }
 
-std::string AstrOsSerialMessageService::generatePollNakMsg(char *name)
+/// @brief generates a poll failure message which contains the name of the peer that did not repond in time to the poll
+/// @param name peer controller
+/// @return serial message
+std::string AstrOsSerialMessageService::getPollNak(char *controller)
 {
     std::stringstream ss;
-    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_NAK, AstrOsSC::POLL_NAK);
-    ss << GROUP_SEPARATOR << name;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_NAK, "na");
+    ss << controller;
     return ss.str();
 }
 
-std::string AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType type, std::string validation)
+/// @brief generates a basic acknowledgment or failure message
+/// @param type AstrOsSerialMessageType
+/// @param controller peer controller
+/// @param id message id
+/// @return serial message
+std::string AstrOsSerialMessageService::getRegistrationBasicAckNak(AstrOsSerialMessageType type, std::string msgId, std::string controller, std::string id)
 {
     std::stringstream ss;
-    ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation;
+    ss << AstrOsSerialMessageService::generateHeader(type, msgId);
+    ss << controller << UNIT_SEPARATOR << id;
     return ss.str();
 }
 
-bool AstrOsSerialMessageService::validateSerialMsg(std::string header)
-{
-    auto parts = AstrOsStringUtils::splitString(header, RECORD_SEPARATOR);
+//================== TEST METHODS ==================
 
-    if (parts.size() != 2)
+/// @brief FOR TESTING PURPOSES. generates a registration sync command message
+/// @param msgId message id
+/// @return serial message
+std::string AstrOsSerialMessageService::getRegistrationSync(std::string msgId)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::REGISTRATION_SYNC, msgId);
+    return ss.str();
+}
+
+/// @brief FOR TESTING PURPOSES. generates a deploy script message
+/// @param msgId message id
+/// @param scriptId script id
+/// @param controllers list of controllers to deploy the script to
+/// @param scripts list of scripts to deploy, indexed to controllers list
+/// @return serial message
+std::string AstrOsSerialMessageService::getDeployScript(std::string msgId, std::string scriptId, std::vector<std::string> controllers, std::vector<std::string> scripts)
+{
+    if (controllers.size() != scripts.size())
     {
-        return false;
+        return "";
     }
 
-    switch (static_cast<AstrOsSerialMessageType>(stoi(parts[0])))
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::DEPLOY_SCRIPT, msgId);
+
+    for (size_t i = 0; i < controllers.size(); i++)
     {
-    case AstrOsSerialMessageType::REGISTRATION_SYNC:
-        return memcmp(parts[2].c_str(), AstrOsSC::REGISTRATION_SYNC, strlen(AstrOsSC::REGISTRATION_SYNC)) == 0;
-    case AstrOsSerialMessageType::POLL_ACK:
-        return memcmp(parts[2].c_str(), AstrOsSC::POLL_ACK, strlen(AstrOsSC::POLL_ACK)) == 0;
-    case AstrOsSerialMessageType::POLL_NAK:
-        return memcmp(parts[2].c_str(), AstrOsSC::POLL_NAK, strlen(AstrOsSC::POLL_NAK)) == 0;
-    default:
-        return false;
+        ss << controllers[i] << UNIT_SEPARATOR << scripts[i] << RECORD_SEPARATOR;
     }
 
-    return false;
+    std::string message = ss.str();
+    message.pop_back();
+
+    return message;
+}
+
+/// @brief FOR TESTING PURPOSES. generates a run script message
+/// @param msgId message id
+/// @param scriptId script id
+/// @return serial message
+std::string AstrOsSerialMessageService::getRunScript(std::string msgId, std::string scriptId)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::RUN_SCRIPT, msgId);
+    ss << GROUP_SEPARATOR << scriptId;
+    return ss.str();
+}
+
+/// @brief FOR TESTING PURPOSES. generates a run command message
+/// @param msgId message id
+/// @param controller controller to run the command on
+/// @param command command to run
+/// @return serial message
+std::string AstrOsSerialMessageService::getRunCommand(std::string msgId, std::string controller, std::string command)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::RUN_COMMAND, msgId);
+    ss << GROUP_SEPARATOR << command;
+    return ss.str();
 }
