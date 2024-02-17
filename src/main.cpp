@@ -19,7 +19,7 @@
 #include <esp_crc.h>
 #include <esp_wifi_types.h>
 
-#include <AstrOsInterface.hpp>
+#include <AstrOsSerialMsgHandler.hpp>
 #include <AnimationController.hpp>
 #include <AnimationCommand.hpp>
 #include <AstrOsDisplay.hpp>
@@ -31,6 +31,7 @@
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
+#include <AstrOsServerResponseMsg.hpp>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -57,7 +58,7 @@ static bool discoveryMode = false;
  **********************************/
 
 static QueueHandle_t animationQueue;
-// static QueueHandle_t hardwareQueue;
+static QueueHandle_t serverResponseQueue;
 static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
@@ -143,7 +144,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
 void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
-// void hardwareQueueTask(void *arg);
+void serverResponseQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
@@ -187,7 +188,7 @@ void app_main()
     xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    // xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
+    xTaskCreate(&serverResponseQueueTask, "server_queue_task", 4096, (void *)serverResponseQueue, 10, NULL);
     xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
     xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
     xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
@@ -211,7 +212,7 @@ void init(void)
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
-    // hardwareQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_hw_cmd_t));
+    serverResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_server_response_t));
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
@@ -221,7 +222,7 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs.Init(animationQueue);
+    AstrOs_SerialMsgHandler.Init(serverResponseQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     i2c_config_t conf;
@@ -371,7 +372,7 @@ static void pollingTimerCallback(void *arg)
 
             char *fingerprint = (char *)malloc(37);
             AstrOs_Storage.getControllerFingerprint(fingerprint);
-            auto msg = AstrOsSerialMessageService::getPollAck("master", std::string(fingerprint));
+            auto msg = AstrOsSerialMessageService::getPollAck("00:00:00:00:00:00", "master", std::string(fingerprint));
             auto size = msg.size();
 
             queue_msg_t serialMsg;
@@ -544,6 +545,67 @@ void buttonListenerTask(void *arg)
     }
 }
 
+void serverResponseQueueTask(void *arg)
+{
+    QueueHandle_t serverResponseQueue;
+
+    serverResponseQueue = (QueueHandle_t)arg;
+    astros_server_response_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(serverResponseQueue, &(msg), 0))
+        {
+            ESP_LOGI(TAG, "Server Response Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+
+            switch (msg.type)
+            {
+            case AstrOsServerResponseType::REGISTRATION_SYNC:
+            {
+                std::vector<astros_peer_data_t> data = {};
+
+                data.clear();
+
+                auto peers = AstrOs_EspNow.getPeers();
+
+                for (auto peer : peers)
+                {
+                    astros_peer_data_t pd;
+                    pd.name = peer.name;
+                    pd.mac = AstrOsStringUtils::macToString(peer.mac_addr);
+                    pd.fingerprint = "na";
+                    data.push_back(pd);
+                }
+
+                auto response = AstrOsSerialMessageService::getRegistrationSyncAck(msg.originationMsgId, data);
+
+                queue_msg_t serialMsg;
+                serialMsg.message_id = 1;
+                serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+                memcpy(serialMsg.data, response.c_str(), response.size());
+                serialMsg.data[response.size()] = '\n';
+                serialMsg.dataSize = response.size() + 1;
+
+                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send serial queue fail");
+                    free(serialMsg.data);
+                }
+
+                break;
+            }
+            default:
+                ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(msg.type));
+                break;
+            }
+
+            free(msg.originationMsgId);
+            free(msg.message);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 void astrosRxTask(void *arg)
 {
 
@@ -567,7 +629,7 @@ void astrosRxTask(void *arg)
                     commandBuffer[bufferIndex] = '\0';
                     ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
 
-                    AstrOs.handleMessage(std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
+                    AstrOs_SerialMsgHandler.handleMessage(std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
 
                     bufferIndex = 0;
                 }
@@ -617,7 +679,7 @@ void serviceQueueTask(void *arg)
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
-            case SERVICE_COMMAND::FORWARD_TO_SERIAL:
+            case SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE:
             {
                 queue_msg_t serialMsg;
                 serialMsg.message_id = 1;
@@ -626,9 +688,9 @@ void serviceQueueTask(void *arg)
                 serialMsg.data[msg.dataSize] = '\n';
                 serialMsg.dataSize = msg.dataSize + 1;
 
-                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
                 {
-                    ESP_LOGW(TAG, "Send serial queue fail");
+                    ESP_LOGW(TAG, "Seinding AstrOs Interface message to serial queue fail");
                     free(serialMsg.data);
                 }
 

@@ -61,6 +61,7 @@ public:
                    bool (*cachePeer_cb)(espnow_peer_t),
                    void (*displayUpdate_cb)(std::string, std::string, std::string),
                    void (*updateSeviceConfig_cb)(std::string, uint8_t *));
+    std::vector<espnow_peer_t> getPeers();
     void sendRegistrationRequest();
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
     void pollPadawans();

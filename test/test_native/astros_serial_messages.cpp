@@ -8,7 +8,7 @@ using ::testing::StartsWith;
 
 TEST(SerialMessages, PollAckMessage)
 {
-    auto value = AstrOsSerialMessageService::getPollAck("test", "fingerprint");
+    auto value = AstrOsSerialMessageService::getPollAck("macaddress", "test", "fingerprint");
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
@@ -19,9 +19,10 @@ TEST(SerialMessages, PollAckMessage)
     EXPECT_STREQ("na", validation.msgId.c_str());
 
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(2, payloadParts.size());
-    EXPECT_EQ("test", payloadParts[0]);
-    EXPECT_EQ("fingerprint", payloadParts[1]);
+    ASSERT_EQ(3, payloadParts.size());
+    EXPECT_EQ("macaddress", payloadParts[0]);
+    EXPECT_EQ("test", payloadParts[1]);
+    EXPECT_EQ("fingerprint", payloadParts[2]);
 }
 
 TEST(SerialMessages, PollNakMessage)
@@ -30,7 +31,7 @@ TEST(SerialMessages, PollNakMessage)
 
     memcpy(test, "test\0", 5);
 
-    auto value = AstrOsSerialMessageService::getPollNak(test);
+    auto value = AstrOsSerialMessageService::getPollNak("macaddress", test);
 
     auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
 
@@ -40,9 +41,10 @@ TEST(SerialMessages, PollNakMessage)
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
-    auto payloadParts = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
-    ASSERT_EQ(1, payloadParts.size());
-    EXPECT_EQ("test", payloadParts[0]);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(2, payloadParts.size());
+    EXPECT_EQ("macaddress", payloadParts[0]);
+    EXPECT_EQ("test", payloadParts[1]);
 
     free(test);
 }
@@ -80,6 +82,27 @@ TEST(SerialMessages, RegistrationSyncAckMessage)
     EXPECT_EQ("00:00:00:00:00:02", record2[1]);
 }
 
+TEST(SerialMessages, DeployConfigurationMessage)
+{
+    std::string msgId = "testId";
+    std::vector<std::string> controllers = {"master", "padawan1", "padawan2"};
+    std::vector<std::string> configs = {"master_config", "padawan1_config", "padawan2_config"};
+
+    auto value = AstrOsSerialMessageService::getDeployConfig(msgId, controllers, configs);
+
+    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::DEPLOY_CONFIG, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+
+    ASSERT_EQ(3, payloadParts.size());
+}
+
 TEST(SerialMessages, DeployScriptMessage)
 {
     std::string msgId = "testId";
@@ -100,4 +123,100 @@ TEST(SerialMessages, DeployScriptMessage)
     auto payloadParts = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
 
     ASSERT_EQ(3, payloadParts.size());
+}
+
+TEST(SerialMessages, RunScriptMessage)
+{
+    std::string msgId = "testId";
+    std::string scriptId = "scriptId";
+
+    auto value = AstrOsSerialMessageService::getRunScript(msgId, scriptId);
+
+    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::RUN_SCRIPT, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+}
+
+TEST(SerialMessages, RunCommandMessage)
+{
+    std::string msgId = "testId";
+    std::string controller = "controller";
+    std::string command = "command";
+
+    auto value = AstrOsSerialMessageService::getRunCommand(msgId, controller, command);
+
+    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::RUN_COMMAND, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+}
+
+//=================================================================================================
+// Ack/Nak messages
+//=================================================================================================
+
+void RunAckNakTest(AstrOsSerialMessageType type)
+{
+    std::string msgId = "testId";
+    std::string controller = "controller";
+    std::string data = "data";
+
+    auto value = AstrOsSerialMessageService::getBasicAckNak(type, msgId, controller, data);
+
+    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(type, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+
+    ASSERT_EQ(2, payloadParts.size());
+    EXPECT_EQ(controller, payloadParts[0]);
+    EXPECT_EQ(data, payloadParts[1]);
+}
+
+TEST(SerialMessages, DeployConfigurationAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::DEPLOY_CONFIG_ACK);
+}
+
+TEST(SerialMessages, DeployConfigurationNakMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::DEPLOY_CONFIG_NAK);
+}
+
+TEST(SerialMessages, DeployScriptAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK);
+}
+
+TEST(SerialMessages, DeployScriptNakMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK);
+}
+
+TEST(SerialMessages, RunScriptAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::RUN_SCRIPT_ACK);
+}
+
+TEST(SerialMessages, RunScriptNakMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::RUN_SCRIPT_NAK);
+}
+
+TEST(SerialMessages, RunCommandAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::RUN_COMMAND_ACK);
+}
+
+TEST(SerialMessages, RunCommandNakMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::RUN_COMMAND_NAK);
 }

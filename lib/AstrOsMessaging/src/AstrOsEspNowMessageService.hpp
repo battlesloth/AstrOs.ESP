@@ -60,7 +60,7 @@ public:
     AstrOsEspNowMessageService();
     ~AstrOsEspNowMessageService();
 
-    static astros_espnow_data_t generateEspNowMsg(AstrOsPacketType type, std::string name = "", std::string message = "");
+    static astros_espnow_data_t generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
     static std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
     static astros_packet_t parsePacket(uint8_t *packet);
     static bool validatePacket(astros_packet_t packet);

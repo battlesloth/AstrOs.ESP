@@ -6,7 +6,7 @@
 #include <cstring>
 #include <cstdint>
 
-astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string name, std::string message)
+astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
 {
     switch (type)
     {
@@ -14,16 +14,16 @@ astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketT
         return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ)[0];
         break;
     case AstrOsPacketType::REGISTRATION:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
         break;
     case AstrOsPacketType::REGISTRATION_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
         break;
     case AstrOsPacketType::POLL:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL) + UNIT_SEPARATOR + name)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL) + UNIT_SEPARATOR + mac)[0];
         break;
     case AstrOsPacketType::POLL_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + name + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
         break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, message)[0];

@@ -156,7 +156,7 @@ TEST(EspNowMessages, RegistrationRequestMessage)
 
 TEST(EspNowMessages, RegistrationMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, "test", "macaddress");
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, "macaddress", "test");
     auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::REGISTRATION, parsed.packetType);
@@ -166,7 +166,7 @@ TEST(EspNowMessages, RegistrationMessage)
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
-    expected << "REGISTRATION" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "macaddress";
+    expected << "REGISTRATION" << UNIT_SEPARATOR << "macaddress" << UNIT_SEPARATOR << "test";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
@@ -175,7 +175,7 @@ TEST(EspNowMessages, RegistrationMessage)
 
 TEST(EspNowMessages, RegistrationAckMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, "test", "macaddress");
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, "macaddress", "test");
     auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::REGISTRATION_ACK, parsed.packetType);
@@ -185,7 +185,7 @@ TEST(EspNowMessages, RegistrationAckMessage)
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
-    expected << "REGISTRATION_ACK" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "macaddress";
+    expected << "REGISTRATION_ACK" << UNIT_SEPARATOR << "macaddress" << UNIT_SEPARATOR << "test";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
@@ -194,17 +194,17 @@ TEST(EspNowMessages, RegistrationAckMessage)
 
 TEST(EspNowMessages, PollMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, "test");
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, "macaddress");
     auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::POLL, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
     EXPECT_EQ(1, parsed.totalPackets);
-    EXPECT_EQ(9, parsed.payloadSize);
+    EXPECT_EQ(15, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
-    expected << "POLL" << UNIT_SEPARATOR << "test";
+    expected << "POLL" << UNIT_SEPARATOR << "macaddress";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 
@@ -213,17 +213,20 @@ TEST(EspNowMessages, PollMessage)
 
 TEST(EspNowMessages, PollAckMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, "test", "fingerprint");
+    std::stringstream msg;
+    msg << "name" << UNIT_SEPARATOR << "fingerprint";
+
+    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, "macaddress", msg.str());
     auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::POLL_ACK, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
     EXPECT_EQ(1, parsed.totalPackets);
-    EXPECT_EQ(25, parsed.payloadSize);
+    EXPECT_EQ(36, parsed.payloadSize);
 
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
-    expected << "POLL_ACK" << UNIT_SEPARATOR << "test" << UNIT_SEPARATOR << "fingerprint";
+    expected << "POLL_ACK" << UNIT_SEPARATOR << "macaddress" << UNIT_SEPARATOR << "name" << UNIT_SEPARATOR << "fingerprint";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 

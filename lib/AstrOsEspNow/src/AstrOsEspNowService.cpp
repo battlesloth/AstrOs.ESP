@@ -7,6 +7,8 @@
 #include <esp_now.h>
 #include <esp_log.h>
 #include <string.h>
+#include <string>
+#include <sstream>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -37,7 +39,7 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
     this->name = config.name;
     this->fingerprint = config.fingerprint;
     this->isMasterNode = config.isMaster;
-    this->peers = std::vector<espnow_peer_t>(0);
+    this->peers = {};
     this->serviceQueue = config.serviceQueue;
 
     this->cachePeerCallback = cachePeer_cb;
@@ -144,6 +146,28 @@ bool AstrOsEspNow::cachePeer(u_int8_t *macAddress, std::string name)
     peers.push_back(newPeer);
 
     return this->cachePeerCallback(newPeer);
+}
+
+std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
+{
+    std::vector<espnow_peer_t> result;
+
+    result.clear();
+
+    espnow_peer_t master = {
+        .id = 0,
+        .name = "master"};
+
+    memcpy(master.mac_addr, this->masterMac, ESP_NOW_ETH_ALEN);
+
+    result.push_back(master);
+
+    for (auto &peer : peers)
+    {
+        result.push_back(peer);
+    }
+
+    return result;
 }
 
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
@@ -277,7 +301,7 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
 
     std::string macStr = AstrOsStringUtils::macToString(src);
     std::string padewanName = "test";
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, padewanName, macStr);
+    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName);
 
     err = esp_now_send(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -356,7 +380,7 @@ bool AstrOsEspNow::sendRegistrationAck()
         return false;
     }
 
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->name, this->mac);
+    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name);
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -424,7 +448,7 @@ void AstrOsEspNow::pollPadawans()
 
         peer.pollAckThisCycle = false;
 
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, this->name, this->mac);
+        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, this->mac);
 
         if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
@@ -450,7 +474,10 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->name, this->fingerprint);
+    std::stringstream ss;
+    ss << this->name << UNIT_SEPARATOR << this->fingerprint;
+
+    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str());
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -475,6 +502,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
 
+    auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
 
@@ -498,8 +526,8 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     queue_svc_cmd_t cmd;
 
-    cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
-    auto msg = AstrOsSerialMessageService::getPollAck(padawan, fingerprint);
+    cmd.cmd = SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE;
+    auto msg = AstrOsSerialMessageService::getPollAck(padawanMac, padawan, fingerprint);
     auto size = msg.length();
 
     cmd.data = (uint8_t *)malloc(size);
@@ -531,7 +559,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
             queue_svc_cmd_t cmd;
 
-            cmd.cmd = SERVICE_COMMAND::FORWARD_TO_SERIAL;
+            cmd.cmd = SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE;
 
             auto msg = AstrOsSerialMessageService::getPollNak(peer.name);
             auto size = msg.length();
