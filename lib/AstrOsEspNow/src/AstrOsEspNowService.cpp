@@ -561,7 +561,9 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
             cmd.cmd = SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE;
 
-            auto msg = AstrOsSerialMessageService::getPollNak(peer.name);
+            auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
+
+            auto msg = AstrOsSerialMessageService::getPollNak(macStr, peer.name);
             auto size = msg.length();
 
             cmd.data = (uint8_t *)malloc(size);
