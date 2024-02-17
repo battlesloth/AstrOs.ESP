@@ -497,20 +497,22 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 3 || parts[0] != "POLL_ACK")
+    if (parts.size() < 4 || parts[0] != "POLL_ACK")
     {
         return false;
     }
 
-    auto padawanMac = parts[0];
-    auto padawan = parts[1];
-    auto fingerprint = parts[2];
+    auto padawanMac = parts[1];
+    auto padawan = parts[2];
+    auto fingerprint = parts[3];
 
     bool found = false;
 
     for (auto &peer : peers)
     {
-        if (memcmp(peer.name, padawan.c_str(), padawan.length()) == 0)
+        auto peerMac = AstrOsStringUtils::macToString(peer.mac_addr);
+
+        if (memcmp(peerMac.c_str(), padawanMac.c_str(), padawanMac.length()) == 0)
         {
             peer.pollAckThisCycle = true;
             found = true;
@@ -520,7 +522,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     if (!found)
     {
-        ESP_LOGI(TAG, "Padawan not found in peer list: %s", padawan.c_str());
+        ESP_LOGI(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
     }
 
