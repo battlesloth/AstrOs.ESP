@@ -166,7 +166,7 @@ std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId
 
     for (const auto &p : controllers)
     {
-        ss << p.name << UNIT_SEPARATOR << p.mac << UNIT_SEPARATOR << p.fingerprint << RECORD_SEPARATOR;
+        ss << p.mac << UNIT_SEPARATOR << p.name << UNIT_SEPARATOR << p.fingerprint << RECORD_SEPARATOR;
     }
 
     std::string message = ss.str();
@@ -207,11 +207,11 @@ std::string AstrOsSerialMessageService::getPollNak(std::string macAddress, char 
 /// @param controller peer controller
 /// @param id message id
 /// @return serial message
-std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType type, std::string msgId, std::string controller, std::string data)
+std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType type, std::string msgId, std::string macAddress, std::string controller, std::string data)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(type, msgId);
-    ss << controller << UNIT_SEPARATOR << data;
+    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << data;
     return ss.str();
 }
 
@@ -229,10 +229,11 @@ std::string AstrOsSerialMessageService::getRegistrationSync(std::string msgId)
 
 /// @brief FOR TESTING PURPOSES. generates a deploy config message
 /// @param msgId message id
+/// @param macs list of mac addresses to deploy the config to
 /// @param controllers list of controllers to deploy the config to
 /// @param configs list of configs to deploy, indexed to controllers list
 /// @return serial message
-std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::vector<std::string> controllers, std::vector<std::string> configs)
+std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::vector<std::string> macs, std::vector<std::string> controllers, std::vector<std::string> configs)
 {
     if (controllers.size() != configs.size())
     {
@@ -244,7 +245,7 @@ std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::
 
     for (size_t i = 0; i < controllers.size(); i++)
     {
-        ss << controllers[i] << UNIT_SEPARATOR << configs[i] << RECORD_SEPARATOR;
+        ss << macs[i] << UNIT_SEPARATOR << controllers[i] << UNIT_SEPARATOR << "32" << UNIT_SEPARATOR << configs[i] << RECORD_SEPARATOR;
     }
 
     std::string message = ss.str();

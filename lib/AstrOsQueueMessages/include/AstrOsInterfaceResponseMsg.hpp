@@ -3,16 +3,19 @@
 
 #include <string>
 
-enum class AstrOsServerResponseType
+enum class AstrOsInterfaceResponseType
 {
     REGISTRATION_SYNC,
+    SET_CONFIG,
+    SEND_CONFIG
 };
 
 typedef struct
 {
-    AstrOsServerResponseType type;
+    AstrOsInterfaceResponseType type;
     char *originationMsgId;
+    char *peer;
     char *message;
-} astros_server_response_t;
+} astros_interface_response_t;
 
 #endif

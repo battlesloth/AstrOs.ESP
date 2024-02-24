@@ -9,7 +9,9 @@
 class AstrOsSerialMsgHandler
 {
 private:
-    QueueHandle_t serverResponseQueue;
+    QueueHandle_t handlerQueue;
+    void handleRegistrationSync(std::string msgId);
+    void handleDeploymentConfig(std::string msgId, std::string message);
 
 public:
     AstrOsSerialMsgHandler();

@@ -1,7 +1,8 @@
 
 #include <AstrOsSerialMsgHandler.hpp>
-#include <AstrOsServerResponseMsg.hpp>
+#include <AstrOsInterfaceResponseMsg.hpp>
 #include <AstrOsMessaging.hpp>
+#include <AstrOsStringUtils.hpp>
 #include <esp_log.h>
 #include <string.h>
 
@@ -13,9 +14,9 @@ AstrOsSerialMsgHandler::AstrOsSerialMsgHandler() {}
 
 AstrOsSerialMsgHandler::~AstrOsSerialMsgHandler() {}
 
-void AstrOsSerialMsgHandler::Init(QueueHandle_t serverResponseQueue)
+void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue)
 {
-    this->serverResponseQueue = serverResponseQueue;
+    this->handlerQueue = handlerQueue;
 }
 
 void AstrOsSerialMsgHandler::handleMessage(std::string message)
@@ -33,19 +34,12 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
     {
     case AstrOsSerialMessageType::REGISTRATION_SYNC:
     {
-        astros_server_response_t response = {
-            .type = AstrOsServerResponseType::REGISTRATION_SYNC,
-            .originationMsgId = (char *)malloc(validation.msgId.size() + 1),
-            .message = nullptr};
-
-        memcpy(response.originationMsgId, validation.msgId.c_str(), validation.msgId.size() + 1);
-
-        if (xQueueSend(this->serverResponseQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
-        {
-            ESP_LOGE(TAG, "Failed to send message to server response queue");
-        }
+        this->handleRegistrationSync(validation.msgId);
         break;
     }
+    case AstrOsSerialMessageType::DEPLOY_CONFIG:
+        this->handleDeploymentConfig(validation.msgId, message);
+        break;
     case AstrOsSerialMessageType::DEPLOY_SCRIPT:
         ESP_LOGI(TAG, "Received DEPLOY_SCRIPT message");
         break;
@@ -58,5 +52,87 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
     default:
         ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(validation.type));
         break;
+    }
+}
+
+void AstrOsSerialMsgHandler::handleRegistrationSync(std::string msgId)
+{
+    ESP_LOGD(TAG, "Received REGISTRATION_SYNC message");
+
+    auto msgIdSize = msgId.size() + 1;
+
+    astros_interface_response_t response = {
+        .type = AstrOsInterfaceResponseType::REGISTRATION_SYNC,
+        .originationMsgId = (char *)malloc(msgIdSize),
+        .peer = nullptr,
+        .message = nullptr};
+
+    memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+
+    if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    {
+        ESP_LOGE(TAG, "Failed to send message to handler queue");
+    }
+}
+
+void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::string message)
+{
+    ESP_LOGD(TAG, "Received DEPLOY_CONFIG message");
+
+    auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
+    auto controllers = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
+
+    auto msgIdSize = msgId.size() + 1;
+
+    for (auto controller : controllers)
+    {
+        auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
+        if (msgParts.size() != 4)
+        {
+            ESP_LOGE(TAG, "Invalid config: %s", controller.c_str());
+            continue;
+        }
+
+        auto peerSize = msgParts[0].size() + 1;
+        auto configSize = msgParts[4].size() + 1;
+
+        if (msgParts[0] == "00:00:00:00:00:00")
+        {
+            astros_interface_response_t response = {
+                .type = AstrOsInterfaceResponseType::SET_CONFIG,
+                .originationMsgId = (char *)malloc(msgIdSize),
+                .peer = nullptr,
+                .message = (char *)malloc(configSize)};
+
+            memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+            memcpy(response.message, msgParts[4].c_str(), configSize);
+
+            if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+            {
+                ESP_LOGE(TAG, "Failed to send message to handler queue");
+                free(response.originationMsgId);
+                free(response.message);
+            }
+        }
+        else
+        {
+            astros_interface_response_t response = {
+                .type = AstrOsInterfaceResponseType::SEND_CONFIG,
+                .originationMsgId = (char *)malloc(msgIdSize),
+                .peer = (char *)malloc(peerSize),
+                .message = (char *)malloc(configSize)};
+
+            memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+            memcpy(response.peer, msgParts[0].c_str(), peerSize);
+            memcpy(response.message, msgParts[4].c_str(), configSize);
+
+            if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+            {
+                ESP_LOGE(TAG, "Failed to send message to handler queue");
+                free(response.originationMsgId);
+                free(response.peer);
+                free(response.message);
+            }
+        }
     }
 }

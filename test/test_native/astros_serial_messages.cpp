@@ -76,19 +76,20 @@ TEST(SerialMessages, RegistrationSyncAckMessage)
     auto record1 = AstrOsStringUtils::splitString(payloadParts[0], UNIT_SEPARATOR);
     auto record2 = AstrOsStringUtils::splitString(payloadParts[1], UNIT_SEPARATOR);
 
-    EXPECT_EQ("test1", record1[0]);
-    EXPECT_EQ("00:00:00:00:00:01", record1[1]);
-    EXPECT_EQ("test2", record2[0]);
-    EXPECT_EQ("00:00:00:00:00:02", record2[1]);
+    EXPECT_EQ("00:00:00:00:00:01", record1[0]);
+    EXPECT_EQ("test1", record1[1]);
+    EXPECT_EQ("00:00:00:00:00:02", record2[0]);
+    EXPECT_EQ("test2", record2[1]);
 }
 
 TEST(SerialMessages, DeployConfigurationMessage)
 {
     std::string msgId = "testId";
     std::vector<std::string> controllers = {"master", "padawan1", "padawan2"};
+    std::vector<std::string> macs = {"mac1", "mac2", "mac3"};
     std::vector<std::string> configs = {"master_config", "padawan1_config", "padawan2_config"};
 
-    auto value = AstrOsSerialMessageService::getDeployConfig(msgId, controllers, configs);
+    auto value = AstrOsSerialMessageService::getDeployConfig(msgId, macs, controllers, configs);
 
     auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
 

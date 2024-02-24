@@ -13,12 +13,6 @@
 #include <esp_random.h>
 #include <string.h>
 
-#include <esp_netif.h>
-#include <esp_wifi.h>
-#include <esp_now.h>
-#include <esp_crc.h>
-#include <esp_wifi_types.h>
-
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AnimationController.hpp>
 #include <AnimationCommand.hpp>
@@ -31,7 +25,7 @@
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
-#include <AstrOsServerResponseMsg.hpp>
+#include <AstrOsInterfaceResponseMsg.hpp>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -58,7 +52,7 @@ static bool discoveryMode = false;
  **********************************/
 
 static QueueHandle_t animationQueue;
-static QueueHandle_t serverResponseQueue;
+static QueueHandle_t interfaceResponseQueue;
 static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
@@ -134,47 +128,32 @@ static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 
-// ESP-NOW
-static esp_err_t wifiInit(void);
-static esp_err_t espnowInit(void);
-// static void espnowDeinit();
+// call backs
+bool cachePeer(espnow_peer_t peer);
+void updateSeviceConfig(std::string name, uint8_t *mac);
+void displaySetDefault(std::string line1, std::string line2, std::string line3);
 static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
+// tasks
 void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
-void serverResponseQueueTask(void *arg);
+void interfaceResponseQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
-esp_err_t mountSdCard(void);
-
 /**********************************
- * callbacks
- *********************************/
+ * Interface Response Methods
+ ***********************************/
+void handleRegistrationSync(astros_interface_response_t msg);
+void handleSetConfig(astros_interface_response_t msg);
+void handleSendConfig(astros_interface_response_t msg);
 
-bool cachePeer(espnow_peer_t peer)
-{
-    return AstrOs_Storage.saveEspNowPeer(peer);
-}
-
-void updateSeviceConfig(std::string name, uint8_t *mac)
-{
-    svc_config_t svcConfig;
-    memcpy(svcConfig.masterMacAddress, mac, ESP_NOW_ETH_ALEN);
-    strncpy(svcConfig.name, name.c_str(), sizeof(svcConfig.name));
-    svcConfig.name[sizeof(svcConfig.name) - 1] = '\0';
-    AstrOs_Storage.saveServiceConfig(svcConfig);
-}
-
-void displaySetDefault(std::string line1, std::string line2, std::string line3)
-{
-    return AstrOs_Display.setDefault(line1, line2, line3);
-}
+esp_err_t mountSdCard(void);
 
 extern "C"
 {
@@ -188,7 +167,7 @@ void app_main()
     xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
     xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&serverResponseQueueTask, "server_queue_task", 4096, (void *)serverResponseQueue, 10, NULL);
+    xTaskCreate(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL);
     xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
     xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
     xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
@@ -212,7 +191,7 @@ void init(void)
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
-    serverResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_server_response_t));
+    interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
@@ -222,7 +201,7 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(serverResponseQueue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     i2c_config_t conf;
@@ -266,8 +245,8 @@ void init(void)
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
 
-    ESP_ERROR_CHECK(wifiInit());
-    ESP_ERROR_CHECK(espnowInit());
+    // ESP_ERROR_CHECK(wifiInit());
+    // ESP_ERROR_CHECK(espnowInit());
 
     svc_config_t svcConfig;
 
@@ -303,13 +282,18 @@ void init(void)
         .isMaster = isMasterNode,
         .peers = peerList,
         .peerCount = peerCount,
-        .serviceQueue = serviceQueue};
+        .serviceQueue = serviceQueue,
+        .espnowSend_cb = &espnowSendCallback,
+        .espnowRecv_cb = &espnowRecvCallback,
+        .cachePeer_cb = &cachePeer,
+        .updateSeviceConfig_cb = &updateSeviceConfig,
+        .displayUpdate_cb = &displaySetDefault};
 
     ESP_LOGI(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
     ESP_LOGI(TAG, "Name: %s", config.name.c_str());
     ESP_LOGI(TAG, "Fingerprint: %s", config.fingerprint.c_str());
 
-    AstrOs_EspNow.init(config, &cachePeer, &displaySetDefault, &updateSeviceConfig);
+    AstrOs_EspNow.init(config);
     AstrOs_Display.init(i2cQueue);
     AstrOs_Display.setDefault(rank, "", name);
 }
@@ -545,12 +529,12 @@ void buttonListenerTask(void *arg)
     }
 }
 
-void serverResponseQueueTask(void *arg)
+void interfaceResponseQueueTask(void *arg)
 {
     QueueHandle_t serverResponseQueue;
 
     serverResponseQueue = (QueueHandle_t)arg;
-    astros_server_response_t msg;
+    astros_interface_response_t msg;
 
     while (1)
     {
@@ -560,11 +544,9 @@ void serverResponseQueueTask(void *arg)
 
             switch (msg.type)
             {
-            case AstrOsServerResponseType::REGISTRATION_SYNC:
+            case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
             {
                 std::vector<astros_peer_data_t> data = {};
-
-                data.clear();
 
                 auto peers = AstrOs_EspNow.getPeers();
 
@@ -594,12 +576,34 @@ void serverResponseQueueTask(void *arg)
 
                 break;
             }
+            case AstrOsInterfaceResponseType::SET_CONFIG:
+            {
+                auto response = AstrOsSerialMessageService::getBasicAckNak(
+                    AstrOsSerialMessageType::DEPLOY_CONFIG_ACK, msg.originationMsgId, "00:00:00:00:00:00", "master", "");
+
+                queue_msg_t serialMsg;
+
+                serialMsg.message_id = 1;
+                serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+                memcpy(serialMsg.data, response.c_str(), response.size());
+                serialMsg.data[response.size()] = '\n';
+                serialMsg.dataSize = response.size() + 1;
+
+                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send serial queue fail");
+                    free(serialMsg.data);
+                }
+
+                break;
+            }
             default:
                 ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(msg.type));
                 break;
             }
 
             free(msg.originationMsgId);
+            free(msg.peer);
             free(msg.message);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -965,9 +969,28 @@ void espnowQueueTask(void *arg)
     }
 }
 
-/******************************************
- * ESP-NOW
- *****************************************/
+/**********************************
+ * callbacks
+ *********************************/
+
+bool cachePeer(espnow_peer_t peer)
+{
+    return AstrOs_Storage.saveEspNowPeer(peer);
+}
+
+void updateSeviceConfig(std::string name, uint8_t *mac)
+{
+    svc_config_t svcConfig;
+    memcpy(svcConfig.masterMacAddress, mac, ESP_NOW_ETH_ALEN);
+    strncpy(svcConfig.name, name.c_str(), sizeof(svcConfig.name));
+    svcConfig.name[sizeof(svcConfig.name) - 1] = '\0';
+    AstrOs_Storage.saveServiceConfig(svcConfig);
+}
+
+void displaySetDefault(std::string line1, std::string line2, std::string line3)
+{
+    return AstrOs_Display.setDefault(line1, line2, line3);
+}
 
 static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
@@ -1012,106 +1035,3 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
         free(msg.data);
     }
 }
-
-static esp_err_t wifiInit(void)
-{
-
-    ESP_LOGI(TAG, "wifiInit called");
-
-    esp_err_t err = ESP_OK;
-
-    err = esp_netif_init();
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_event_loop_create_default();
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-
-    err = esp_wifi_init(&cfg);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_wifi_set_mode(ESPNOW_WIFI_MODE);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_wifi_start();
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
-
-    err = esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    ESP_LOGI(TAG, "wifiInit complete");
-
-    return err;
-}
-
-static esp_err_t espnowInit(void)
-{
-
-    ESP_LOGI(TAG, "espnowInit called");
-
-    esp_err_t err = ESP_OK;
-
-    err = esp_now_init();
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_now_register_send_cb(espnowSendCallback);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_now_register_recv_cb(espnowRecvCallback);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = esp_now_set_pmk((uint8_t *)CONFIG_ESPNOW_PMK);
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    ESP_LOGI(TAG, "espnowInit complete");
-
-    return err;
-}
-
-/*
-static void espnowDeinit()
-{
-    ESP_LOGI(TAG, "espnowDeinit called");
-    vSemaphoreDelete(espnowQueue);
-    esp_now_deinit();
-}
-*/

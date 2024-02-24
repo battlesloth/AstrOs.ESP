@@ -14,10 +14,19 @@
 #include <freertos/semphr.h>
 #include <esp_mac.h>
 
+#include <esp_netif.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <esp_crc.h>
+#include <esp_wifi_types.h>
+
 static const char *TAG = "AstrOsEspNow";
 SemaphoreHandle_t masterMacMutex;
 
 AstrOsEspNow AstrOs_EspNow;
+
+static void (*espnowSendCallback)(const uint8_t *mac_addr, esp_now_send_status_t status);
+static void (*espnowRecvCallback)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
 AstrOsEspNow::AstrOsEspNow()
 {
@@ -27,10 +36,7 @@ AstrOsEspNow::~AstrOsEspNow()
 {
 }
 
-esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
-                             bool (*cachePeer_cb)(espnow_peer_t),
-                             void (*displayUpdate_cb)(std::string, std::string, std::string),
-                             void (*updateSeviceConfig_cb)(std::string, uint8_t *))
+esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
 {
     ESP_LOGI(TAG, "Initializing AstrOsEspNow");
 
@@ -42,9 +48,23 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config,
     this->peers = {};
     this->serviceQueue = config.serviceQueue;
 
-    this->cachePeerCallback = cachePeer_cb;
-    this->displayUpdateCallback = displayUpdate_cb;
-    this->updateSeviceConfigCallback = updateSeviceConfig_cb;
+    espnowSendCallback = config.espnowSend_cb;
+    espnowRecvCallback = config.espnowRecv_cb;
+    this->cachePeerCallback = config.cachePeer_cb;
+    this->displayUpdateCallback = config.displayUpdate_cb;
+    this->updateSeviceConfigCallback = config.updateSeviceConfig_cb;
+
+    err = wifiInit();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = espnowInit();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
 
     uint8_t *localMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
 
@@ -158,7 +178,7 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
         .id = 0,
         .name = "master"};
 
-    memcpy(master.mac_addr, this->masterMac, ESP_NOW_ETH_ALEN);
+    memcpy(master.mac_addr, nullMac, ESP_NOW_ETH_ALEN);
 
     result.push_back(master);
 
@@ -582,4 +602,98 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
             peer.pollAckThisCycle = false;
         }
     }
+}
+
+esp_err_t AstrOsEspNow::wifiInit(void)
+{
+
+    ESP_LOGI(TAG, "wifiInit called");
+
+    esp_err_t err = ESP_OK;
+
+    err = esp_netif_init();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_event_loop_create_default();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+
+    err = esp_wifi_init(&cfg);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_wifi_set_mode(ESPNOW_WIFI_MODE);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_wifi_start();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+    err = esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    ESP_LOGI(TAG, "wifiInit complete");
+
+    return err;
+}
+
+esp_err_t AstrOsEspNow::espnowInit(void)
+{
+
+    ESP_LOGI(TAG, "espnowInit called");
+
+    esp_err_t err = ESP_OK;
+
+    err = esp_now_init();
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_now_register_send_cb(espnowSendCallback);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_now_register_recv_cb(espnowRecvCallback);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    err = esp_now_set_pmk((uint8_t *)CONFIG_ESPNOW_PMK);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        return err;
+    }
+
+    ESP_LOGI(TAG, "espnowInit complete");
+
+    return err;
 }

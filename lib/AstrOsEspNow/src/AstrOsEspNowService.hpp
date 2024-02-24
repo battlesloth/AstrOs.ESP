@@ -10,6 +10,7 @@
 #include <freertos/queue.h>
 
 static uint8_t broadcastMac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static uint8_t nullMac[ESP_NOW_ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 typedef struct
 {
@@ -20,6 +21,11 @@ typedef struct
     espnow_peer_t *peers;
     int peerCount;
     QueueHandle_t serviceQueue;
+    void (*espnowSend_cb)(const uint8_t *mac_addr, esp_now_send_status_t status);
+    void (*espnowRecv_cb)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
+    bool (*cachePeer_cb)(espnow_peer_t);
+    void (*updateSeviceConfig_cb)(std::string, uint8_t *);
+    void (*displayUpdate_cb)(std::string, std::string, std::string);
 } astros_espnow_config_t;
 
 class AstrOsEspNow
@@ -54,13 +60,13 @@ private:
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
 
+    esp_err_t wifiInit(void);
+    esp_err_t espnowInit(void);
+
 public:
     AstrOsEspNow();
     ~AstrOsEspNow();
-    esp_err_t init(astros_espnow_config_t config,
-                   bool (*cachePeer_cb)(espnow_peer_t),
-                   void (*displayUpdate_cb)(std::string, std::string, std::string),
-                   void (*updateSeviceConfig_cb)(std::string, uint8_t *));
+    esp_err_t init(astros_espnow_config_t config);
     std::vector<espnow_peer_t> getPeers();
     void sendRegistrationRequest();
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
