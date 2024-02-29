@@ -26,6 +26,7 @@
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
+#include <uuid.h>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -128,7 +129,7 @@ static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 
-// call backs
+// espnow call backs
 bool cachePeer(espnow_peer_t peer);
 void updateSeviceConfig(std::string name, uint8_t *mac);
 void displaySetDefault(std::string line1, std::string line2, std::string line3);
@@ -146,12 +147,11 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
-/**********************************
- * Interface Response Methods
- ***********************************/
-void handleRegistrationSync(astros_interface_response_t msg);
-void handleSetConfig(astros_interface_response_t msg);
-void handleSendConfig(astros_interface_response_t msg);
+// handlers
+static void handleRegistrationSync(astros_interface_response_t msg);
+static bool handleSetConfig(std::string msgId, std::string msg);
+static void handleSendConfig(astros_interface_response_t msg);
+static void handleSendConfigAckNak(char *msgId, bool success);
 
 esp_err_t mountSdCard(void);
 
@@ -201,7 +201,7 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     i2c_config_t conf;
@@ -244,9 +244,6 @@ void init(void)
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
-
-    // ESP_ERROR_CHECK(wifiInit());
-    // ESP_ERROR_CHECK(espnowInit());
 
     svc_config_t svcConfig;
 
@@ -546,55 +543,18 @@ void interfaceResponseQueueTask(void *arg)
             {
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
             {
-                std::vector<astros_peer_data_t> data = {};
-
-                auto peers = AstrOs_EspNow.getPeers();
-
-                for (auto peer : peers)
-                {
-                    astros_peer_data_t pd;
-                    pd.name = peer.name;
-                    pd.mac = AstrOsStringUtils::macToString(peer.mac_addr);
-                    pd.fingerprint = "na";
-                    data.push_back(pd);
-                }
-
-                auto response = AstrOsSerialMessageService::getRegistrationSyncAck(msg.originationMsgId, data);
-
-                queue_msg_t serialMsg;
-                serialMsg.message_id = 1;
-                serialMsg.data = (uint8_t *)malloc(response.size() + 1);
-                memcpy(serialMsg.data, response.c_str(), response.size());
-                serialMsg.data[response.size()] = '\n';
-                serialMsg.dataSize = response.size() + 1;
-
-                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
-                {
-                    ESP_LOGW(TAG, "Send serial queue fail");
-                    free(serialMsg.data);
-                }
-
+                handleRegistrationSync(msg);
                 break;
             }
             case AstrOsInterfaceResponseType::SET_CONFIG:
             {
-                auto response = AstrOsSerialMessageService::getBasicAckNak(
-                    AstrOsSerialMessageType::DEPLOY_CONFIG_ACK, msg.originationMsgId, "00:00:00:00:00:00", "master", "");
-
-                queue_msg_t serialMsg;
-
-                serialMsg.message_id = 1;
-                serialMsg.data = (uint8_t *)malloc(response.size() + 1);
-                memcpy(serialMsg.data, response.c_str(), response.size());
-                serialMsg.data[response.size()] = '\n';
-                serialMsg.dataSize = response.size() + 1;
-
-                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
-                {
-                    ESP_LOGW(TAG, "Send serial queue fail");
-                    free(serialMsg.data);
-                }
-
+                auto success = handleSetConfig(msg.originationMsgId, msg.message);
+                handleSendConfigAckNak(msg.originationMsgId, success);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG:
+            {
+                handleSendConfig(msg);
                 break;
             }
             default:
@@ -698,6 +658,11 @@ void serviceQueueTask(void *arg)
                     free(serialMsg.data);
                 }
 
+                break;
+            }
+            case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
+            {
+                ServoMod.LoadServoConfig();
                 break;
             }
             default:
@@ -1034,4 +999,102 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
         ESP_LOGW(TAG, "Send receive queue fail");
         free(msg.data);
     }
+}
+
+/**********************************
+ * Interface Response Methods
+ *********************************/
+
+static void handleRegistrationSync(astros_interface_response_t msg)
+{
+    std::vector<astros_peer_data_t> data = {};
+
+    auto peers = AstrOs_EspNow.getPeers();
+
+    for (auto peer : peers)
+    {
+        astros_peer_data_t pd;
+        pd.name = peer.name;
+        pd.mac = AstrOsStringUtils::macToString(peer.mac_addr);
+        pd.fingerprint = "na";
+        data.push_back(pd);
+    }
+
+    auto response = AstrOsSerialMessageService::getRegistrationSyncAck(msg.originationMsgId, data);
+
+    queue_msg_t serialMsg;
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(serialMsg.data);
+    }
+}
+
+static bool handleSetConfig(std::string msgId, std::string msg)
+{
+    auto success = AstrOs_Storage.saveServoConfig(msg);
+
+    std::string fingerprint;
+
+    if (success)
+    {
+        ESP_LOGI(TAG, "Updating Fingerprint");
+
+        fingerprint = uuid::generate_uuid_v4();
+
+        success = AstrOs_Storage.setControllerFingerprint(fingerprint.c_str());
+
+        AstrOs_EspNow.updateFingerprint(fingerprint);
+
+        ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Failed to update fingerprint");
+        fingerprint = "error";
+    }
+
+    // send servo reload message
+    queue_svc_cmd_t reloadMsg;
+    reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
+    reloadMsg.data = nullptr;
+
+    if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500) != pdTRUE))
+    {
+        ESP_LOGW(TAG, "Send servo reload fail");
+    }
+
+    return success;
+}
+
+static void handleSendConfigAckNak(char *msgId, bool success)
+{
+
+    if (isMasterNode)
+    {
+        auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+
+        if (success)
+        {
+            responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
+        }
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msgId, AstrOs_EspNow.getMac(),
+                                                        AstrOs_EspNow.getName(), AstrOs_EspNow.getFingerprint());
+    }
+    else
+    {
+        AstrOs_EspNow.sendConfigAckNak(msgId, success);
+    }
+}
+
+static void handleSendConfig(astros_interface_response_t msg)
+{
+    AstrOs_EspNow.sendConfigUpdate(msg.peer, msg.originationMsgId, msg.message);
 }

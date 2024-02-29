@@ -10,6 +10,7 @@ extern "C"
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF,
         ASTROS_INTERFACE_MESSAGE,
+        RELOAD_SERVO_CONFIG
     } SERVICE_COMMAND;
 
     typedef enum

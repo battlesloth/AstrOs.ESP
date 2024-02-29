@@ -6,32 +6,31 @@
 #include <cstring>
 #include <cstdint>
 
-astros_espnow_data_t AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
 {
     switch (type)
     {
     case AstrOsPacketType::REGISTRATION_REQ:
-        return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ);
         break;
     case AstrOsPacketType::REGISTRATION:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message);
         break;
     case AstrOsPacketType::REGISTRATION_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message);
         break;
     case AstrOsPacketType::POLL:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL) + UNIT_SEPARATOR + mac)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL) + UNIT_SEPARATOR + mac);
         break;
     case AstrOsPacketType::POLL_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message);
         break;
     default:
-        return AstrOsEspNowMessageService::generatePackets(type, message)[0];
+        return AstrOsEspNowMessageService::generatePackets(type, message);
         break;
     }
 
-    astros_espnow_data_t data = {NULL, 0};
-    return data;
+    return std::vector<astros_espnow_data_t>();
 }
 
 std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string message)

@@ -21,6 +21,9 @@ namespace AstrOsENC
     constexpr const static char *REGISTRATION_ACK = "REGISTRATION_ACK";
     constexpr const static char *POLL = "POLL";
     constexpr const static char *POLL_ACK = "POLL_ACK";
+    constexpr const static char *CONFIG = "CONFIG";
+    constexpr const static char *CONFIG_ACK = "CONFIG_ACK";
+    constexpr const static char *CONFIG_NAK = "CONFIG_NAK";
 }
 
 enum class AstrOsPacketType
@@ -31,7 +34,11 @@ enum class AstrOsPacketType
     REGISTRATION,
     REGISTRATION_ACK,
     POLL,
-    POLL_ACK
+    POLL_ACK,
+    CONFIG,
+    CONFIG_ACK,
+    CONFIG_NAK
+
 };
 
 typedef struct
@@ -60,7 +67,7 @@ public:
     AstrOsEspNowMessageService();
     ~AstrOsEspNowMessageService();
 
-    static astros_espnow_data_t generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
+    static std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
     static std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
     static astros_packet_t parsePacket(uint8_t *packet);
     static bool validatePacket(astros_packet_t packet);

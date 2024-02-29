@@ -162,10 +162,11 @@ TEST(SerialMessages, RunCommandMessage)
 void RunAckNakTest(AstrOsSerialMessageType type)
 {
     std::string msgId = "testId";
+    std::string macAddress = "macAddress";
     std::string controller = "controller";
     std::string data = "data";
 
-    auto value = AstrOsSerialMessageService::getBasicAckNak(type, msgId, controller, data);
+    auto value = AstrOsSerialMessageService::getBasicAckNak(type, msgId, macAddress, controller, data);
 
     auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
 
@@ -177,9 +178,10 @@ void RunAckNakTest(AstrOsSerialMessageType type)
 
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
 
-    ASSERT_EQ(2, payloadParts.size());
-    EXPECT_EQ(controller, payloadParts[0]);
-    EXPECT_EQ(data, payloadParts[1]);
+    ASSERT_EQ(3, payloadParts.size());
+    EXPECT_EQ(macAddress, payloadParts[0]);
+    EXPECT_EQ(controller, payloadParts[1]);
+    EXPECT_EQ(data, payloadParts[2]);
 }
 
 TEST(SerialMessages, DeployConfigurationAckMessage)

@@ -112,9 +112,61 @@ bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
     return nvsGetControllerFingerprint(fingerprint);
 }
 
-bool AstrOsStorageManager::saveServoConfig(int boardId, servo_channel *servos, int arraySize)
+bool AstrOsStorageManager::saveServoConfig(std::string msg)
 {
-    return nvsSaveServoConfig(boardId, servos, arraySize);
+    auto servoConfigs = AstrOsStringUtils::splitString(msg, '|');
+
+    servo_channel config0[16];
+    servo_channel config1[16];
+
+    for (auto cfig : servoConfigs)
+    {
+        auto parts = AstrOsStringUtils::splitString(cfig, ':');
+
+        if (parts.size() != 5)
+        {
+            ESP_LOGE(TAG, "Invalid servo config: %s", cfig.c_str());
+            continue;
+        }
+
+        servo_channel ch;
+        int id = std::stoi(parts[0]);
+        ch.set = std::stoi(parts[1]);
+        ch.minPos = std::stoi(parts[2]);
+        ch.maxPos = std::stoi(parts[3]);
+        ch.inverted = std::stoi(parts[4]);
+
+        if (id < 16)
+        {
+            ch.id = id;
+            config0[id] = ch;
+            ESP_LOGI(TAG, "Servo Config: brd 1, ch: %d", ch.id);
+        }
+        else
+        {
+            ch.id = id - 16;
+            config1[(id - 16)] = ch;
+            ESP_LOGI(TAG, "Servo Config: brd 2, ch: %d", ch.id);
+        }
+    }
+
+    ESP_LOGI(TAG, "Saving Servo Config...");
+
+    bool success = true;
+
+    if (!nvsSaveServoConfig(0, config0, 16))
+    {
+        ESP_LOGE(TAG, "Failed to save board 1 servo config");
+        success = false;
+    }
+
+    if (!nvsSaveServoConfig(1, config1, 16))
+    {
+        ESP_LOGE(TAG, "Failed to save board 2 servo config");
+        success = false;
+    }
+
+    return success;
 }
 
 bool AstrOsStorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)

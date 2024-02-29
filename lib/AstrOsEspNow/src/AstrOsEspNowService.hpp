@@ -21,6 +21,7 @@ typedef struct
     espnow_peer_t *peers;
     int peerCount;
     QueueHandle_t serviceQueue;
+    QueueHandle_t interfaceQueue;
     void (*espnowSend_cb)(const uint8_t *mac_addr, esp_now_send_status_t status);
     void (*espnowRecv_cb)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
     bool (*cachePeer_cb)(espnow_peer_t);
@@ -38,6 +39,9 @@ private:
     std::string mac;
     std::vector<espnow_peer_t> peers;
     QueueHandle_t serviceQueue;
+    QueueHandle_t interfaceQueue;
+
+    PacketTracker packetTracker;
 
     void getMasterMac(uint8_t *macAddress);
     void updateMasterMac(u_int8_t *macAddress);
@@ -59,7 +63,9 @@ private:
     bool handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len);
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
+    bool handleConfig(astros_packet_t packet);
 
+    std::string handleMultiPacketMessage(astros_packet_t packet);
     esp_err_t wifiInit(void);
     esp_err_t espnowInit(void);
 
@@ -72,6 +78,13 @@ public:
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
     void pollPadawans();
     void pollRepsonseTimeExpired();
+    void sendConfigUpdate(std::string peer, std::string msgId, std::string msg);
+    void sendConfigAckNak(std::string msgId, bool success);
+
+    std::string getMac();
+    std::string getName();
+    std::string getFingerprint();
+    void updateFingerprint(std::string fingerprint);
 };
 
 extern AstrOsEspNow AstrOs_EspNow;

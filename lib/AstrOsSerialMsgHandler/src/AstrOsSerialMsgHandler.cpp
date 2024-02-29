@@ -3,6 +3,7 @@
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsStringUtils.hpp>
+#include <AstrOsUtility.h>
 #include <esp_log.h>
 #include <string.h>
 
@@ -14,15 +15,16 @@ AstrOsSerialMsgHandler::AstrOsSerialMsgHandler() {}
 
 AstrOsSerialMsgHandler::~AstrOsSerialMsgHandler() {}
 
-void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue)
+void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue, QueueHandle_t serialQueue)
 {
     this->handlerQueue = handlerQueue;
+    this->serialQueue = serialQueue;
 }
 
 void AstrOsSerialMsgHandler::handleMessage(std::string message)
 {
 
-    astros_serial_msg_validation_t validation = AstrOsSerialMessageService::validateSerialMsg(message);
+    auto validation = AstrOsSerialMessageService::validateSerialMsg(message);
 
     if (!validation.valid)
     {
@@ -134,5 +136,24 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
                 free(response.message);
             }
         }
+    }
+}
+
+void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name, std::string payload)
+{
+    auto response = AstrOsSerialMessageService::getBasicAckNak(type, msgId, mac, name, payload);
+
+    queue_msg_t serialMsg;
+
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(serialMsg.data);
     }
 }
