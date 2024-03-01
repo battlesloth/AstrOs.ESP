@@ -66,7 +66,8 @@ void AstrOsSerialMsgHandler::handleRegistrationSync(std::string msgId)
     astros_interface_response_t response = {
         .type = AstrOsInterfaceResponseType::REGISTRATION_SYNC,
         .originationMsgId = (char *)malloc(msgIdSize),
-        .peer = nullptr,
+        .peerMac = nullptr,
+        .peerName = nullptr,
         .message = nullptr};
 
     memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
@@ -103,7 +104,8 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
             astros_interface_response_t response = {
                 .type = AstrOsInterfaceResponseType::SET_CONFIG,
                 .originationMsgId = (char *)malloc(msgIdSize),
-                .peer = nullptr,
+                .peerMac = nullptr,
+                .peerName = nullptr,
                 .message = (char *)malloc(configSize)};
 
             memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
@@ -121,18 +123,19 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
             astros_interface_response_t response = {
                 .type = AstrOsInterfaceResponseType::SEND_CONFIG,
                 .originationMsgId = (char *)malloc(msgIdSize),
-                .peer = (char *)malloc(peerSize),
+                .peerMac = (char *)malloc(peerSize),
+                .peerName = nullptr,
                 .message = (char *)malloc(configSize)};
 
             memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
-            memcpy(response.peer, msgParts[0].c_str(), peerSize);
+            memcpy(response.peerMac, msgParts[0].c_str(), peerSize);
             memcpy(response.message, msgParts[4].c_str(), configSize);
 
             if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
             {
                 ESP_LOGE(TAG, "Failed to send message to handler queue");
                 free(response.originationMsgId);
-                free(response.peer);
+                free(response.peerMac);
                 free(response.message);
             }
         }

@@ -151,7 +151,6 @@ void espnowQueueTask(void *arg);
 static void handleRegistrationSync(astros_interface_response_t msg);
 static bool handleSetConfig(std::string msgId, std::string msg);
 static void handleSendConfig(astros_interface_response_t msg);
-static void handleSendConfigAckNak(char *msgId, bool success);
 
 esp_err_t mountSdCard(void);
 
@@ -549,12 +548,26 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SET_CONFIG:
             {
                 auto success = handleSetConfig(msg.originationMsgId, msg.message);
-                handleSendConfigAckNak(msg.originationMsgId, success);
+                auto responseType = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, AstrOs_EspNow.getMac(),
+                                                                AstrOs_EspNow.getName(), AstrOs_EspNow.getFingerprint());
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG:
             {
                 handleSendConfig(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+            {
+                auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
+            {
+                auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
                 break;
             }
             default:
@@ -563,7 +576,8 @@ void interfaceResponseQueueTask(void *arg)
             }
 
             free(msg.originationMsgId);
-            free(msg.peer);
+            free(msg.peerMac);
+            free(msg.peerName);
             free(msg.message);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -1073,28 +1087,7 @@ static bool handleSetConfig(std::string msgId, std::string msg)
     return success;
 }
 
-static void handleSendConfigAckNak(char *msgId, bool success)
-{
-
-    if (isMasterNode)
-    {
-        auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
-
-        if (success)
-        {
-            responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
-        }
-
-        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msgId, AstrOs_EspNow.getMac(),
-                                                        AstrOs_EspNow.getName(), AstrOs_EspNow.getFingerprint());
-    }
-    else
-    {
-        AstrOs_EspNow.sendConfigAckNak(msgId, success);
-    }
-}
-
 static void handleSendConfig(astros_interface_response_t msg)
 {
-    AstrOs_EspNow.sendConfigUpdate(msg.peer, msg.originationMsgId, msg.message);
+    AstrOs_EspNow.sendConfigUpdate(msg.peerMac, msg.originationMsgId, msg.message);
 }

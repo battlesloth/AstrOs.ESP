@@ -369,10 +369,13 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         }
         ESP_LOGI(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
         return this->handlePollAck(packet);
-
     case AstrOsPacketType::CONFIG:
         ESP_LOGI(TAG, "Config update received from " MACSTR ", ", MAC2STR(src));
         return this->handleConfig(packet);
+    case AstrOsPacketType::CONFIG_ACK:
+    case AstrOsPacketType::CONFIG_NAK:
+        ESP_LOGI(TAG, "Config ack/nak received from " MACSTR ", ", MAC2STR(src));
+        return this->handleConfigAckNak(packet);
     default:
         return false;
     }
@@ -781,7 +784,8 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
     astros_interface_response_t response = {
         .type = AstrOsInterfaceResponseType::SET_CONFIG,
         .originationMsgId = (char *)malloc(16),
-        .peer = nullptr,
+        .peerMac = nullptr,
+        .peerName = nullptr,
         .message = (char *)malloc(payload.size() + 1)};
 
     memcpy(response.originationMsgId, packet.id, 16);
@@ -799,7 +803,6 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
 
 void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
 {
-
     uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
 
     this->getMasterMac(destMac);
@@ -807,19 +810,53 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
-    auto data = AstrOsEspNowMessageService::generateEspNowMsg(success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK, this->getMac(), ss.str());
+    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK, this->getMac(), ss.str())[0];
 
-    for (auto &packet : data)
+    if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
     {
-        if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
-        }
-
-        free(packet.data);
+        ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
     }
 
+    free(packet.data);
     free(destMac);
+}
+
+bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
+{
+    auto payload = std::string((char *)packet.payload, packet.payloadSize);
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 4)
+    {
+        ESP_LOGE(TAG, "Invalid config ack/nak payload: %s", payload.c_str());
+        return false;
+    }
+
+    auto responseType = packet.packetType == AstrOsPacketType::CONFIG_ACK ? AstrOsInterfaceResponseType::SEND_CONFIG_ACK : AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
+
+    astros_interface_response_t response = {
+        .type = responseType,
+        .originationMsgId = (char *)malloc(16),
+        .peerMac = (char *)malloc(parts[1].size() + 1),
+        .peerName = (char *)malloc(parts[2].size() + 1),
+        .message = (char *)malloc(parts[3].size() + 1)};
+
+    memcpy(response.originationMsgId, packet.id, 16);
+    memcpy(response.peerMac, parts[1].c_str(), parts[1].size() + 1);
+    memcpy(response.peerName, parts[2].c_str(), parts[2].size() + 1);
+    memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
+
+    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    {
+        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
+        free(response.originationMsgId);
+        free(response.peerMac);
+        free(response.peerName);
+        free(response.message);
+    }
+
+    return true;
 }
 
 /*******************************************

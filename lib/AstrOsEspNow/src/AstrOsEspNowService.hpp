@@ -64,6 +64,7 @@ private:
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
     bool handleConfig(astros_packet_t packet);
+    bool handleConfigAckNak(astros_packet_t packet);
 
     std::string handleMultiPacketMessage(astros_packet_t packet);
     esp_err_t wifiInit(void);
