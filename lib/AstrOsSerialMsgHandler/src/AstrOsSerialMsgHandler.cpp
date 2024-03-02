@@ -7,7 +7,7 @@
 #include <esp_log.h>
 #include <string.h>
 
-const char *TAG = "AstrOsSerialInterface";
+const char *TAG = "AstrOsSerialMsgHandler";
 
 AstrOsSerialMsgHandler AstrOs_SerialMsgHandler;
 
@@ -40,7 +40,7 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
         break;
     }
     case AstrOsSerialMessageType::DEPLOY_CONFIG:
-        this->handleDeploymentConfig(validation.msgId, message);
+        this->handleDeployConfig(validation.msgId, message);
         break;
     case AstrOsSerialMessageType::DEPLOY_SCRIPT:
         ESP_LOGI(TAG, "Received DEPLOY_SCRIPT message");
@@ -78,7 +78,7 @@ void AstrOsSerialMsgHandler::handleRegistrationSync(std::string msgId)
     }
 }
 
-void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::string message)
+void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string message)
 {
     ESP_LOGD(TAG, "Received DEPLOY_CONFIG message");
 
@@ -97,7 +97,7 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
         }
 
         auto peerSize = msgParts[0].size() + 1;
-        auto configSize = msgParts[4].size() + 1;
+        auto configSize = msgParts[3].size() + 1;
 
         if (msgParts[0] == "00:00:00:00:00:00")
         {
@@ -109,7 +109,7 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
                 .message = (char *)malloc(configSize)};
 
             memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
-            memcpy(response.message, msgParts[4].c_str(), configSize);
+            memcpy(response.message, msgParts[3].c_str(), configSize);
 
             if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
             {
@@ -129,7 +129,7 @@ void AstrOsSerialMsgHandler::handleDeploymentConfig(std::string msgId, std::stri
 
             memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
             memcpy(response.peerMac, msgParts[0].c_str(), peerSize);
-            memcpy(response.message, msgParts[4].c_str(), configSize);
+            memcpy(response.message, msgParts[3].c_str(), configSize);
 
             if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
             {

@@ -26,7 +26,7 @@
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
-#include <uuid.h>
+#include <guid.h>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -149,7 +149,7 @@ void espnowQueueTask(void *arg);
 
 // handlers
 static void handleRegistrationSync(astros_interface_response_t msg);
-static bool handleSetConfig(std::string msgId, std::string msg);
+static void handleSetConfig(astros_interface_response_t msg);
 static void handleSendConfig(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
@@ -170,7 +170,7 @@ void app_main()
     xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
     xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
     xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
-    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
+    xTaskCreate(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 10, NULL);
     xTaskCreate(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL);
 
     initTimers();
@@ -279,6 +279,7 @@ void init(void)
         .peers = peerList,
         .peerCount = peerCount,
         .serviceQueue = serviceQueue,
+        .interfaceQueue = interfaceResponseQueue,
         .espnowSend_cb = &espnowSendCallback,
         .espnowRecv_cb = &espnowRecvCallback,
         .cachePeer_cb = &cachePeer,
@@ -547,10 +548,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SET_CONFIG:
             {
-                auto success = handleSetConfig(msg.originationMsgId, msg.message);
-                auto responseType = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
-                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, AstrOs_EspNow.getMac(),
-                                                                AstrOs_EspNow.getName(), AstrOs_EspNow.getFingerprint());
+                handleSetConfig(msg);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG:
@@ -1050,41 +1048,50 @@ static void handleRegistrationSync(astros_interface_response_t msg)
     }
 }
 
-static bool handleSetConfig(std::string msgId, std::string msg)
+static void handleSetConfig(astros_interface_response_t msg)
 {
-    auto success = AstrOs_Storage.saveServoConfig(msg);
+    auto success = AstrOs_Storage.saveServoConfig(msg.message);
+
+    ESP_LOGI(TAG, "Server Response Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
 
     std::string fingerprint;
 
     if (success)
     {
         ESP_LOGI(TAG, "Updating Fingerprint");
-
-        fingerprint = uuid::generate_uuid_v4();
+        fingerprint = guid::generate_guid();
 
         success = AstrOs_Storage.setControllerFingerprint(fingerprint.c_str());
+    }
 
+    if (success)
+    {
         AstrOs_EspNow.updateFingerprint(fingerprint);
 
         ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
+
+        // send servo reload message
+        queue_svc_cmd_t reloadMsg;
+        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
+        reloadMsg.data = nullptr;
+
+        if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send servo reload fail");
+        }
+    }
+
+    auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+
+    if (isMasterNode)
+    {
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(),
+                                                        "master", AstrOs_EspNow.getFingerprint());
     }
     else
     {
-        ESP_LOGW(TAG, "Failed to update fingerprint");
-        fingerprint = "error";
+        AstrOs_EspNow.sendConfigAckNak(msg.originationMsgId, success);
     }
-
-    // send servo reload message
-    queue_svc_cmd_t reloadMsg;
-    reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
-    reloadMsg.data = nullptr;
-
-    if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500) != pdTRUE))
-    {
-        ESP_LOGW(TAG, "Send servo reload fail");
-    }
-
-    return success;
 }
 
 static void handleSendConfig(astros_interface_response_t msg)

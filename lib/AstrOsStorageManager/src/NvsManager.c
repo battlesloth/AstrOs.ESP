@@ -243,7 +243,73 @@ bool nvsGetControllerFingerprint(char *fingerprint)
     return true;
 }
 
-bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
+bool nvsSaveServoConfig(int boardId, servo_channel config)
+{
+    esp_err_t err;
+    nvs_handle_t nvsHandle;
+
+    err = nvs_open("config", NVS_READWRITE, &nvsHandle);
+
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    char minPosConfig[] = "x-00-minpos";
+    char maxPosConfig[] = "x-00-maxpos";
+    char setConfig[] = "x-00-set";
+    char invertedConfig[] = "x-00-inv";
+
+    minPosConfig[0] = (boardId + '0');
+    maxPosConfig[0] = (boardId + '0');
+    setConfig[0] = (boardId + '0');
+    invertedConfig[0] = (boardId + '0');
+
+    setKeyId(minPosConfig, config.id, 2);
+    setKeyId(maxPosConfig, config.id, 2);
+    setKeyId(setConfig, config.id, 2);
+    setKeyId(invertedConfig, config.id, 2);
+
+    err = nvs_set_u16(nvsHandle, minPosConfig, config.minPos);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_set_u16(nvsHandle, maxPosConfig, config.maxPos);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_set_u8(nvsHandle, setConfig, config.set);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_set_u8(nvsHandle, invertedConfig, config.inverted);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_commit(nvsHandle);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+    nvs_close(nvsHandle);
+    return true;
+}
+
+/*bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
 {
     esp_err_t err;
     nvs_handle_t nvsHandle;
@@ -311,7 +377,7 @@ bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize)
     nvs_close(nvsHandle);
     return true;
 }
-
+*/
 bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 {
 

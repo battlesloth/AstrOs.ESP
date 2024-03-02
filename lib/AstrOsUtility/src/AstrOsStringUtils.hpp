@@ -51,6 +51,22 @@ public:
         std::transform(str2.begin(), str2.end(), str2.begin(), ::tolower);
         return str1 == str2;
     }
+
+    /// @brief Convert a string to an integer, string must be null terminated
+    /// @param val char *
+    /// @param size int
+    /// @return int
+    static int charToInt(char * val, int size)
+    {
+        int i, n;
+        n = 0;
+        for (i = 0; val[i] != '\0'; i++)
+        {
+            n = n * 10 + val[i] - '0';
+        }
+
+        return n;
+    }
 };
 
 #endif

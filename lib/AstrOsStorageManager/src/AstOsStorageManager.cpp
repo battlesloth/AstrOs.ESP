@@ -112,58 +112,84 @@ bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
     return nvsGetControllerFingerprint(fingerprint);
 }
 
+/// @brief This is a bit ugly, but is memeory efficient and works
+/// @param msg
+/// @return
 bool AstrOsStorageManager::saveServoConfig(std::string msg)
 {
-    auto servoConfigs = AstrOsStringUtils::splitString(msg, '|');
-
-    servo_channel config0[16];
-    servo_channel config1[16];
-
-    for (auto cfig : servoConfigs)
-    {
-        auto parts = AstrOsStringUtils::splitString(cfig, ':');
-
-        if (parts.size() != 5)
-        {
-            ESP_LOGE(TAG, "Invalid servo config: %s", cfig.c_str());
-            continue;
-        }
-
-        servo_channel ch;
-        int id = std::stoi(parts[0]);
-        ch.set = std::stoi(parts[1]);
-        ch.minPos = std::stoi(parts[2]);
-        ch.maxPos = std::stoi(parts[3]);
-        ch.inverted = std::stoi(parts[4]);
-
-        if (id < 16)
-        {
-            ch.id = id;
-            config0[id] = ch;
-            ESP_LOGI(TAG, "Servo Config: brd 1, ch: %d", ch.id);
-        }
-        else
-        {
-            ch.id = id - 16;
-            config1[(id - 16)] = ch;
-            ESP_LOGI(TAG, "Servo Config: brd 2, ch: %d", ch.id);
-        }
-    }
-
-    ESP_LOGI(TAG, "Saving Servo Config...");
-
     bool success = true;
 
-    if (!nvsSaveServoConfig(0, config0, 16))
+    int valueCounter = 0;
+    int start = 0;
+
+    for (int i = 0; i < msg.size(); i++)
     {
-        ESP_LOGE(TAG, "Failed to save board 1 servo config");
-        success = false;
+        // if at separator or end of string, convert val to int and reset val
+        if (msg[i] == '|' || i == msg.size() - 1)
+        {
+            // if we are at the end of the string, we need to increment i so we can get the last value
+            if (i == msg.size() - 1)
+            {
+                i++;
+            }
+
+            // is between min and max servo config length?
+            if (i - start < 9 || i - start > 14)
+            {
+                return false;
+            }
+
+            // config must end with a digit
+            if (!isdigit(msg[i - 1]))
+            {
+                return false;
+            }
+
+            servo_channel ch;
+            auto parts = AstrOsStringUtils::splitString(msg.substr(start, i - start), ':');
+
+            // servo config must be 5 parts
+            if (parts.size() != 5)
+            {
+                return false;
+            }
+
+            ch.id = std::stoi(parts[0]);
+            ch.set = std::stoi(parts[1]);
+            ch.minPos = std::stoi(parts[2]);
+            ch.maxPos = std::stoi(parts[3]);
+            ch.inverted = std::stoi(parts[4]);
+
+            if (ch.id == -1 || ch.id > 31)
+            {
+                return false;
+            }
+
+            if (ch.id < 16)
+            {
+                success = nvsSaveServoConfig(0, ch);
+            }
+            else
+            {
+                ch.id = ch.id - 16;
+                success = nvsSaveServoConfig(1, ch);
+            }
+
+            if (!success)
+            {
+                ESP_LOGE(TAG, "Failed to save servo config");
+                return false;
+            }
+
+            start = i + 1;
+            valueCounter++;
+        }
     }
 
-    if (!nvsSaveServoConfig(1, config1, 16))
+    // there should be 32 servo configs
+    if (valueCounter != 32)
     {
-        ESP_LOGE(TAG, "Failed to save board 2 servo config");
-        success = false;
+        return false;
     }
 
     return success;

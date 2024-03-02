@@ -23,8 +23,11 @@ extern "C"
     // gets the configuration fingerprint to ensure config is up to date
     bool nvsGetControllerFingerprint(char *fingerprint);
 
+    // saves a single servo config
+    bool nvsSaveServoConfig(int boardId, servo_channel config);
+
     // saves the servo config
-    bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize);
+    // bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize);
 
     // gets the servo config
     bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize);
