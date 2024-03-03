@@ -11,6 +11,9 @@
 // |----ID-----|-number-|--of---|-type--|-payload size-|---payload---|
 // | uint8[16] | uint8  | uint8 | uint8 |    uint8     |  uint8[180] |
 
+// payload definition
+//  |---validator---|US|---message---|
+
 // ENC - ESP-NOW Contansts
 namespace AstrOsENC
 {
@@ -68,9 +71,9 @@ public:
     ~AstrOsEspNowMessageService();
 
     static std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
-    static std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
+    static std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string validator, std::string message);
     static astros_packet_t parsePacket(uint8_t *packet);
-    static bool validatePacket(astros_packet_t packet);
+    static int validatePacket(astros_packet_t packet);
 };
 
 #endif

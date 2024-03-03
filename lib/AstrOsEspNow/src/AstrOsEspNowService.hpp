@@ -58,9 +58,9 @@ private:
 
     bool handleRegistrationReq(u_int8_t *src);
     bool sendRegistration(u_int8_t *macAddress, std::string name);
-    bool handleRegistration(u_int8_t *src, u_int8_t *payload, size_t len);
+    bool handleRegistration(u_int8_t *src, astros_packet_t packet);
     bool sendRegistrationAck();
-    bool handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len);
+    bool handleRegistrationAck(u_int8_t *src, astros_packet_t packet);
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
     bool handleConfig(astros_packet_t packet);

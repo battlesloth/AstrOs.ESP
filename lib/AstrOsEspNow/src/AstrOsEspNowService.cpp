@@ -347,14 +347,14 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
             break;
         }
         ESP_LOGI(TAG, "Registration received from " MACSTR, MAC2STR(src));
-        return this->handleRegistration(src, packet.payload, packet.payloadSize);
+        return this->handleRegistration(src, packet);
     case AstrOsPacketType::REGISTRATION_ACK:
         if (!isMasterNode)
         {
             break;
         }
         ESP_LOGI(TAG, "Registration ack received from " MACSTR, MAC2STR(src));
-        return this->handleRegistrationAck(src, packet.payload, packet.payloadSize);
+        return this->handleRegistrationAck(src, packet);
     case AstrOsPacketType::POLL:
         if (isMasterNode)
         {
@@ -447,25 +447,25 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
     return true;
 }
 
-bool AstrOsEspNow::handleRegistration(u_int8_t *src, u_int8_t *payload, size_t len)
+bool AstrOsEspNow::handleRegistration(u_int8_t *src, astros_packet_t packet)
 {
     esp_err_t err = ESP_OK;
 
-    std::string payloadStr(reinterpret_cast<char *>(payload), len);
+    std::string payloadStr(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
 
     std::string name;
     std::string mac;
 
     auto parts = AstrOsStringUtils::splitString(payloadStr, UNIT_SEPARATOR);
 
-    if (parts.size() < 3)
+    if (parts.size() < 2)
     {
         ESP_LOGE(TAG, "Invalid registration payload: %s", payloadStr.c_str());
         return false;
     }
 
-    name = parts[1];
-    mac = parts[2];
+    name = parts[0];
+    mac = parts[1];
 
     if (name.empty() || mac.empty())
     {
@@ -537,20 +537,20 @@ bool AstrOsEspNow::sendRegistrationAck()
     return result;
 }
 
-bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, u_int8_t *payload, size_t len)
+bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, astros_packet_t packet)
 {
-    std::string payloadStr(reinterpret_cast<char *>(payload), len);
+    std::string payloadStr(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
 
     std::vector<std::string> parts = AstrOsStringUtils::splitString(payloadStr, UNIT_SEPARATOR);
 
-    if (parts.size() < 3)
+    if (parts.size() < 2)
     {
         ESP_LOGE(TAG, "Invalid registration ack payload: %s", payloadStr.c_str());
         return false;
     }
 
-    name = parts[1];
-    mac = parts[2];
+    name = parts[0];
+    mac = parts[1];
 
     if (name.empty() || mac.empty())
     {
@@ -613,7 +613,7 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     }
 
     std::stringstream ss;
-    ss << this->name << UNIT_SEPARATOR << this->fingerprint;
+    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
     astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
@@ -635,14 +635,14 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 4 || parts[0] != "POLL_ACK")
+    if (parts.size() < 3)
     {
         return false;
     }
 
-    auto padawanMac = parts[1];
-    auto padawan = parts[2];
-    auto fingerprint = parts[3];
+    auto padawanMac = parts[0];
+    auto padawan = parts[1];
+    auto fingerprint = parts[2];
 
     bool found = false;
 
@@ -792,15 +792,20 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
         payload = std::string((char *)packet.payload, packet.payloadSize);
     }
 
+    // 0 is dest mac, 1 is orgination msg id, 2 is message
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    auto idSize = parts[1].size() + 1;
+    auto configSize = parts[2].size() + 1;
+
     astros_interface_response_t response = {
         .type = AstrOsInterfaceResponseType::SET_CONFIG,
-        .originationMsgId = (char *)malloc(16),
+        .originationMsgId = (char *)malloc(idSize),
         .peerMac = nullptr,
         .peerName = nullptr,
-        .message = (char *)malloc(payload.size() + 1)};
+        .message = (char *)malloc(configSize)};
 
-    memcpy(response.originationMsgId, packet.id, 16);
-    memcpy(response.message, payload.c_str(), payload.size() + 1);
+    memcpy(response.originationMsgId, parts[1].c_str(), idSize);
+    memcpy(response.message, parts[2].c_str(), configSize);
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
     {
@@ -838,7 +843,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 4)
+    if (parts.size() < 3)
     {
         ESP_LOGE(TAG, "Invalid config ack/nak payload: %s", payload.c_str());
         return false;
@@ -849,14 +854,14 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
     astros_interface_response_t response = {
         .type = responseType,
         .originationMsgId = (char *)malloc(16),
-        .peerMac = (char *)malloc(parts[1].size() + 1),
-        .peerName = (char *)malloc(parts[2].size() + 1),
-        .message = (char *)malloc(parts[3].size() + 1)};
+        .peerMac = (char *)malloc(parts[0].size() + 1),
+        .peerName = (char *)malloc(parts[1].size() + 1),
+        .message = (char *)malloc(parts[2].size() + 1)};
 
     memcpy(response.originationMsgId, packet.id, 16);
-    memcpy(response.peerMac, parts[1].c_str(), parts[1].size() + 1);
-    memcpy(response.peerName, parts[2].c_str(), parts[2].size() + 1);
-    memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
+    memcpy(response.peerMac, parts[0].c_str(), parts[1].size() + 1);
+    memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
+    memcpy(response.message, parts[2].c_str(), parts[3].size() + 1);
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
     {
@@ -874,10 +879,13 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
  * Common Methods
  *******************************************/
 
+/// @brief adds the payload to the packet tracker. When getting the
+/// @param packet
+/// @return if the message is complete, it returns the message, otherwise it returns an empty string.
 std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
 {
-    std::string msgId = std::string((char *)packet.id, 16);
-    std::string payload = std::string((char *)packet.payload, packet.payloadSize);
+    auto msgId = std::string((char *)packet.id, 16);
+    auto payload = std::string((char *)packet.payload, packet.payloadSize);
 
     PacketData packetData = {
         .packetNumber = packet.packetNumber,
