@@ -344,7 +344,7 @@ static void pollingTimerCallback(void *arg)
     if (isMasterNode && !discoveryMode)
     {
         queue_espnow_msg_t msg;
-        msg.data = (uint8_t *)malloc(0);
+        msg.data = nullptr;
 
         if (!polling)
         {
@@ -355,6 +355,7 @@ static void pollingTimerCallback(void *arg)
             AstrOs_Storage.getControllerFingerprint(fingerprint);
             auto msg = AstrOsSerialMessageService::getPollAck("00:00:00:00:00:00", "master", std::string(fingerprint));
             auto size = msg.size();
+            free(fingerprint);
 
             queue_msg_t serialMsg;
             serialMsg.message_id = 1;
@@ -378,20 +379,18 @@ static void pollingTimerCallback(void *arg)
         if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
         {
             ESP_LOGW(TAG, "Send espnow queue fail");
-            free(msg.data);
         }
     }
     else if (!isMasterNode && discoveryMode)
     {
         queue_espnow_msg_t msg;
-        msg.data = (uint8_t *)malloc(0);
+        msg.data = nullptr;
 
         msg.eventType = SEND_REGISTRAION_REQ;
 
         if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
         {
             ESP_LOGW(TAG, "Send espnow queue fail");
-            free(msg.data);
         }
     }
 }
