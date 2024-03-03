@@ -116,6 +116,12 @@ bool AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)
         return memcmp(packet.payload, AstrOsENC::POLL, strlen(AstrOsENC::POLL)) == 0;
     case AstrOsPacketType::POLL_ACK:
         return memcmp(packet.payload, AstrOsENC::POLL_ACK, strlen(AstrOsENC::POLL_ACK)) == 0;
+    case AstrOsPacketType::CONFIG:
+        return memcmp(packet.payload, AstrOsENC::CONFIG, strlen(AstrOsENC::CONFIG)) == 0;
+    case AstrOsPacketType::CONFIG_ACK:
+        return memcmp(packet.payload, AstrOsENC::CONFIG_ACK, strlen(AstrOsENC::CONFIG_ACK)) == 0;
+    case AstrOsPacketType::CONFIG_NAK:
+        return memcmp(packet.payload, AstrOsENC::CONFIG_NAK, strlen(AstrOsENC::CONFIG_NAK)) == 0;
     default:
         return false;
     }

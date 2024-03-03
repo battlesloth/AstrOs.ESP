@@ -377,6 +377,7 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         ESP_LOGI(TAG, "Config ack/nak received from " MACSTR ", ", MAC2STR(src));
         return this->handleConfigAckNak(packet);
     default:
+        ESP_LOGE(TAG, "Unknown packet type received");
         return false;
     }
 
