@@ -114,8 +114,10 @@ void ServoModule::LoadServoConfig()
             // convert from micorseconds to PWM
             // based on 500 => 105, 2500 => 505 as 20ms
             // which works for the servos I tested with
-            channels1[i].minPos = (int)((channels1[i].minPos * 0.205) - 2.5);
-            channels1[i].maxPos = (int)((channels1[i].maxPos * 0.205) - 2.5);
+            min = (int)((channels0[i].minPos * 0.205) - 2.5);
+            max = (int)((channels0[i].maxPos * 0.205) - 2.5);
+            channels1[i].minPos = min < 0 ? 0 : min;
+            channels1[i].maxPos = max < 0 ? 0 : max;
 
             // zero on start up
             if (channels1[i].inverted)

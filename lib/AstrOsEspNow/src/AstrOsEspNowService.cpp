@@ -728,6 +728,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
 void AstrOsEspNow::sendConfigUpdate(std::string peer, std::string msgId, std::string msg)
 {
+    bool found = false;
     for (auto &p : peers)
     {
         if (memcmp(p.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
@@ -742,11 +743,15 @@ void AstrOsEspNow::sendConfigUpdate(std::string peer, std::string msgId, std::st
             continue;
         }
 
+        found = true;
+
         uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
         memcpy(destMac, p.mac_addr, ESP_NOW_ETH_ALEN);
 
         std::stringstream ss;
         ss << msgId << UNIT_SEPARATOR << msg;
+
+        ESP_LOGI(TAG, "Sending config update to " MACSTR, MAC2STR(destMac));
 
         auto data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::CONFIG, peer, ss.str());
 
@@ -761,6 +766,11 @@ void AstrOsEspNow::sendConfigUpdate(std::string peer, std::string msgId, std::st
         }
 
         free(destMac);
+    }
+
+    if (!found)
+    {
+        ESP_LOGW(TAG, "Peer not found in peer for config send: %s", peer.c_str());
     }
 }
 

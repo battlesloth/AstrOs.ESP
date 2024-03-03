@@ -25,6 +25,9 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(
     case AstrOsPacketType::POLL_ACK:
         return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK) + UNIT_SEPARATOR + mac + UNIT_SEPARATOR + message);
         break;
+    case AstrOsPacketType::CONFIG:
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG) + UNIT_SEPARATOR + mac + message);
+        break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, message);
         break;
