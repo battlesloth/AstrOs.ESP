@@ -360,14 +360,14 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         {
             break;
         }
-        ESP_LOGI(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGD(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
         if (!isMasterNode)
         {
             break;
         }
-        ESP_LOGI(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGD(TAG, "Poll ACK received from " MACSTR ", ", MAC2STR(src));
         return this->handlePollAck(packet);
     case AstrOsPacketType::CONFIG:
         ESP_LOGI(TAG, "Config update received from " MACSTR ", ", MAC2STR(src));
@@ -659,7 +659,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     if (!found)
     {
-        ESP_LOGI(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
+        ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
     }
 

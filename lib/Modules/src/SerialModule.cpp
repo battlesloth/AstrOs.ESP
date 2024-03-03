@@ -52,8 +52,6 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
         return result;
     }
 
-    ESP_LOGI(TAG, "%d:%d:%d", tx[1], rx[1], baud[1]);
-
     result = SerialModule::InstallSerial(UART_NUM_2, tx[1], rx[1], baud[1]);
 
     // softSerial = sw_new((gpio_num_t)tx[2], (gpio_num_t)rx[2], true, 512);
@@ -64,8 +62,6 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
 
 esp_err_t SerialModule::InstallSerial(uart_port_t port, int tx, int rx, int baud)
 {
-
-    ESP_LOGI(TAG, "UART tx:%d,rx:%d", tx, rx);
     esp_err_t err = ESP_OK;
 
     const uart_config_t config = {
@@ -100,7 +96,7 @@ esp_err_t SerialModule::InstallSerial(uart_port_t port, int tx, int rx, int baud
 
 void SerialModule::SendCommand(uint8_t *cmd)
 {
-    ESP_LOGI(TAG, "Sending Command => %s", cmd);
+    ESP_LOGD(TAG, "Sending Command => %s", cmd);
 
     auto command = SerialCommand(std::string(reinterpret_cast<char *>(cmd)));
 
@@ -141,7 +137,7 @@ void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
             }
 
             const int txBytes = uart_write_bytes(port, data, size);
-            ESP_LOGI(TAG, "Wrote %d bytes", txBytes);
+            ESP_LOGD(TAG, "Wrote %d bytes", txBytes);
             sent = true;
             xSemaphoreGive(serialMutex);
         }

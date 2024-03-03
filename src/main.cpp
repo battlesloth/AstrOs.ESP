@@ -537,7 +537,11 @@ void interfaceResponseQueueTask(void *arg)
     {
         if (xQueueReceive(serverResponseQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Server Response Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Server Response Queue Stack HWM: %d", highWaterMark);
+            }
 
             switch (msg.type)
             {
@@ -596,7 +600,11 @@ void astrosRxTask(void *arg)
 
         if (rxBytes > 0)
         {
-            ESP_LOGI(TAG, "AstrOs RX Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "AstrOs RX Stack HWM: %d", highWaterMark);
+            }
 
             for (int i = 0; i < rxBytes; i++)
             {
@@ -637,7 +645,11 @@ void serviceQueueTask(void *arg)
     {
         if (xQueueReceive(svcQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Service Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Service Queue Stack HWM: %d", highWaterMark);
+            }
 
             switch (msg.cmd)
             {
@@ -699,7 +711,12 @@ void animationQueueTask(void *arg)
     {
         if (xQueueReceive(animationQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Animation Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Animation Queue Stack HWM: %d", highWaterMark);
+            }
+
             switch (msg.cmd)
             {
             case ANIMATION_COMMAND::PANIC_STOP:
@@ -790,7 +807,11 @@ void serialQueueTask(void *arg)
     {
         if (xQueueReceive(serialQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Serial Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Serial Queue Stack HWM: %d", highWaterMark);
+            }
 
             if (msg.message_id == 0)
             {
@@ -821,8 +842,13 @@ void servoQueueTask(void *arg)
     {
         if (xQueueReceive(pwmQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Servo Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "Servo Command received on queue => %s", msg.data);
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Servo Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
             ServoMod.QueueCommand(msg.data);
 
             free(msg.data);
@@ -845,8 +871,14 @@ void i2cQueueTask(void *arg)
     {
         if (xQueueReceive(i2cQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "I2C Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "I2C Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+
             if (msg.message_id == 0)
             {
                 I2cMod.SendCommand(msg.data);
@@ -878,7 +910,11 @@ void espnowQueueTask(void *arg)
     {
         if (xQueueReceive(espnowQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "ESP-NOW Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "ESP-NOW Queue Stack HWM: %d", highWaterMark);
+            }
 
             switch (msg.eventType)
             {
@@ -899,7 +935,7 @@ void espnowQueueTask(void *arg)
             }
             case ESPNOW_SEND:
             {
-                ESP_LOGI(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
+                ESP_LOGD(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
 
                 if (esp_now_send(msg.dest, msg.data, msg.data_len) != ESP_OK)
                 {
@@ -912,7 +948,7 @@ void espnowQueueTask(void *arg)
             {
                 if (IS_BROADCAST_ADDR(msg.dest))
                 {
-                    ESP_LOGI(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
+                    ESP_LOGD(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     // only handle broadcast messages in discovery mode
                     if (!discoveryMode)
@@ -924,13 +960,13 @@ void espnowQueueTask(void *arg)
                 }
                 else if (esp_now_is_peer_exist(msg.src))
                 {
-                    ESP_LOGI(TAG, "Received unicast data from peer: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
+                    ESP_LOGD(TAG, "Received unicast data from peer: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     AstrOs_EspNow.handleMessage(msg.src, msg.data, msg.data_len);
                 }
                 else
                 {
-                    ESP_LOGI(TAG, "Peer does not exist:" MACSTR, MAC2STR(msg.src));
+                    ESP_LOGW(TAG, "Peer does not exist:" MACSTR, MAC2STR(msg.src));
                 }
                 break;
             }
@@ -977,12 +1013,12 @@ static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t st
         return;
     }
 
-    ESP_LOGI(TAG, "Sending data to " MACSTR " status: %d", MAC2STR(mac_addr), status);
+    ESP_LOGD(TAG, "Sending data to " MACSTR " status: %d", MAC2STR(mac_addr), status);
 }
 
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
 {
-    ESP_LOGI(TAG, "espnowRecvCallback called");
+    ESP_LOGD(TAG, "espnowRecvCallback called");
 
     queue_espnow_msg_t msg;
 
@@ -1051,8 +1087,6 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 static void handleSetConfig(astros_interface_response_t msg)
 {
     auto success = AstrOs_Storage.saveServoConfig(msg.message);
-
-    ESP_LOGI(TAG, "Server Response Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
 
     std::string fingerprint;
 
