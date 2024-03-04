@@ -1114,10 +1114,10 @@ static void handleSetConfig(astros_interface_response_t msg)
         }
     }
 
-    auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
-
     if (isMasterNode)
     {
+        auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+
         AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(),
                                                         "master", AstrOs_EspNow.getFingerprint());
     }

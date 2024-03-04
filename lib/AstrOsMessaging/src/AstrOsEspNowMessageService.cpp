@@ -28,6 +28,12 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(
     case AstrOsPacketType::CONFIG:
         return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG), mac + UNIT_SEPARATOR + message);
         break;
+    case AstrOsPacketType::CONFIG_ACK:
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG_ACK), mac + UNIT_SEPARATOR + message);
+        break;
+    case AstrOsPacketType::CONFIG_NAK:
+        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG_NAK), mac + UNIT_SEPARATOR + message);
+        break;
     default:
         return AstrOsEspNowMessageService::generatePackets(type, "", message);
         break;

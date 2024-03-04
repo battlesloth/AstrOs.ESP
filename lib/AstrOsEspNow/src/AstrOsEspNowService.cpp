@@ -826,7 +826,9 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
-    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK, this->getMac(), ss.str())[0];
+    auto ackNak = success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK;
+
+    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(ackNak, this->getMac(), ss.str())[0];
 
     if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
     {
