@@ -824,7 +824,7 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     this->getMasterMac(destMac);
 
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
+    ss << this->getName() << UNIT_SEPARATOR << msgId << UNIT_SEPARATOR << this->getFingerprint();
 
     auto ackNak = success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK;
 
@@ -845,7 +845,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 3)
+    if (parts.size() < 4)
     {
         ESP_LOGE(TAG, "Invalid config ack/nak payload: %s", payload.c_str());
         return false;
@@ -855,12 +855,12 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     astros_interface_response_t response = {
         .type = responseType,
-        .originationMsgId = (char *)malloc(16),
+        .originationMsgId = (char *)malloc(parts[2].size() + 1),
         .peerMac = (char *)malloc(parts[0].size() + 1),
         .peerName = (char *)malloc(parts[1].size() + 1),
-        .message = (char *)malloc(parts[2].size() + 1)};
+        .message = (char *)malloc(parts[3].size() + 1)};
 
-    memcpy(response.originationMsgId, packet.id, 16);
+    memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
     memcpy(response.peerMac, parts[0].c_str(), parts[1].size() + 1);
     memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
     memcpy(response.message, parts[2].c_str(), parts[3].size() + 1);
