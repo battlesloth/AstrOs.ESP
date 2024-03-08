@@ -251,7 +251,7 @@ bool AstrOsEspNow::cachePeer(u_int8_t *macAddress, std::string name)
     {
         if (memcmp(peer.mac_addr, macAddress, ESP_NOW_ETH_ALEN) == 0)
         {
-            ESP_LOGI(TAG, "Peer already cached");
+            ESP_LOGW(TAG, "Peer already cached");
             return true;
         }
     }
@@ -843,7 +843,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 {
     auto payload = std::string((char *)packet.payload, packet.payloadSize);
 
-    ESP_LOGI(TAG, "Config ack/nak received: %s", payload.c_str());
+    ESP_LOGD(TAG, "Config ack/nak received: %s", payload.c_str());
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
@@ -855,7 +855,6 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     auto responseType = packet.packetType == AstrOsPacketType::CONFIG_ACK ? AstrOsInterfaceResponseType::SEND_CONFIG_ACK : AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
 
-    
     astros_interface_response_t response = {
         .type = responseType,
         .originationMsgId = (char *)malloc(parts[2].size() + 1),
@@ -867,9 +866,6 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
     memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
     memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
     memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
-
-    ESP_LOGI(TAG, "Test: %s", response.peerMac);
-
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
     {
