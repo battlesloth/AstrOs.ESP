@@ -163,15 +163,15 @@ void app_main()
 {
     init();
 
-    xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL);
-    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
-    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
-    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
-    xTaskCreate(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL);
+    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
+    xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL, 1);
+    xTaskCreatePinnedToCore(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
+    xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
+    xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
 
     initTimers();
 }

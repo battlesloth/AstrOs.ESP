@@ -14,6 +14,7 @@ class ServoModule
 private:
     void SetCommandByBoard(servo_channel *servos, ServoCommand *cmd);
     void MoveServoByBoard(Pca9685 *board, servo_channel *servos, int idx);
+    bool loading;
 
 public:
     ServoModule();

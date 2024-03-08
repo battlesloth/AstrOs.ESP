@@ -146,6 +146,8 @@ void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType typ
 {
     auto response = AstrOsSerialMessageService::getBasicAckNak(type, msgId, mac, name, payload);
 
+    ESP_LOGI(TAG, "Sending response: %s", response.c_str());
+
     queue_msg_t serialMsg;
 
     serialMsg.message_id = 1;
