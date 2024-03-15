@@ -578,7 +578,7 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
             {
                 auto responseType = getSerialMessageType(msg.type);
-                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, "");
                 break;
             }
             default:
@@ -1178,8 +1178,7 @@ static void handleSaveScript(astros_interface_response_t msg)
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
 
-        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(),
-                                                        "master", AstrOs_EspNow.getFingerprint());
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
     }
     else
     {

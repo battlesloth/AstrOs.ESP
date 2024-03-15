@@ -360,28 +360,28 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         {
             break;
         }
-        ESP_LOGD(TAG, "Poll received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGD(TAG, "Poll received from " MACSTR, MAC2STR(src));
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
         if (!isMasterNode)
         {
             break;
         }
-        ESP_LOGD(TAG, "Poll ACK received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGD(TAG, "Poll ACK received from " MACSTR, MAC2STR(src));
         return this->handlePollAck(packet);
     case AstrOsPacketType::CONFIG:
-        ESP_LOGI(TAG, "Config update received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGI(TAG, "Config update received from " MACSTR, MAC2STR(src));
         return this->handleConfig(packet);
     case AstrOsPacketType::CONFIG_ACK:
     case AstrOsPacketType::CONFIG_NAK:
-        ESP_LOGI(TAG, "Config ack/nak received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGI(TAG, "Config ack/nak received from " MACSTR, MAC2STR(src));
         return this->handleConfigAckNak(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY:
-        ESP_LOGI(TAG, "Script deploy received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGI(TAG, "Script deploy received from " MACSTR, MAC2STR(src));
         return this->handleScriptDeploy(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        ESP_LOGI(TAG, "Script deploy ack/nak received from " MACSTR ", ", MAC2STR(src));
+        ESP_LOGI(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
         return this->handleBasicAckNak(packet);
     default:
         ESP_LOGE(TAG, "Unknown packet type received");
@@ -873,7 +873,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
     memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
-    memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
+    memcpy(response.peerName, parts[1].c_str(), parts[1].size() + 1);
     memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
@@ -1044,12 +1044,11 @@ bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
         .originationMsgId = (char *)malloc(parts[2].size() + 1),
         .peerMac = (char *)malloc(parts[0].size() + 1),
         .peerName = (char *)malloc(parts[1].size() + 1),
-        .message = (char *)malloc(parts[3].size() + 1)};
+        .message = nullptr};
 
     memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
     memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
-    memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
-    memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
+    memcpy(response.peerName, parts[1].c_str(), parts[1].size() + 1);
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
     {
@@ -1057,7 +1056,6 @@ bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
         free(response.originationMsgId);
         free(response.peerMac);
         free(response.peerName);
-        free(response.message);
     }
 
     return true;
