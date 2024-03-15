@@ -201,6 +201,24 @@ int AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)
             validatorLength = strlen(AstrOsENC::CONFIG_NAK) + 1;
         }
         break;
+    case AstrOsPacketType::SCRIPT_DEPLOY:
+        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY, strlen(AstrOsENC::SCRIPT_DEPLOY)) == 0))
+        {
+            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY) + 1;
+        }
+        break;
+    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
+        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY_ACK, strlen(AstrOsENC::SCRIPT_DEPLOY_ACK)) == 0))
+        {
+            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY_ACK) + 1;
+        }
+        break;
+    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
+        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY_NAK, strlen(AstrOsENC::SCRIPT_DEPLOY_NAK)) == 0))
+        {
+            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY_NAK) + 1;
+        }
+        break;
     default:
         break;
     }
