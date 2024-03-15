@@ -43,7 +43,7 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
         this->handleDeployConfig(validation.msgId, message);
         break;
     case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-        ESP_LOGI(TAG, "Received DEPLOY_SCRIPT message");
+        this->handleDeployScript(validation.msgId, message);
         break;
     case AstrOsSerialMessageType::RUN_SCRIPT:
         ESP_LOGI(TAG, "Received RUN_SCRIPT message");
@@ -130,6 +130,72 @@ void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string m
             memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
             memcpy(response.peerMac, msgParts[0].c_str(), peerSize);
             memcpy(response.message, msgParts[3].c_str(), configSize);
+
+            if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+            {
+                ESP_LOGE(TAG, "Failed to send message to handler queue");
+                free(response.originationMsgId);
+                free(response.peerMac);
+                free(response.message);
+            }
+        }
+    }
+}
+
+void AstrOsSerialMsgHandler::handleDeployScript(std::string msgId, std::string message)
+{
+    ESP_LOGD(TAG, "Received DEPLOY_SCRIPT message");
+
+    auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
+    auto controllers = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
+
+    auto msgIdSize = msgId.size() + 1;
+
+    for (auto controller : controllers)
+    {
+        auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
+        if (msgParts.size() != 4)
+        {
+            ESP_LOGE(TAG, "Invalid script: %s", controller.c_str());
+            continue;
+        }
+
+        auto script = msgParts[2] + UNIT_SEPARATOR + msgParts[3];
+
+        auto peerSize = msgParts[0].size() + 1;
+        auto scriptSize = script.size() + 1;
+
+        if (msgParts[0] == "00:00:00:00:00:00")
+        {
+            astros_interface_response_t response = {
+                .type = AstrOsInterfaceResponseType::SAVE_SCRIPT,
+                .originationMsgId = (char *)malloc(msgIdSize),
+                .peerMac = nullptr,
+                .peerName = nullptr,
+                .message = (char *)malloc(scriptSize)};
+
+            memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+            memcpy(response.message, script.c_str(), scriptSize);
+
+            if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+            {
+                ESP_LOGE(TAG, "Failed to send message to handler queue");
+                free(response.originationMsgId);
+                free(response.message);
+            }
+        }
+        else
+        {
+            astros_interface_response_t response = {
+                .type = AstrOsInterfaceResponseType::SEND_SCRIPT,
+                .originationMsgId = (char *)malloc(msgIdSize),
+                .peerMac = (char *)malloc(peerSize),
+                .peerName = nullptr,
+                .message = (char *)malloc(scriptSize)};
+
+            memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+            memcpy(response.peerMac, msgParts[0].c_str(), peerSize);
+            memcpy(response.message, script.c_str(), scriptSize);
 
             if (xQueueSend(this->handlerQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
             {

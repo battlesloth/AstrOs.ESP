@@ -27,6 +27,9 @@ namespace AstrOsENC
     constexpr const static char *CONFIG = "CONFIG";
     constexpr const static char *CONFIG_ACK = "CONFIG_ACK";
     constexpr const static char *CONFIG_NAK = "CONFIG_NAK";
+    constexpr const static char *SCRIPT_DEPLOY = "SCRIPT_DEPLOY";
+    constexpr const static char *SCRIPT_DEPLOY_ACK = "SCRIPT_DEPLOY_ACK";
+    constexpr const static char *SCRIPT_DEPLOY_NAK = "SCRIPT_DEPLOY_NAK";
 }
 
 enum class AstrOsPacketType
@@ -40,8 +43,10 @@ enum class AstrOsPacketType
     POLL_ACK,
     CONFIG,
     CONFIG_ACK,
-    CONFIG_NAK
-
+    CONFIG_NAK,
+    SCRIPT_DEPLOY,
+    SCRIPT_DEPLOY_ACK,
+    SCRIPT_DEPLOY_NAK
 };
 
 typedef struct

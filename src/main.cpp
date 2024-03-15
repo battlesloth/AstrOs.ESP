@@ -148,9 +148,12 @@ void i2cQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
 // handlers
+static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
 static void handleRegistrationSync(astros_interface_response_t msg);
 static void handleSetConfig(astros_interface_response_t msg);
 static void handleSendConfig(astros_interface_response_t msg);
+static void handleSaveScript(astros_interface_response_t msg);
+static void handleSendScript(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
 
@@ -559,15 +562,22 @@ void interfaceResponseQueueTask(void *arg)
                 handleSendConfig(msg);
                 break;
             }
-            case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT:
             {
-                auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
-                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                handleSaveScript(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_SCRIPT:
+            {
+                handleSendScript(msg);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
+            case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
             {
-                auto responseType = AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+                auto responseType = getSerialMessageType(msg.type);
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
                 break;
             }
@@ -1051,6 +1061,22 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
 /**********************************
  * Interface Response Methods
  *********************************/
+static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type)
+{
+    switch (type)
+    {
+    case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+        return AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
+    case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
+        return AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+    case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
+        return AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK;
+    case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
+        return AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
+    default:
+        return AstrOsSerialMessageType::UNKNOWN;
+    }
+}
 
 static void handleRegistrationSync(astros_interface_response_t msg)
 {
@@ -1130,4 +1156,39 @@ static void handleSetConfig(astros_interface_response_t msg)
 static void handleSendConfig(astros_interface_response_t msg)
 {
     AstrOs_EspNow.sendConfigUpdate(msg.peerMac, msg.originationMsgId, msg.message);
+}
+
+static void handleSaveScript(astros_interface_response_t msg)
+{
+    auto message = std::string(msg.message);
+    auto parts = AstrOsStringUtils::splitString(message, '=');
+
+    auto success = false;
+
+    if (parts.size() != 2)
+    {
+        ESP_LOGE(TAG, "Invalid script message: %s", message.c_str());
+    }
+    else
+    {
+        success = AstrOs_Storage.saveFile(parts[0], parts[1]);
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(),
+                                                        "master", AstrOs_EspNow.getFingerprint());
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::SCRIPT_DEPLOY_ACK : AstrOsPacketType::SCRIPT_DEPLOY_NAK;
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+    }
+}
+
+static void handleSendScript(astros_interface_response_t msg)
+{
+    AstrOs_EspNow.sendScriptDeploy(msg.peerMac, msg.originationMsgId, msg.message);
 }

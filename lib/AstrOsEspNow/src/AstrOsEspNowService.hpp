@@ -3,6 +3,7 @@
 
 #include "AstrOsEspNowUtility.h"
 #include "AstrOsMessaging.hpp"
+#include <AstrOsInterfaceResponseMsg.hpp>
 #include <esp_err.h>
 
 // needed for QueueHandle_t, must be in this order
@@ -65,6 +66,10 @@ private:
     bool handlePollAck(astros_packet_t packet);
     bool handleConfig(astros_packet_t packet);
     bool handleConfigAckNak(astros_packet_t packet);
+    bool handleScriptDeploy(astros_packet_t packet);
+
+    bool handleBasicAckNak(astros_packet_t packet);
+    AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);
 
     std::string handleMultiPacketMessage(astros_packet_t packet);
     esp_err_t wifiInit(void);
@@ -81,6 +86,9 @@ public:
     void pollRepsonseTimeExpired();
     void sendConfigUpdate(std::string peer, std::string msgId, std::string msg);
     void sendConfigAckNak(std::string msgId, bool success);
+    void sendScriptDeploy(std::string peer, std::string msgId, std::string msg);
+
+    void sendBasicAckNak(std::string msgId, AstrOsPacketType type);
 
     std::string getMac();
     std::string getName();

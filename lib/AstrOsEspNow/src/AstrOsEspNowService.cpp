@@ -376,6 +376,13 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
     case AstrOsPacketType::CONFIG_NAK:
         ESP_LOGI(TAG, "Config ack/nak received from " MACSTR ", ", MAC2STR(src));
         return this->handleConfigAckNak(packet);
+    case AstrOsPacketType::SCRIPT_DEPLOY:
+        ESP_LOGI(TAG, "Script deploy received from " MACSTR ", ", MAC2STR(src));
+        return this->handleScriptDeploy(packet);
+    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
+    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
+        ESP_LOGI(TAG, "Script deploy ack/nak received from " MACSTR ", ", MAC2STR(src));
+        return this->handleBasicAckNak(packet);
     default:
         ESP_LOGE(TAG, "Unknown packet type received");
         return false;
@@ -853,7 +860,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
         return false;
     }
 
-    auto responseType = packet.packetType == AstrOsPacketType::CONFIG_ACK ? AstrOsInterfaceResponseType::SEND_CONFIG_ACK : AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
+    auto responseType = this->getInterfaceResponseType(packet.packetType);
 
     astros_interface_response_t response = {
         .type = responseType,
@@ -880,10 +887,190 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 }
 
 /*******************************************
+ * Script Deployment methods
+ *******************************************/
+
+void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::string msg)
+{
+    bool found = false;
+    for (auto &p : peers)
+    {
+        if (memcmp(p.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
+        {
+            continue;
+        }
+
+        std::string peerMac = AstrOsStringUtils::macToString(p.mac_addr);
+
+        if (peerMac != peer)
+        {
+            continue;
+        }
+
+        found = true;
+
+        uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+        memcpy(destMac, p.mac_addr, ESP_NOW_ETH_ALEN);
+
+        std::stringstream ss;
+        ss << msgId << UNIT_SEPARATOR << msg;
+
+        ESP_LOGI(TAG, "Sending script deploy to " MACSTR, MAC2STR(destMac));
+
+        auto data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::SCRIPT_DEPLOY, peer, ss.str());
+
+        for (auto &packet : data)
+        {
+            if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+            {
+                ESP_LOGE(TAG, "Error sending script deploy to " MACSTR, MAC2STR(destMac));
+            }
+
+            free(packet.data);
+        }
+
+        free(destMac);
+    }
+
+    if (!found)
+    {
+        ESP_LOGW(TAG, "Peer not found in peer for script deploy send: %s", peer.c_str());
+    }
+}
+
+bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id, 2 is message
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    auto idSize = parts[1].size() + 1;
+    auto configSize = parts[2].size() + 1;
+
+    astros_interface_response_t response = {
+        .type = AstrOsInterfaceResponseType::SAVE_SCRIPT,
+        .originationMsgId = (char *)malloc(idSize),
+        .peerMac = nullptr,
+        .peerName = nullptr,
+        .message = (char *)malloc(configSize)};
+
+    memcpy(response.originationMsgId, parts[1].c_str(), idSize);
+    memcpy(response.message, parts[2].c_str(), configSize);
+
+    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    {
+        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
+        free(response.originationMsgId);
+        free(response.message);
+    }
+
+    return true;
+}
+
+/*******************************************
  * Common Methods
  *******************************************/
 
-/// @brief adds the payload to the packet tracker. When getting the
+/// @brief Sends a basic ack or nak to the master node for the provided packet type.
+/// @param msgId
+/// @param type
+void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type)
+{
+    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+
+    this->getMasterMac(destMac);
+
+    std::stringstream ss;
+    ss << this->getName() << UNIT_SEPARATOR << msgId;
+
+    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(type, this->getMac(), ss.str())[0];
+
+    if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Error sending basic ack/nak for type %d to " MACSTR, (int)type, MAC2STR(destMac));
+    }
+
+    free(packet.data);
+    free(destMac);
+}
+
+/// @brief Handles a basic ack or nak packet and sends the response to the interface handler queue.
+/// @param packet
+/// @return
+bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
+{
+    auto payload = std::string((char *)packet.payload, packet.payloadSize);
+
+    ESP_LOGD(TAG, "Basic ack/nak received: %s", payload.c_str());
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid basic ack/nak payload: %s", payload.c_str());
+        return false;
+    }
+
+    auto responseType = this->getInterfaceResponseType(packet.packetType);
+
+    astros_interface_response_t response = {
+        .type = responseType,
+        .originationMsgId = (char *)malloc(parts[2].size() + 1),
+        .peerMac = (char *)malloc(parts[0].size() + 1),
+        .peerName = (char *)malloc(parts[1].size() + 1),
+        .message = (char *)malloc(parts[3].size() + 1)};
+
+    memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
+    memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
+    memcpy(response.peerName, parts[1].c_str(), parts[2].size() + 1);
+    memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
+
+    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    {
+        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
+        free(response.originationMsgId);
+        free(response.peerMac);
+        free(response.peerName);
+        free(response.message);
+    }
+
+    return true;
+}
+
+/// @brief gets the response type for the provided packet type.
+/// @param type
+/// @return
+AstrOsInterfaceResponseType AstrOsEspNow::getInterfaceResponseType(AstrOsPacketType type)
+{
+    switch (type)
+    {
+    case AstrOsPacketType::CONFIG_ACK:
+        return AstrOsInterfaceResponseType::SEND_CONFIG_ACK;
+    case AstrOsPacketType::CONFIG_NAK:
+        return AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
+    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
+        return AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK;
+    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
+        return AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK;
+    default:
+        return AstrOsInterfaceResponseType::UNKOWN;
+    }
+}
+
+/// @brief adds the payload to the packet tracker.
 /// @param packet
 /// @return if the message is complete, it returns the message, otherwise it returns an empty string.
 std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)

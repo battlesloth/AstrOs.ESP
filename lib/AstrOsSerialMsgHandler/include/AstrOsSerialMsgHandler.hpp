@@ -15,6 +15,7 @@ private:
     QueueHandle_t serialQueue;
     void handleRegistrationSync(std::string msgId);
     void handleDeployConfig(std::string msgId, std::string message);
+    void handleDeployScript(std::string msgId, std::string message);
 
 public:
     AstrOsSerialMsgHandler();
