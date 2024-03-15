@@ -1161,7 +1161,7 @@ static void handleSendConfig(astros_interface_response_t msg)
 static void handleSaveScript(astros_interface_response_t msg)
 {
     auto message = std::string(msg.message);
-    auto parts = AstrOsStringUtils::splitString(message, '=');
+    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
 
     auto success = false;
 
