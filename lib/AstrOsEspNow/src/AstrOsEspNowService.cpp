@@ -385,6 +385,8 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         return this->handleBasicAckNak(packet);
     default:
         ESP_LOGE(TAG, "Unknown packet type received");
+        auto test = std::string((char *)data, len);
+        ESP_LOGI(TAG, "packet: %s", test.c_str());
         return false;
     }
 
@@ -955,20 +957,31 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
         payload = std::string((char *)packet.payload, packet.payloadSize);
     }
 
-    // 0 is dest mac, 1 is orgination msg id, 2 is message
+    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId, 3 is message
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 4)
+    {
+        ESP_LOGE(TAG, "Invalid script deploy payload: %s", payload.c_str());
+        return false;
+    }
     auto idSize = parts[1].size() + 1;
-    auto configSize = parts[2].size() + 1;
+
+    std::stringstream ss;
+    ss << parts[2] << UNIT_SEPARATOR << parts[3];
+
+    auto scriptMsg = ss.str();
+    auto scriptMsgSize = scriptMsg.size() + 1;
 
     astros_interface_response_t response = {
         .type = AstrOsInterfaceResponseType::SAVE_SCRIPT,
         .originationMsgId = (char *)malloc(idSize),
         .peerMac = nullptr,
         .peerName = nullptr,
-        .message = (char *)malloc(configSize)};
+        .message = (char *)malloc(scriptMsgSize)};
 
     memcpy(response.originationMsgId, parts[1].c_str(), idSize);
-    memcpy(response.message, parts[2].c_str(), configSize);
+    memcpy(response.message, scriptMsg.c_str(), scriptMsgSize);
 
     if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
     {
