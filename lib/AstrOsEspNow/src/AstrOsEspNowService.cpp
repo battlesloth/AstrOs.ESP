@@ -890,7 +890,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
  * Script Deployment methods
  *******************************************/
 
-void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::string msg)
+void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::string script)
 {
     bool found = false;
     for (auto &p : peers)
@@ -913,7 +913,7 @@ void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::st
         memcpy(destMac, p.mac_addr, ESP_NOW_ETH_ALEN);
 
         std::stringstream ss;
-        ss << msgId << UNIT_SEPARATOR << msg;
+        ss << msgId << UNIT_SEPARATOR << script;
 
         ESP_LOGI(TAG, "Sending script deploy to " MACSTR, MAC2STR(destMac));
 
