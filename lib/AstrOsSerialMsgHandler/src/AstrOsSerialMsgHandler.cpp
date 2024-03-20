@@ -230,9 +230,18 @@ void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<a
     }
 }
 
-void AstrOsSerialMsgHandler::sendPollAck(std::string mac, std::string name, std::string fingerprint)
+void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck)
 {
-    auto response = this->msgService.getPollAck(mac, name, fingerprint);
+    std::string response;
+
+    if (isAck)
+    {
+        response = this->msgService.getPollAck(mac, name, fingerprint);
+    }
+    else
+    {
+        response = this->msgService.getPollNak(mac, name);
+    }
 
     ESP_LOGD(TAG, "Sending poll ack: %s", response.c_str());
 

@@ -126,7 +126,7 @@ std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::
 /// @param macAddress mac address of the peer
 /// @param name peer controller
 /// @return serial message
-std::string AstrOsSerialMessageService::getPollNak(std::string macAddress, char *controller)
+std::string AstrOsSerialMessageService::getPollNak(std::string macAddress, std::string controller)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_NAK, "na");

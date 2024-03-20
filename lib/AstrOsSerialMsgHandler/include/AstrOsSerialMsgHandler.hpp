@@ -27,7 +27,7 @@ public:
     void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue);
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
-    void sendPollAck(std::string mac, std::string name, std::string fingerprint);
+    void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck);
     void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name, std::string payload);
 };
 

@@ -663,18 +663,14 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawan = parts[1];
     auto fingerprint = parts[2];
 
-    bool found = false;
-
     if (!this->findPeer(padawanMac))
     {
         ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
     }
 
-    queue_svc_cmd_t cmd;
-
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK,
-                               padawanMac, padawan, "", "");
+                               padawanMac, padawan, "", fingerprint);
 
     return true;
 }

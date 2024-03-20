@@ -357,8 +357,8 @@ static void pollingTimerCallback(void *arg)
 
             char *fingerprint = (char *)malloc(37);
             AstrOs_Storage.getControllerFingerprint(fingerprint);
-            AstrOs_SerialMsgHandler.sendPollAck("00:00:00:00:00:00", "master",
-                                                std::string(fingerprint));
+            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master",
+                                                   std::string(fingerprint), true);
         }
         else
         {
@@ -536,11 +536,12 @@ void interfaceResponseQueueTask(void *arg)
             {
             case AstrOsInterfaceResponseType::SEND_POLL_ACK:
             {
-
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, msg.message, true);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_POLL_NAK:
             {
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", false);
                 break;
             }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
