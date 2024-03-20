@@ -243,8 +243,6 @@ void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, s
         response = this->msgService.getPollNak(mac, name);
     }
 
-    ESP_LOGD(TAG, "Sending poll ack: %s", response.c_str());
-
     queue_msg_t serialMsg;
 
     serialMsg.message_id = 1;

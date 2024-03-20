@@ -663,14 +663,14 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawan = parts[1];
     auto fingerprint = parts[2];
 
-    if (!this->findPeer(padawanMac))
+    if (!this->isValidPollPeer(padawanMac))
     {
         ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
     }
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK,
-                               padawanMac, padawan, "", fingerprint);
+                               "", padawanMac, padawan, fingerprint);
 
     return true;
 }
@@ -695,7 +695,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
             auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
             this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK,
-                                       macStr, peer.name, "", "");
+                                       "", macStr, peer.name, "");
         }
         else
         {
@@ -768,7 +768,7 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
     }
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG,
-                               "", "", parts[1], parts[2]);
+                               parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -866,7 +866,7 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
     ss << parts[2] << UNIT_SEPARATOR << parts[3];
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT,
-                               "", "", parts[1], ss.str());
+                               parts[1], "", "", ss.str());
 
     return true;
 }
@@ -918,7 +918,7 @@ bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
     }
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN,
-                               "", "", parts[1], parts[2]);
+                               parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -963,7 +963,7 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
     }
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP,
-                               "", "", parts[1], "");
+                               parts[1], "", "", "");
 
     return true;
 }
@@ -1011,7 +1011,7 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
     }
 
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD,
-                               "", "", parts[1], "");
+                               parts[1], "", "", "");
 
     return true;
 }
@@ -1112,8 +1112,9 @@ std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
     return "";
 }
 
-/// @brief finds the peer in the peer list or returns false if peer doesn't exist.
-/// @param peer
+/// @brief finds the peer in the peer list and sets the pollAckThisCycle flag if pollAck is true.
+/// @param peerMac
+/// @param pollAck
 /// @return
 bool AstrOsEspNow::findPeer(std::string peerMac)
 {
@@ -1123,6 +1124,22 @@ bool AstrOsEspNow::findPeer(std::string peerMac)
 
         if (memcmp(pMac.c_str(), peerMac.c_str(), peerMac.size()) == 0)
         {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool AstrOsEspNow::isValidPollPeer(std::string peerMac)
+{
+    for (auto &p : peers)
+    {
+        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
+
+        if (memcmp(pMac.c_str(), peerMac.c_str(), ESP_NOW_ETH_ALEN) == 0)
+        {
+            p.pollAckThisCycle = true;
             return true;
         }
     }

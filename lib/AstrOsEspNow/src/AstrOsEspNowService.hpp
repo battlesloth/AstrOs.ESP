@@ -52,6 +52,7 @@ private:
     esp_err_t addPeer(uint8_t *macAddress);
     bool cachePeer(u_int8_t *macAddress, std::string name);
     bool findPeer(std::string peer);
+    bool isValidPollPeer(std::string peer);
 
     bool (*cachePeerCallback)(espnow_peer_t);
     void (*updateSeviceConfigCallback)(std::string, uint8_t *);
