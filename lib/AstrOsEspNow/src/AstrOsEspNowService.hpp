@@ -44,18 +44,22 @@ private:
 
     PacketTracker packetTracker;
 
+    AstrOsEspNowMessageService messageService;
+
     void getMasterMac(uint8_t *macAddress);
     void updateMasterMac(u_int8_t *macAddress);
 
     esp_err_t addPeer(uint8_t *macAddress);
     bool cachePeer(u_int8_t *macAddress, std::string name);
+    bool findPeer(std::string peer);
 
     bool (*cachePeerCallback)(espnow_peer_t);
     void (*updateSeviceConfigCallback)(std::string, uint8_t *);
     void (*displayUpdateCallback)(std::string, std::string, std::string);
 
-    queue_espnow_msg_t generatePacket(AstrOsPacketType type, uint8_t *data, uint8_t data_len);
-    astros_packet_t parsePacket(uint8_t *data);
+    void sendEspNowMessage(AstrOsPacketType type, std::string peer, std::string msg);
+    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string peerMac,
+                              std::string peerName, std::string msgId, std::string message);
 
     bool handleRegistrationReq(u_int8_t *src);
     bool sendRegistration(u_int8_t *macAddress, std::string name);
@@ -67,6 +71,9 @@ private:
     bool handleConfig(astros_packet_t packet);
     bool handleConfigAckNak(astros_packet_t packet);
     bool handleScriptDeploy(astros_packet_t packet);
+    bool handleScriptRun(astros_packet_t packet);
+    bool handlePanicStop(astros_packet_t packet);
+    bool handleFormatSD(astros_packet_t packet);
 
     bool handleBasicAckNak(astros_packet_t packet);
     AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);
@@ -87,6 +94,9 @@ public:
     void sendConfigUpdate(std::string peer, std::string msgId, std::string msg);
     void sendConfigAckNak(std::string msgId, bool success);
     void sendScriptDeploy(std::string peer, std::string msgId, std::string msg);
+    void sendScriptRun(std::string peer, std::string msgId, std::string msg);
+    void sendPanicStop(std::string peer, std::string msgId);
+    void sendFormatSD(std::string peer, std::string msgId);
 
     void sendBasicAckNak(std::string msgId, AstrOsPacketType type);
 

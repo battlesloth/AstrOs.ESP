@@ -19,12 +19,13 @@ void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue, QueueHandle_t seri
 {
     this->handlerQueue = handlerQueue;
     this->serialQueue = serialQueue;
+
+    this->msgService = AstrOsSerialMessageService();
 }
 
 void AstrOsSerialMsgHandler::handleMessage(std::string message)
 {
-
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(message);
+    auto validation = this->msgService.validateSerialMsg(message);
 
     if (!validation.valid)
     {
@@ -208,9 +209,51 @@ void AstrOsSerialMsgHandler::handleDeployScript(std::string msgId, std::string m
     }
 }
 
+void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> data)
+{
+    auto response = this->msgService.getRegistrationSyncAck(msgId, data);
+
+    ESP_LOGD(TAG, "Sending registraion ack: %s", response.c_str());
+
+    queue_msg_t serialMsg;
+
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(serialMsg.data);
+    }
+}
+
+void AstrOsSerialMsgHandler::sendPollAck(std::string mac, std::string name, std::string fingerprint)
+{
+    auto response = this->msgService.getPollAck(mac, name, fingerprint);
+
+    ESP_LOGD(TAG, "Sending poll ack: %s", response.c_str());
+
+    queue_msg_t serialMsg;
+
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(serialMsg.data);
+    }
+}
+
 void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name, std::string payload)
 {
-    auto response = AstrOsSerialMessageService::getBasicAckNak(type, msgId, mac, name, payload);
+    auto response = this->msgService.getBasicAckNak(type, msgId, mac, name, payload);
 
     ESP_LOGD(TAG, "Sending response: %s", response.c_str());
 

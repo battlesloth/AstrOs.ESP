@@ -43,6 +43,8 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
 {
     ESP_LOGI(TAG, "Initializing AstrOsEspNow");
 
+    this->messageService = AstrOsEspNowMessageService();
+
     esp_err_t err = ESP_OK;
 
     this->name = config.name;
@@ -329,9 +331,14 @@ void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
     }
 }
 
+/// @brief Handle incoming messages from espnow
+/// @param src
+/// @param data
+/// @param len
+/// @return
 bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
 {
-    astros_packet_t packet = AstrOsEspNowMessageService::parsePacket(data);
+    astros_packet_t packet = this->messageService.parsePacket(data);
 
     switch (packet.packetType)
     {
@@ -346,42 +353,45 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         {
             break;
         }
-        ESP_LOGI(TAG, "Registration received from " MACSTR, MAC2STR(src));
         return this->handleRegistration(src, packet);
     case AstrOsPacketType::REGISTRATION_ACK:
         if (!isMasterNode)
         {
             break;
         }
-        ESP_LOGI(TAG, "Registration ack received from " MACSTR, MAC2STR(src));
         return this->handleRegistrationAck(src, packet);
     case AstrOsPacketType::POLL:
         if (isMasterNode)
         {
             break;
         }
-        ESP_LOGD(TAG, "Poll received from " MACSTR, MAC2STR(src));
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
         if (!isMasterNode)
         {
             break;
         }
-        ESP_LOGD(TAG, "Poll ACK received from " MACSTR, MAC2STR(src));
         return this->handlePollAck(packet);
     case AstrOsPacketType::CONFIG:
-        ESP_LOGI(TAG, "Config update received from " MACSTR, MAC2STR(src));
         return this->handleConfig(packet);
     case AstrOsPacketType::CONFIG_ACK:
     case AstrOsPacketType::CONFIG_NAK:
-        ESP_LOGI(TAG, "Config ack/nak received from " MACSTR, MAC2STR(src));
         return this->handleConfigAckNak(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY:
-        ESP_LOGI(TAG, "Script deploy received from " MACSTR, MAC2STR(src));
         return this->handleScriptDeploy(packet);
+    case AstrOsPacketType::SCRIPT_RUN:
+        return this->handleScriptRun(packet);
+    case AstrOsPacketType::PANIC_STOP:
+        return this->handlePanicStop(packet);
+    case AstrOsPacketType::FORMAT_SD:
+        return this->handleFormatSD(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        ESP_LOGI(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
+    case AstrOsPacketType::SCRIPT_RUN_ACK:
+    case AstrOsPacketType::SCRIPT_RUN_NAK:
+    case AstrOsPacketType::FORMAT_SD_ACK:
+    case AstrOsPacketType::FORMAT_SD_NAK:
+        ESP_LOGD(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
         return this->handleBasicAckNak(packet);
     default:
         ESP_LOGE(TAG, "Unknown packet type received");
@@ -406,7 +416,7 @@ void AstrOsEspNow::sendRegistrationRequest()
     // if master mac is broadcast address, then send registration request
     if (IS_BROADCAST_ADDR(destMac))
     {
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ)[0];
+        astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ)[0];
         if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending registraion request");
@@ -444,7 +454,7 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
 
     std::string macStr = AstrOsStringUtils::macToString(src);
     std::string padewanName = "test";
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
+    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -523,7 +533,7 @@ bool AstrOsEspNow::sendRegistrationAck()
         return false;
     }
 
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name)[0];
+    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name)[0];
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -595,7 +605,7 @@ void AstrOsEspNow::pollPadawans()
 
         peer.pollAckThisCycle = false;
 
-        astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, this->mac)[0];
+        astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL, this->mac)[0];
 
         if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
@@ -624,7 +634,7 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
-    astros_espnow_data_t data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
+    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -655,19 +665,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     bool found = false;
 
-    for (auto &peer : peers)
-    {
-        auto peerMac = AstrOsStringUtils::macToString(peer.mac_addr);
-
-        if (memcmp(peerMac.c_str(), padawanMac.c_str(), padawanMac.length()) == 0)
-        {
-            peer.pollAckThisCycle = true;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found)
+    if (!this->findPeer(padawanMac))
     {
         ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
@@ -675,20 +673,8 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
 
     queue_svc_cmd_t cmd;
 
-    cmd.cmd = SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE;
-    auto msg = AstrOsSerialMessageService::getPollAck(padawanMac, padawan, fingerprint);
-    auto size = msg.length();
-
-    cmd.data = (uint8_t *)malloc(size);
-    memcpy(cmd.data, msg.c_str(), size);
-    cmd.dataSize = size;
-
-    if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
-    {
-        ESP_LOGE(TAG, "Send service queue fail");
-        free(cmd.data);
-        return false;
-    }
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK,
+                               padawanMac, padawan, "", "");
 
     return true;
 }
@@ -712,17 +698,8 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
             auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
-            auto msg = AstrOsSerialMessageService::getPollNak(macStr, peer.name);
-            auto size = msg.length();
-
-            cmd.data = (uint8_t *)malloc(size);
-            memcpy(cmd.data, msg.c_str(), size);
-            cmd.dataSize = size;
-
-            if (xQueueSend(this->serviceQueue, &cmd, 100) != pdTRUE)
-            {
-                ESP_LOGE(TAG, "Send service queue fail");
-            }
+            this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK,
+                                       macStr, peer.name, "", "");
         }
         else
         {
@@ -737,50 +714,34 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
 void AstrOsEspNow::sendConfigUpdate(std::string peer, std::string msgId, std::string msg)
 {
-    bool found = false;
-    for (auto &p : peers)
+    if (!this->findPeer(peer))
     {
-        if (memcmp(p.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
-        {
-            continue;
-        }
-
-        std::string peerMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (peerMac != peer)
-        {
-            continue;
-        }
-
-        found = true;
-
-        uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
-        memcpy(destMac, p.mac_addr, ESP_NOW_ETH_ALEN);
-
-        std::stringstream ss;
-        ss << msgId << UNIT_SEPARATOR << msg;
-
-        ESP_LOGI(TAG, "Sending config update to " MACSTR, MAC2STR(destMac));
-
-        auto data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::CONFIG, peer, ss.str());
-
-        for (auto &packet : data)
-        {
-            if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
-            {
-                ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
-            }
-
-            free(packet.data);
-        }
-
-        free(destMac);
+        ESP_LOGW(TAG, "Peer not found in peer list for config send: %s", peer.c_str());
+        return;
     }
 
-    if (!found)
+    auto peerMac = AstrOsStringUtils::stringToMac(peer);
+    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+    memcpy(destMac, peerMac, ESP_NOW_ETH_ALEN);
+
+    std::stringstream ss;
+    ss << msgId << UNIT_SEPARATOR << msg;
+
+    ESP_LOGI(TAG, "Sending config update to " MACSTR, MAC2STR(destMac));
+
+    auto data = this->messageService.generateEspNowMsg(AstrOsPacketType::CONFIG, peer, ss.str());
+
+    for (auto &packet : data)
     {
-        ESP_LOGW(TAG, "Peer not found in peer for config send: %s", peer.c_str());
+        if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
+        }
+
+        free(packet.data);
     }
+
+    free(destMac);
 }
 
 bool AstrOsEspNow::handleConfig(astros_packet_t packet)
@@ -803,25 +764,15 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
 
     // 0 is dest mac, 1 is orgination msg id, 2 is message
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-    auto idSize = parts[1].size() + 1;
-    auto configSize = parts[2].size() + 1;
 
-    astros_interface_response_t response = {
-        .type = AstrOsInterfaceResponseType::SET_CONFIG,
-        .originationMsgId = (char *)malloc(idSize),
-        .peerMac = nullptr,
-        .peerName = nullptr,
-        .message = (char *)malloc(configSize)};
-
-    memcpy(response.originationMsgId, parts[1].c_str(), idSize);
-    memcpy(response.message, parts[2].c_str(), configSize);
-
-    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    if (parts.size() < 3)
     {
-        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
-        free(response.originationMsgId);
-        free(response.message);
+        ESP_LOGE(TAG, "Invalid config payload: %s", payload.c_str());
+        return false;
     }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG,
+                               "", "", parts[1], parts[2]);
 
     return true;
 }
@@ -837,7 +788,7 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
 
     auto ackNak = success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK;
 
-    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(ackNak, this->getMac(), ss.str())[0];
+    auto packet = this->messageService.generateEspNowMsg(ackNak, this->getMac(), ss.str())[0];
 
     if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
     {
@@ -864,26 +815,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     auto responseType = this->getInterfaceResponseType(packet.packetType);
 
-    astros_interface_response_t response = {
-        .type = responseType,
-        .originationMsgId = (char *)malloc(parts[2].size() + 1),
-        .peerMac = (char *)malloc(parts[0].size() + 1),
-        .peerName = (char *)malloc(parts[1].size() + 1),
-        .message = (char *)malloc(parts[3].size() + 1)};
-
-    memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
-    memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
-    memcpy(response.peerName, parts[1].c_str(), parts[1].size() + 1);
-    memcpy(response.message, parts[3].c_str(), parts[3].size() + 1);
-
-    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
-    {
-        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
-        free(response.originationMsgId);
-        free(response.peerMac);
-        free(response.peerName);
-        free(response.message);
-    }
+    this->sendToInterfaceQueue(responseType, parts[0], parts[1], parts[2], parts[3]);
 
     return true;
 }
@@ -894,50 +826,18 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
 void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::string script)
 {
-    bool found = false;
-    for (auto &p : peers)
+    if (!this->findPeer(peer))
     {
-        if (memcmp(p.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
-        {
-            continue;
-        }
-
-        std::string peerMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (peerMac != peer)
-        {
-            continue;
-        }
-
-        found = true;
-
-        uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
-        memcpy(destMac, p.mac_addr, ESP_NOW_ETH_ALEN);
-
-        std::stringstream ss;
-        ss << msgId << UNIT_SEPARATOR << script;
-
-        ESP_LOGI(TAG, "Sending script deploy to " MACSTR, MAC2STR(destMac));
-
-        auto data = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::SCRIPT_DEPLOY, peer, ss.str());
-
-        for (auto &packet : data)
-        {
-            if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
-            {
-                ESP_LOGE(TAG, "Error sending script deploy to " MACSTR, MAC2STR(destMac));
-            }
-
-            free(packet.data);
-        }
-
-        free(destMac);
+        ESP_LOGW(TAG, "Peer not found in peer list for script deploy send: %s", peer.c_str());
+        return;
     }
 
-    if (!found)
-    {
-        ESP_LOGW(TAG, "Peer not found in peer for script deploy send: %s", peer.c_str());
-    }
+    std::stringstream ss;
+    ss << msgId << UNIT_SEPARATOR << script;
+
+    ESP_LOGI(TAG, "Sending script deploy to %s", peer.c_str());
+
+    this->sendEspNowMessage(AstrOsPacketType::SCRIPT_DEPLOY, peer, ss.str());
 }
 
 bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
@@ -957,7 +857,7 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
         payload = std::string((char *)packet.payload, packet.payloadSize);
     }
 
-    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId, 3 is message
+    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId, 3 is script
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
     if (parts.size() < 4)
@@ -965,30 +865,157 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
         ESP_LOGE(TAG, "Invalid script deploy payload: %s", payload.c_str());
         return false;
     }
-    auto idSize = parts[1].size() + 1;
 
     std::stringstream ss;
     ss << parts[2] << UNIT_SEPARATOR << parts[3];
 
-    auto scriptMsg = ss.str();
-    auto scriptMsgSize = scriptMsg.size() + 1;
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT,
+                               "", "", parts[1], ss.str());
 
-    astros_interface_response_t response = {
-        .type = AstrOsInterfaceResponseType::SAVE_SCRIPT,
-        .originationMsgId = (char *)malloc(idSize),
-        .peerMac = nullptr,
-        .peerName = nullptr,
-        .message = (char *)malloc(scriptMsgSize)};
+    return true;
+}
 
-    memcpy(response.originationMsgId, parts[1].c_str(), idSize);
-    memcpy(response.message, scriptMsg.c_str(), scriptMsgSize);
+/*******************************************
+ * Script Run methods
+ *******************************************/
 
-    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+void AstrOsEspNow::sendScriptRun(std::string peer, std::string msgId, std::string scriptId)
+{
+    if (!this->findPeer(peer))
     {
-        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
-        free(response.originationMsgId);
-        free(response.message);
+        ESP_LOGW(TAG, "Peer not found in peer list for script run send: %s", peer.c_str());
+        return;
     }
+
+    std::stringstream ss;
+    ss << msgId << UNIT_SEPARATOR << scriptId;
+
+    ESP_LOGI(TAG, "Sending script deploy to %s", peer.c_str());
+
+    this->sendEspNowMessage(AstrOsPacketType::SCRIPT_RUN, peer, ss.str());
+}
+
+bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid script run payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN,
+                               "", "", parts[1], parts[2]);
+
+    return true;
+}
+
+void AstrOsEspNow::sendPanicStop(std::string peer, std::string msgId)
+{
+    if (!this->findPeer(peer))
+    {
+        ESP_LOGW(TAG, "Peer not found in peer list for panic stop send: %s", peer.c_str());
+        return;
+    }
+
+    ESP_LOGI(TAG, "Sending panic stop to %s", peer.c_str());
+
+    this->sendEspNowMessage(AstrOsPacketType::PANIC_STOP, peer, msgId);
+}
+
+bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 2)
+    {
+        ESP_LOGE(TAG, "Invalid panic stop payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP,
+                               "", "", parts[1], "");
+
+    return true;
+}
+/*******************************************
+ * Utility Methods
+ *******************************************/
+
+void AstrOsEspNow::sendFormatSD(std::string peer, std::string msgId)
+{
+    if (!this->findPeer(peer))
+    {
+        ESP_LOGW(TAG, "Peer not found in peer list for format sd send: %s", peer.c_str());
+        return;
+    }
+
+    ESP_LOGI(TAG, "Sending format sd to %s", peer.c_str());
+
+    this->sendEspNowMessage(AstrOsPacketType::FORMAT_SD, peer, msgId);
+}
+
+bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 2)
+    {
+        ESP_LOGE(TAG, "Invalid format sd payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD,
+                               "", "", parts[1], "");
 
     return true;
 }
@@ -1009,7 +1036,7 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type)
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << msgId;
 
-    auto packet = AstrOsEspNowMessageService::generateEspNowMsg(type, this->getMac(), ss.str())[0];
+    auto packet = this->messageService.generateEspNowMsg(type, this->getMac(), ss.str())[0];
 
     if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
     {
@@ -1039,24 +1066,7 @@ bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
 
     auto responseType = this->getInterfaceResponseType(packet.packetType);
 
-    astros_interface_response_t response = {
-        .type = responseType,
-        .originationMsgId = (char *)malloc(parts[2].size() + 1),
-        .peerMac = (char *)malloc(parts[0].size() + 1),
-        .peerName = (char *)malloc(parts[1].size() + 1),
-        .message = nullptr};
-
-    memcpy(response.originationMsgId, parts[2].c_str(), parts[2].size() + 1);
-    memcpy(response.peerMac, parts[0].c_str(), parts[0].size() + 1);
-    memcpy(response.peerName, parts[1].c_str(), parts[1].size() + 1);
-
-    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
-    {
-        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
-        free(response.originationMsgId);
-        free(response.peerMac);
-        free(response.peerName);
-    }
+    this->sendToInterfaceQueue(responseType, parts[0], parts[1], parts[2], "");
 
     return true;
 }
@@ -1104,6 +1114,90 @@ std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
     }
 
     return "";
+}
+
+/// @brief finds the peer in the peer list or returns false if peer doesn't exist.
+/// @param peer
+/// @return
+bool AstrOsEspNow::findPeer(std::string peerMac)
+{
+    for (auto &p : peers)
+    {
+        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
+
+        if (memcmp(pMac.c_str(), peerMac.c_str(), peerMac.size()) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/// @brief sends an esp now message to the provided peer.
+/// @param type
+/// @param peer
+/// @param msg
+void AstrOsEspNow::sendEspNowMessage(AstrOsPacketType type, std::string peer, std::string msg)
+{
+    auto peerMac = AstrOsStringUtils::stringToMac(peer);
+    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
+    memcpy(destMac, peerMac, ESP_NOW_ETH_ALEN);
+
+    auto data = this->messageService.generateEspNowMsg(type, peer, msg);
+
+    for (auto &packet : data)
+    {
+        if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
+        }
+
+        free(packet.data);
+    }
+
+    free(destMac);
+}
+
+void AstrOsEspNow::sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac, std::string peerName, std::string message)
+{
+    auto msgIdSize = msgId.size() + 1;
+    auto peerMacSize = peerMac.size() + 1;
+    auto peerNameSize = peerName.size() + 1;
+    auto messageSize = message.size() + 1;
+
+    astros_interface_response_t response;
+    response.type = responseType;
+    response.originationMsgId = msgIdSize == 1 ? nullptr : (char *)malloc(msgIdSize);
+    response.peerMac = peerMacSize == 1 ? nullptr : (char *)malloc(peerMacSize);
+    response.peerName = peerNameSize == 1 ? nullptr : (char *)malloc(peerNameSize);
+    response.message = messageSize == 1 ? nullptr : (char *)malloc(messageSize);
+
+    if (msgIdSize > 1)
+    {
+        memcpy(response.originationMsgId, msgId.c_str(), msgIdSize);
+    }
+    if (peerMacSize > 1)
+    {
+        memcpy(response.peerMac, peerMac.c_str(), peerMacSize);
+    }
+    if (peerNameSize > 1)
+    {
+        memcpy(response.peerName, peerName.c_str(), peerNameSize);
+    }
+    if (messageSize > 1)
+    {
+        memcpy(response.message, message.c_str(), messageSize);
+    }
+
+    if (xQueueSend(this->interfaceQueue, &response, pdTICKS_TO_MS(250)) == pdFALSE)
+    {
+        ESP_LOGE(TAG, "Failed to send message to interface handler queue");
+        free(response.originationMsgId);
+        free(response.peerMac);
+        free(response.peerName);
+        free(response.message);
+    }
 }
 
 /**********************************

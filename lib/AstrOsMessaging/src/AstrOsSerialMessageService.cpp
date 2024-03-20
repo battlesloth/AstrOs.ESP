@@ -10,6 +10,24 @@
 
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
+    this->msgTypeMap = {
+        {AstrOsSerialMessageType::REGISTRATION_SYNC, AstrOsSC::REGISTRATION_SYNC},
+        {AstrOsSerialMessageType::REGISTRATION_SYNC_ACK, AstrOsSC::REGISTRATION_SYNC_ACK},
+        {AstrOsSerialMessageType::DEPLOY_CONFIG, AstrOsSC::DEPLOY_CONFIG},
+        {AstrOsSerialMessageType::DEPLOY_CONFIG_ACK, AstrOsSC::DEPLOY_CONFIG_ACK},
+        {AstrOsSerialMessageType::DEPLOY_CONFIG_NAK, AstrOsSC::DEPLOY_CONFIG_NAK},
+        {AstrOsSerialMessageType::POLL_ACK, AstrOsSC::POLL_ACK},
+        {AstrOsSerialMessageType::POLL_NAK, AstrOsSC::POLL_NAK},
+        {AstrOsSerialMessageType::DEPLOY_SCRIPT, AstrOsSC::DEPLOY_SCRIPT},
+        {AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK, AstrOsSC::DEPLOY_SCRIPT_ACK},
+        {AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK, AstrOsSC::DEPLOY_SCRIPT_NAK},
+        {AstrOsSerialMessageType::RUN_SCRIPT, AstrOsSC::RUN_SCRIPT},
+        {AstrOsSerialMessageType::RUN_SCRIPT_ACK, AstrOsSC::RUN_SCRIPT_ACK},
+        {AstrOsSerialMessageType::RUN_SCRIPT_NAK, AstrOsSC::RUN_SCRIPT_NAK},
+        {AstrOsSerialMessageType::RUN_COMMAND, AstrOsSC::RUN_COMMAND},
+        {AstrOsSerialMessageType::RUN_COMMAND_ACK, AstrOsSC::RUN_COMMAND_ACK},
+        {AstrOsSerialMessageType::RUN_COMMAND_NAK, AstrOsSC::RUN_COMMAND_NAK},
+    };
 }
 
 AstrOsSerialMessageService::~AstrOsSerialMessageService()
@@ -21,7 +39,6 @@ AstrOsSerialMessageService::~AstrOsSerialMessageService()
 /// @return is valid
 astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std::string msg)
 {
-
     astros_serial_msg_validation_t result{"", AstrOsSerialMessageType::UNKNOWN, false};
 
     auto msgParts = AstrOsStringUtils::splitString(msg, GROUP_SEPARATOR);
@@ -35,66 +52,21 @@ astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std
 
     auto type = static_cast<AstrOsSerialMessageType>(stoi(parts[0]));
 
-    switch (type)
+    if (this->msgTypeMap.find(type) == this->msgTypeMap.end())
     {
-    case AstrOsSerialMessageType::REGISTRATION_SYNC:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::REGISTRATION_SYNC, strlen(AstrOsSC::REGISTRATION_SYNC)) == 0;
-        break;
-    case AstrOsSerialMessageType::REGISTRATION_SYNC_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::REGISTRATION_SYNC_ACK, strlen(AstrOsSC::REGISTRATION_SYNC_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_CONFIG, strlen(AstrOsSC::DEPLOY_CONFIG)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_CONFIG_ACK, strlen(AstrOsSC::DEPLOY_CONFIG_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG_NAK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_CONFIG_NAK, strlen(AstrOsSC::DEPLOY_CONFIG_NAK)) == 0;
-        break;
-    case AstrOsSerialMessageType::POLL_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::POLL_ACK, strlen(AstrOsSC::POLL_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::POLL_NAK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::POLL_NAK, strlen(AstrOsSC::POLL_NAK)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT, strlen(AstrOsSC::DEPLOY_SCRIPT)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT_ACK, strlen(AstrOsSC::DEPLOY_SCRIPT_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::DEPLOY_SCRIPT_NAK, strlen(AstrOsSC::DEPLOY_SCRIPT_NAK)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_SCRIPT:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT, strlen(AstrOsSC::RUN_SCRIPT)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_SCRIPT_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT_ACK, strlen(AstrOsSC::RUN_SCRIPT_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_SCRIPT_NAK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_SCRIPT_NAK, strlen(AstrOsSC::RUN_SCRIPT_NAK)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_COMMAND:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND, strlen(AstrOsSC::RUN_COMMAND)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_COMMAND_ACK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND_ACK, strlen(AstrOsSC::RUN_COMMAND_ACK)) == 0;
-        break;
-    case AstrOsSerialMessageType::RUN_COMMAND_NAK:
-        result.valid = memcmp(parts[1].c_str(), AstrOsSC::RUN_COMMAND_NAK, strlen(AstrOsSC::RUN_COMMAND_NAK)) == 0;
-        break;
-    default:
-        result.valid = false;
         return result;
     }
 
-    if (result.valid)
+    auto validator = this->msgTypeMap[type];
+
+    if (memcmp(parts[1].c_str(), validator.c_str(), validator.size()) != 0)
     {
-        result.msgId = parts[2];
-        result.type = type;
+        return result;
     }
+
+    result.valid = true;
+    result.msgId = parts[2];
+    result.type = type;
 
     return result;
 }
@@ -105,55 +77,16 @@ astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std
 /// @return header string
 std::string AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType type, std::string msgId)
 {
-    auto validation = AstrOsSerialMessageService::getValidationString(type);
+    if (this->msgTypeMap.find(type) == this->msgTypeMap.end())
+    {
+        return "";
+    }
+
+    auto validation = this->msgTypeMap[type];
 
     std::stringstream ss;
     ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation << RECORD_SEPARATOR << msgId << GROUP_SEPARATOR;
     return ss.str();
-}
-
-/// @brief gets the validation string for a given message type
-/// @param type AstrOsSerialMessageType
-/// @return char* validation string
-const char *AstrOsSerialMessageService::getValidationString(AstrOsSerialMessageType type)
-{
-    switch (type)
-    {
-    case AstrOsSerialMessageType::REGISTRATION_SYNC:
-        return AstrOsSC::REGISTRATION_SYNC;
-    case AstrOsSerialMessageType::REGISTRATION_SYNC_ACK:
-        return AstrOsSC::REGISTRATION_SYNC_ACK;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG:
-        return AstrOsSC::DEPLOY_CONFIG;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG_ACK:
-        return AstrOsSC::DEPLOY_CONFIG_ACK;
-    case AstrOsSerialMessageType::DEPLOY_CONFIG_NAK:
-        return AstrOsSC::DEPLOY_CONFIG_NAK;
-    case AstrOsSerialMessageType::POLL_ACK:
-        return AstrOsSC::POLL_ACK;
-    case AstrOsSerialMessageType::POLL_NAK:
-        return AstrOsSC::POLL_NAK;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-        return AstrOsSC::DEPLOY_SCRIPT;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK:
-        return AstrOsSC::DEPLOY_SCRIPT_ACK;
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK:
-        return AstrOsSC::DEPLOY_SCRIPT_NAK;
-    case AstrOsSerialMessageType::RUN_SCRIPT:
-        return AstrOsSC::RUN_SCRIPT;
-    case AstrOsSerialMessageType::RUN_SCRIPT_ACK:
-        return AstrOsSC::RUN_SCRIPT_ACK;
-    case AstrOsSerialMessageType::RUN_SCRIPT_NAK:
-        return AstrOsSC::RUN_SCRIPT_NAK;
-    case AstrOsSerialMessageType::RUN_COMMAND:
-        return AstrOsSC::RUN_COMMAND;
-    case AstrOsSerialMessageType::RUN_COMMAND_ACK:
-        return AstrOsSC::RUN_COMMAND_ACK;
-    case AstrOsSerialMessageType::RUN_COMMAND_NAK:
-        return AstrOsSC::RUN_COMMAND_NAK;
-    default:
-        return "";
-    }
 }
 
 /// @brief generates a registration sync acknowledgment message which contains a list of registered controlellers

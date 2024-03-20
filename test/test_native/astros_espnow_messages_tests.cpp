@@ -9,7 +9,9 @@ TEST(EspNowMessages, InvalidPacket)
 {
     std::string testString = "TEST_PACKET";
 
-    auto values = AstrOsEspNowMessageService::generatePackets(AstrOsPacketType::REGISTRATION, AstrOsENC::REGISTRATION, testString);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto values = msgService.generatePackets(AstrOsPacketType::REGISTRATION, testString);
 
     ASSERT_EQ(1, values.size())
         << [values]() -> std::string
@@ -20,7 +22,7 @@ TEST(EspNowMessages, InvalidPacket)
 
     memccpy(values[0].data + 20, "INVALID", 7, 7);
 
-    auto parsed = AstrOsEspNowMessageService::parsePacket(values[0].data);
+    auto parsed = msgService.parsePacket(values[0].data);
 
     EXPECT_EQ(AstrOsPacketType::UNKNOWN, parsed.packetType);
 
@@ -34,7 +36,9 @@ TEST(EspNowMessages, SinglePacket)
 {
     std::string testString = "TEST_PACKET";
 
-    auto values = AstrOsEspNowMessageService::generatePackets(AstrOsPacketType::BASIC, AstrOsENC::BASIC, testString);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto values = msgService.generatePackets(AstrOsPacketType::BASIC, testString);
 
     ASSERT_EQ(1, values.size())
         << [values]() -> std::string
@@ -43,7 +47,7 @@ TEST(EspNowMessages, SinglePacket)
         free(values[i].data);
     }; return "Incorrect number of packets generated"; }();
 
-    auto parsed = AstrOsEspNowMessageService::parsePacket(values[0].data);
+    auto parsed = msgService.parsePacket(values[0].data);
 
     EXPECT_EQ(1, values.size());
     EXPECT_EQ(AstrOsPacketType::BASIC, parsed.packetType);
@@ -77,7 +81,9 @@ TEST(EspNowMessages, MultiPacket)
 
     std::string testString = packet1 + packet2 + packet3 + packet4;
 
-    auto values = AstrOsEspNowMessageService::generatePackets(AstrOsPacketType::BASIC, AstrOsENC::BASIC, testString);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto values = msgService.generatePackets(AstrOsPacketType::BASIC, testString);
 
     ASSERT_EQ(4, values.size())
         << [values]() -> std::string
@@ -86,28 +92,28 @@ TEST(EspNowMessages, MultiPacket)
         free(values[i].data);
     }; return "Incorrect number of packets generated"; }();
 
-    auto parsed0 = AstrOsEspNowMessageService::parsePacket(values[0].data);
+    auto parsed0 = msgService.parsePacket(values[0].data);
 
     EXPECT_EQ(AstrOsPacketType::BASIC, parsed0.packetType);
     EXPECT_EQ(1, parsed0.packetNumber);
     EXPECT_EQ(4, parsed0.totalPackets);
     EXPECT_EQ(174, parsed0.payloadSize);
 
-    auto parsed1 = AstrOsEspNowMessageService::parsePacket(values[1].data);
+    auto parsed1 = msgService.parsePacket(values[1].data);
 
     EXPECT_EQ(AstrOsPacketType::BASIC, parsed1.packetType);
     EXPECT_EQ(2, parsed1.packetNumber);
     EXPECT_EQ(4, parsed1.totalPackets);
     EXPECT_EQ(174, parsed1.payloadSize);
 
-    auto parsed2 = AstrOsEspNowMessageService::parsePacket(values[2].data);
+    auto parsed2 = msgService.parsePacket(values[2].data);
 
     EXPECT_EQ(AstrOsPacketType::BASIC, parsed2.packetType);
     EXPECT_EQ(3, parsed2.packetNumber);
     EXPECT_EQ(4, parsed2.totalPackets);
     EXPECT_EQ(174, parsed2.payloadSize);
 
-    auto parsed3 = AstrOsEspNowMessageService::parsePacket(values[3].data);
+    auto parsed3 = msgService.parsePacket(values[3].data);
 
     EXPECT_EQ(AstrOsPacketType::BASIC, parsed3.packetType);
     EXPECT_EQ(4, parsed3.packetNumber);
@@ -139,8 +145,10 @@ TEST(EspNowMessages, MultiPacket)
 
 TEST(EspNowMessages, RegistrationRequestMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ)[0];
-    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ)[0];
+    auto parsed = msgService.parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::REGISTRATION_REQ, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
@@ -152,8 +160,10 @@ TEST(EspNowMessages, RegistrationRequestMessage)
 
 TEST(EspNowMessages, RegistrationMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION, "macaddress", "test")[0];
-    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, "macaddress", "test")[0];
+    auto parsed = msgService.parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::REGISTRATION, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
@@ -171,8 +181,10 @@ TEST(EspNowMessages, RegistrationMessage)
 
 TEST(EspNowMessages, RegistrationAckMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, "macaddress", "test")[0];
-    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, "macaddress", "test")[0];
+    auto parsed = msgService.parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::REGISTRATION_ACK, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
@@ -190,8 +202,10 @@ TEST(EspNowMessages, RegistrationAckMessage)
 
 TEST(EspNowMessages, PollMessage)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL, "macaddress")[0];
-    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::POLL, "macaddress")[0];
+    auto parsed = msgService.parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::POLL, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);
@@ -212,8 +226,10 @@ TEST(EspNowMessages, PollAckMessage)
     std::stringstream msg;
     msg << "name" << UNIT_SEPARATOR << "fingerprint";
 
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, "macaddress", msg.str())[0];
-    auto parsed = AstrOsEspNowMessageService::parsePacket(value.data);
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, "macaddress", msg.str())[0];
+    auto parsed = msgService.parsePacket(value.data);
 
     EXPECT_EQ(AstrOsPacketType::POLL_ACK, parsed.packetType);
     EXPECT_EQ(1, parsed.packetNumber);

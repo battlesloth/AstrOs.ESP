@@ -16,6 +16,13 @@ public:
         return std::string(macStr);
     }
 
+    static uint8_t *stringToMac(const std::string &macStr)
+    {
+        uint8_t *mac = new uint8_t[6];
+        sscanf(macStr.c_str(), "%02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+        return mac;
+    }
+
     static std::string getMessageValueAt(uint8_t *data, int dataSize, char delimiter, int index)
     {
         std::string message = std::string(reinterpret_cast<char *>(data), dataSize);
@@ -56,7 +63,7 @@ public:
     /// @param val char *
     /// @param size int
     /// @return int
-    static int charToInt(char * val, int size)
+    static int charToInt(char *val, int size)
     {
         int i, n;
         n = 0;

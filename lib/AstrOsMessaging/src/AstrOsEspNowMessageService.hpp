@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <cstdint>
 
 #define ASTROS_PACKET_PAYLOAD_SIZE 180
@@ -30,6 +31,13 @@ namespace AstrOsENC
     constexpr const static char *SCRIPT_DEPLOY = "SCRIPT_DEPLOY";
     constexpr const static char *SCRIPT_DEPLOY_ACK = "SCRIPT_DEPLOY_ACK";
     constexpr const static char *SCRIPT_DEPLOY_NAK = "SCRIPT_DEPLOY_NAK";
+    constexpr const static char *SCRIPT_RUN = "SCRIPT_RUN";
+    constexpr const static char *SCRIPT_RUN_ACK = "RUN_SCRIPT_ACK";
+    constexpr const static char *SCRIPT_RUN_NAK = "RUN_SCRIPT_NAK";
+    constexpr const static char *PANIC_STOP = "PANIC_STOP";
+    constexpr const static char *FORMAT_SD = "FORMAT_SD";
+    constexpr const static char *FORMAT_SD_ACK = "FORMAT_SD_ACK";
+    constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
 }
 
 enum class AstrOsPacketType
@@ -46,7 +54,14 @@ enum class AstrOsPacketType
     CONFIG_NAK,
     SCRIPT_DEPLOY,
     SCRIPT_DEPLOY_ACK,
-    SCRIPT_DEPLOY_NAK
+    SCRIPT_DEPLOY_NAK,
+    SCRIPT_RUN,
+    SCRIPT_RUN_ACK,
+    SCRIPT_RUN_NAK,
+    PANIC_STOP,
+    FORMAT_SD,
+    FORMAT_SD_ACK,
+    FORMAT_SD_NAK
 };
 
 typedef struct
@@ -69,16 +84,17 @@ class AstrOsEspNowMessageService
 {
 
 private:
-    static uint8_t *generateId();
+    uint8_t *generateId();
+    std::map<AstrOsPacketType, std::string> packetTypeMap;
 
 public:
     AstrOsEspNowMessageService();
     ~AstrOsEspNowMessageService();
 
-    static std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
-    static std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string validator, std::string message);
-    static astros_packet_t parsePacket(uint8_t *packet);
-    static int validatePacket(astros_packet_t packet);
+    std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
+    std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
+    astros_packet_t parsePacket(uint8_t *packet);
+    int validatePacket(astros_packet_t packet);
 };
 
 #endif

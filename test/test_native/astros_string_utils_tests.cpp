@@ -21,7 +21,8 @@ TEST(StringUtils, SplitString)
 
 TEST(StringUtils, GetMessageAt)
 {
-    auto value = AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType::POLL_ACK, "test", "macaddress")[0];
+    auto msgService = AstrOsEspNowMessageService();
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, "test", "macaddress")[0];
 
     auto message = AstrOsStringUtils::getMessageValueAt(value.data, value.size, UNIT_SEPARATOR, 1);
 

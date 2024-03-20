@@ -8,11 +8,12 @@ using ::testing::StartsWith;
 
 TEST(SerialMessages, PollAckMessage)
 {
-    auto value = AstrOsSerialMessageService::getPollAck("macaddress", "test", "fingerprint");
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint");
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::POLL_ACK, validation.type);
@@ -27,13 +28,14 @@ TEST(SerialMessages, PollAckMessage)
 
 TEST(SerialMessages, PollNakMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     char *test = (char *)malloc(5);
 
     memcpy(test, "test\0", 5);
 
-    auto value = AstrOsSerialMessageService::getPollNak("macaddress", test);
+    auto value = msgSvc.getPollNak("macaddress", test);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::POLL_NAK, validation.type);
@@ -51,6 +53,7 @@ TEST(SerialMessages, PollNakMessage)
 
 TEST(SerialMessages, RegistrationSyncAckMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
 
     std::vector<astros_peer_data_t> peers;
@@ -59,9 +62,9 @@ TEST(SerialMessages, RegistrationSyncAckMessage)
     peers.push_back(peer1);
     peers.push_back(peer2);
 
-    auto value = AstrOsSerialMessageService::getRegistrationSyncAck(msgId, peers);
+    auto value = msgSvc.getRegistrationSyncAck(msgId, peers);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::REGISTRATION_SYNC_ACK, validation.type);
@@ -84,14 +87,15 @@ TEST(SerialMessages, RegistrationSyncAckMessage)
 
 TEST(SerialMessages, DeployConfigurationMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
     std::vector<std::string> controllers = {"master", "padawan1", "padawan2"};
     std::vector<std::string> macs = {"mac1", "mac2", "mac3"};
     std::vector<std::string> configs = {"master_config", "padawan1_config", "padawan2_config"};
 
-    auto value = AstrOsSerialMessageService::getDeployConfig(msgId, macs, controllers, configs);
+    auto value = msgSvc.getDeployConfig(msgId, macs, controllers, configs);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::DEPLOY_CONFIG, validation.type);
@@ -106,14 +110,15 @@ TEST(SerialMessages, DeployConfigurationMessage)
 
 TEST(SerialMessages, DeployScriptMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
     std::string scriptId = "scriptId";
     std::vector<std::string> controllers = {"master", "padawan1", "padawan2"};
     std::vector<std::string> scripts = {"master_script", "padawan1_script", "padawan2_script"};
 
-    auto value = AstrOsSerialMessageService::getDeployScript(msgId, scriptId, controllers, scripts);
+    auto value = msgSvc.getDeployScript(msgId, scriptId, controllers, scripts);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::DEPLOY_SCRIPT, validation.type);
@@ -128,12 +133,13 @@ TEST(SerialMessages, DeployScriptMessage)
 
 TEST(SerialMessages, RunScriptMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
     std::string scriptId = "scriptId";
 
-    auto value = AstrOsSerialMessageService::getRunScript(msgId, scriptId);
+    auto value = msgSvc.getRunScript(msgId, scriptId);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::RUN_SCRIPT, validation.type);
@@ -142,13 +148,14 @@ TEST(SerialMessages, RunScriptMessage)
 
 TEST(SerialMessages, RunCommandMessage)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
     std::string controller = "controller";
     std::string command = "command";
 
-    auto value = AstrOsSerialMessageService::getRunCommand(msgId, controller, command);
+    auto value = msgSvc.getRunCommand(msgId, controller, command);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(AstrOsSerialMessageType::RUN_COMMAND, validation.type);
@@ -161,14 +168,15 @@ TEST(SerialMessages, RunCommandMessage)
 
 void RunAckNakTest(AstrOsSerialMessageType type)
 {
+    auto msgSvc = AstrOsSerialMessageService();
     std::string msgId = "testId";
     std::string macAddress = "macAddress";
     std::string controller = "controller";
     std::string data = "data";
 
-    auto value = AstrOsSerialMessageService::getBasicAckNak(type, msgId, macAddress, controller, data);
+    auto value = msgSvc.getBasicAckNak(type, msgId, macAddress, controller, data);
 
-    auto validation = AstrOsSerialMessageService::validateSerialMsg(value);
+    auto validation = msgSvc.validateSerialMsg(value);
 
     ASSERT_EQ(true, validation.valid);
     EXPECT_EQ(type, validation.type);

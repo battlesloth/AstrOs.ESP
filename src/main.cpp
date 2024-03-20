@@ -151,9 +151,10 @@ void espnowQueueTask(void *arg);
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
 static void handleRegistrationSync(astros_interface_response_t msg);
 static void handleSetConfig(astros_interface_response_t msg);
-static void handleSendConfig(astros_interface_response_t msg);
 static void handleSaveScript(astros_interface_response_t msg);
-static void handleSendScript(astros_interface_response_t msg);
+static void handleRunSctipt(astros_interface_response_t msg);
+static void handlePanicStop(astros_interface_response_t msg);
+static void handleFormatSD(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
 
@@ -343,7 +344,7 @@ static void pollingTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "Heartbeat");
 
-    // only poll during discovery mode
+    // only send register requests during discovery mode
     if (isMasterNode && !discoveryMode)
     {
         queue_espnow_msg_t msg;
@@ -356,22 +357,8 @@ static void pollingTimerCallback(void *arg)
 
             char *fingerprint = (char *)malloc(37);
             AstrOs_Storage.getControllerFingerprint(fingerprint);
-            auto msg = AstrOsSerialMessageService::getPollAck("00:00:00:00:00:00", "master", std::string(fingerprint));
-            auto size = msg.size();
-            free(fingerprint);
-
-            queue_msg_t serialMsg;
-            serialMsg.message_id = 1;
-            serialMsg.data = (uint8_t *)malloc(size + 1);
-            memcpy(serialMsg.data, msg.c_str(), size);
-            serialMsg.data[size] = '\n';
-            serialMsg.dataSize = size + 1;
-
-            if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-            {
-                ESP_LOGW(TAG, "Send serial queue fail");
-                free(serialMsg.data);
-            }
+            AstrOs_SerialMsgHandler.sendPollAck("00:00:00:00:00:00", "master",
+                                                std::string(fingerprint));
         }
         else
         {
@@ -547,6 +534,15 @@ void interfaceResponseQueueTask(void *arg)
 
             switch (msg.type)
             {
+            case AstrOsInterfaceResponseType::SEND_POLL_ACK:
+            {
+
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_POLL_NAK:
+            {
+                break;
+            }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
             {
                 handleRegistrationSync(msg);
@@ -559,7 +555,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG:
             {
-                handleSendConfig(msg);
+                AstrOs_EspNow.sendConfigUpdate(msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
             case AstrOsInterfaceResponseType::SAVE_SCRIPT:
@@ -569,13 +565,45 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_SCRIPT:
             {
-                handleSendScript(msg);
+                AstrOs_EspNow.sendScriptDeploy(msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SCRIPT_RUN:
+            {
+                handleRunSctipt(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN:
+            {
+                AstrOs_EspNow.sendScriptRun(msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::PANIC_STOP:
+            {
+                handlePanicStop(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_PANIC_STOP:
+            {
+                AstrOs_EspNow.sendPanicStop(msg.peerMac, msg.originationMsgId);
+                break;
+            }
+            case AstrOsInterfaceResponseType::FORMAT_SD:
+            {
+                handleFormatSD(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_FORMAT_SD:
+            {
+                AstrOs_EspNow.sendFormatSD(msg.peerMac, msg.originationMsgId);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
             case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
+            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_ACK:
+            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_NAK:
             {
                 auto responseType = getSerialMessageType(msg.type);
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, "");
@@ -1073,6 +1101,15 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
         return AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK;
     case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
         return AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
+    case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_ACK:
+        return AstrOsSerialMessageType::RUN_SCRIPT_ACK;
+    case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_NAK:
+        return AstrOsSerialMessageType::RUN_SCRIPT_NAK;
+    case AstrOsInterfaceResponseType::SEND_FORMAT_SD_ACK:
+        return AstrOsSerialMessageType::FORMAT_SD_ACK;
+    case AstrOsInterfaceResponseType::SEND_FORMAT_SD_NAK:
+        return AstrOsSerialMessageType::FORMAT_SD_NAK;
+
     default:
         return AstrOsSerialMessageType::UNKNOWN;
     }
@@ -1093,20 +1130,7 @@ static void handleRegistrationSync(astros_interface_response_t msg)
         data.push_back(pd);
     }
 
-    auto response = AstrOsSerialMessageService::getRegistrationSyncAck(msg.originationMsgId, data);
-
-    queue_msg_t serialMsg;
-    serialMsg.message_id = 1;
-    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
-    memcpy(serialMsg.data, response.c_str(), response.size());
-    serialMsg.data[response.size()] = '\n';
-    serialMsg.dataSize = response.size() + 1;
-
-    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
-    {
-        ESP_LOGW(TAG, "Send serial queue fail");
-        free(serialMsg.data);
-    }
+    AstrOs_SerialMsgHandler.sendRegistraionAck(msg.originationMsgId, data);
 }
 
 static void handleSetConfig(astros_interface_response_t msg)
@@ -1153,11 +1177,6 @@ static void handleSetConfig(astros_interface_response_t msg)
     }
 }
 
-static void handleSendConfig(astros_interface_response_t msg)
-{
-    AstrOs_EspNow.sendConfigUpdate(msg.peerMac, msg.originationMsgId, msg.message);
-}
-
 static void handleSaveScript(astros_interface_response_t msg)
 {
     auto message = std::string(msg.message);
@@ -1187,7 +1206,53 @@ static void handleSaveScript(astros_interface_response_t msg)
     }
 }
 
-static void handleSendScript(astros_interface_response_t msg)
+static void handleRunSctipt(astros_interface_response_t msg)
 {
-    AstrOs_EspNow.sendScriptDeploy(msg.peerMac, msg.originationMsgId, msg.message);
+    auto message = std::string(msg.message);
+    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+
+    auto success = false;
+
+    if (parts.size() != 1)
+    {
+        ESP_LOGE(TAG, "Invalid run script message: %s", message.c_str());
+    }
+    else
+    {
+        success = AnimationCtrl.queueScript(parts[0]);
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::RUN_SCRIPT_ACK : AstrOsSerialMessageType::RUN_SCRIPT_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::SCRIPT_RUN_ACK : AstrOsPacketType::SCRIPT_RUN_NAK;
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+    }
+}
+
+static void handlePanicStop(astros_interface_response_t msg)
+{
+    AnimationCtrl.panicStop();
+}
+
+static void handleFormatSD(astros_interface_response_t msg)
+{
+    auto success = AstrOs_Storage.formatSdCard();
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::FORMAT_SD_ACK : AstrOsSerialMessageType::FORMAT_SD_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::FORMAT_SD_ACK : AstrOsPacketType::FORMAT_SD_NAK;
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+    }
 }

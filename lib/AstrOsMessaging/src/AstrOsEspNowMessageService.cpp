@@ -6,54 +6,51 @@
 #include <cstring>
 #include <cstdint>
 
-std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
+AstrOsEspNowMessageService::AstrOsEspNowMessageService()
 {
-    switch (type)
-    {
-    case AstrOsPacketType::REGISTRATION_REQ:
-        return AstrOsEspNowMessageService::generatePackets(type, AstrOsENC::REGISTRATION_REQ, "");
-        break;
-    case AstrOsPacketType::REGISTRATION:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::REGISTRATION_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::REGISTRATION_ACK), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::POLL:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL), mac);
-        break;
-    case AstrOsPacketType::POLL_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::POLL_ACK), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::CONFIG:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::CONFIG_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG_ACK), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::CONFIG_NAK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::CONFIG_NAK), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::SCRIPT_DEPLOY), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::SCRIPT_DEPLOY_ACK), mac + UNIT_SEPARATOR + message);
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        return AstrOsEspNowMessageService::generatePackets(type, std::string(AstrOsENC::SCRIPT_DEPLOY_NAK), mac + UNIT_SEPARATOR + message);
-        break;
-    default:
-        return AstrOsEspNowMessageService::generatePackets(type, "", message);
-        break;
-    }
-
-    return std::vector<astros_espnow_data_t>();
+    packetTypeMap[AstrOsPacketType::UNKNOWN] = AstrOsENC::UNKNOWN;
+    packetTypeMap[AstrOsPacketType::BASIC] = AstrOsENC::BASIC;
+    packetTypeMap[AstrOsPacketType::REGISTRATION_REQ] = AstrOsENC::REGISTRATION_REQ;
+    packetTypeMap[AstrOsPacketType::REGISTRATION] = AstrOsENC::REGISTRATION;
+    packetTypeMap[AstrOsPacketType::REGISTRATION_ACK] = AstrOsENC::REGISTRATION_ACK;
+    packetTypeMap[AstrOsPacketType::POLL] = AstrOsENC::POLL;
+    packetTypeMap[AstrOsPacketType::POLL_ACK] = AstrOsENC::POLL_ACK;
+    packetTypeMap[AstrOsPacketType::CONFIG] = AstrOsENC::CONFIG;
+    packetTypeMap[AstrOsPacketType::CONFIG_ACK] = AstrOsENC::CONFIG_ACK;
+    packetTypeMap[AstrOsPacketType::CONFIG_NAK] = AstrOsENC::CONFIG_NAK;
+    packetTypeMap[AstrOsPacketType::SCRIPT_DEPLOY] = AstrOsENC::SCRIPT_DEPLOY;
+    packetTypeMap[AstrOsPacketType::SCRIPT_DEPLOY_ACK] = AstrOsENC::SCRIPT_DEPLOY_ACK;
+    packetTypeMap[AstrOsPacketType::SCRIPT_DEPLOY_NAK] = AstrOsENC::SCRIPT_DEPLOY_NAK;
+    packetTypeMap[AstrOsPacketType::SCRIPT_RUN] = AstrOsENC::SCRIPT_RUN;
+    packetTypeMap[AstrOsPacketType::SCRIPT_RUN_ACK] = AstrOsENC::SCRIPT_RUN_ACK;
+    packetTypeMap[AstrOsPacketType::SCRIPT_RUN_NAK] = AstrOsENC::SCRIPT_RUN_NAK;
+    packetTypeMap[AstrOsPacketType::PANIC_STOP] = AstrOsENC::PANIC_STOP;
+    packetTypeMap[AstrOsPacketType::FORMAT_SD] = AstrOsENC::FORMAT_SD;
+    packetTypeMap[AstrOsPacketType::FORMAT_SD_ACK] = AstrOsENC::FORMAT_SD_ACK;
+    packetTypeMap[AstrOsPacketType::FORMAT_SD_NAK] = AstrOsENC::FORMAT_SD_NAK;
 }
 
-std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string validator, std::string message)
+AstrOsEspNowMessageService::~AstrOsEspNowMessageService()
+{
+}
+
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
+{
+    if (this->packetTypeMap.find(type) == this->packetTypeMap.end())
+    {
+        return std::vector<astros_espnow_data_t>();
+    }
+
+    auto msg = mac.size() > 0 && message.size() > 0 ? mac + UNIT_SEPARATOR + message : mac;
+
+    return AstrOsEspNowMessageService::generatePackets(type, msg);
+}
+
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string message)
 {
     std::vector<astros_espnow_data_t> packets;
+
+    auto validator = this->packetTypeMap[type];
 
     int messageLength = message.length();
     int totalPackets = 1;
@@ -142,88 +139,16 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
 /// @return number of bytes to remove from the payload
 int AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)
 {
+    auto validator = this->packetTypeMap[packet.packetType];
 
-    int validatorLength = -1;
-
-    switch (packet.packetType)
+    if (memcmp(packet.payload, validator.c_str(), validator.size()) != 0)
     {
-    case AstrOsPacketType::BASIC:
-        if ((memcmp(packet.payload, AstrOsENC::BASIC, strlen(AstrOsENC::BASIC)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::BASIC) + 1;
-        }
-        break;
-    case AstrOsPacketType::REGISTRATION_REQ:
-        if ((memcmp(packet.payload, AstrOsENC::REGISTRATION_REQ, strlen(AstrOsENC::REGISTRATION_REQ)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::REGISTRATION_REQ) + 1;
-        }
-        break;
-    case AstrOsPacketType::REGISTRATION:
-        if ((memcmp(packet.payload, AstrOsENC::REGISTRATION, strlen(AstrOsENC::REGISTRATION)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::REGISTRATION) + 1;
-        }
-        break;
-    case AstrOsPacketType::REGISTRATION_ACK:
-        if ((memcmp(packet.payload, AstrOsENC::REGISTRATION_ACK, strlen(AstrOsENC::REGISTRATION_ACK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::REGISTRATION_ACK) + 1;
-        }
-        break;
-    case AstrOsPacketType::POLL:
-        if ((memcmp(packet.payload, AstrOsENC::POLL, strlen(AstrOsENC::POLL)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::POLL) + 1;
-        }
-        break;
-    case AstrOsPacketType::POLL_ACK:
-        if ((memcmp(packet.payload, AstrOsENC::POLL_ACK, strlen(AstrOsENC::POLL_ACK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::POLL_ACK) + 1;
-        }
-        break;
-    case AstrOsPacketType::CONFIG:
-        if ((memcmp(packet.payload, AstrOsENC::CONFIG, strlen(AstrOsENC::CONFIG)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::CONFIG) + 1;
-        }
-        break;
-    case AstrOsPacketType::CONFIG_ACK:
-        if ((memcmp(packet.payload, AstrOsENC::CONFIG_ACK, strlen(AstrOsENC::CONFIG_ACK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::CONFIG_ACK) + 1;
-        }
-        break;
-    case AstrOsPacketType::CONFIG_NAK:
-        if ((memcmp(packet.payload, AstrOsENC::CONFIG_NAK, strlen(AstrOsENC::CONFIG_NAK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::CONFIG_NAK) + 1;
-        }
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY:
-        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY, strlen(AstrOsENC::SCRIPT_DEPLOY)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY) + 1;
-        }
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY_ACK, strlen(AstrOsENC::SCRIPT_DEPLOY_ACK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY_ACK) + 1;
-        }
-        break;
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        if ((memcmp(packet.payload, AstrOsENC::SCRIPT_DEPLOY_NAK, strlen(AstrOsENC::SCRIPT_DEPLOY_NAK)) == 0))
-        {
-            validatorLength = strlen(AstrOsENC::SCRIPT_DEPLOY_NAK) + 1;
-        }
-        break;
-    default:
-        break;
+        return -1;
     }
-
-    return validatorLength;
+    else
+    {
+        return validator.size() + 1;
+    }
 }
 
 uint8_t *AstrOsEspNowMessageService::generateId()
