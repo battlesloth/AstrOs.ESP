@@ -886,7 +886,7 @@ void AstrOsEspNow::sendScriptRun(std::string peer, std::string msgId, std::strin
     std::stringstream ss;
     ss << msgId << UNIT_SEPARATOR << scriptId;
 
-    ESP_LOGI(TAG, "Sending script deploy to %s", peer.c_str());
+    ESP_LOGI(TAG, "Sending script run to %s", peer.c_str());
 
     this->sendEspNowMessage(AstrOsPacketType::SCRIPT_RUN, peer, ss.str());
 }
@@ -1082,6 +1082,14 @@ AstrOsInterfaceResponseType AstrOsEspNow::getInterfaceResponseType(AstrOsPacketT
         return AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK;
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
         return AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK;
+    case AstrOsPacketType::SCRIPT_RUN_ACK:
+        return AstrOsInterfaceResponseType::SCRIPT_RUN_ACK;
+    case AstrOsPacketType::SCRIPT_RUN_NAK:
+        return AstrOsInterfaceResponseType::SCRIPT_RUN_NAK;
+    case AstrOsPacketType::FORMAT_SD_ACK:
+        return AstrOsInterfaceResponseType::FORMAT_SD_ACK;
+    case AstrOsPacketType::FORMAT_SD_NAK:
+        return AstrOsInterfaceResponseType::FORMAT_SD_NAK;
     default:
         return AstrOsInterfaceResponseType::UNKOWN;
     }
@@ -1163,7 +1171,7 @@ void AstrOsEspNow::sendEspNowMessage(AstrOsPacketType type, std::string peer, st
     {
         if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
         {
-            ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
+            ESP_LOGE(TAG, "Error sending packet type %d to " MACSTR, (int)type, MAC2STR(destMac));
         }
 
         free(packet.data);

@@ -603,8 +603,10 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
-            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_ACK:
-            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_NAK:
+            case AstrOsInterfaceResponseType::SCRIPT_RUN_ACK:
+            case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
+            case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
+            case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
             {
                 auto responseType = getSerialMessageType(msg.type);
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, "");
@@ -1102,13 +1104,13 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
         return AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK;
     case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
         return AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
-    case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_ACK:
+    case AstrOsInterfaceResponseType::SCRIPT_RUN_ACK:
         return AstrOsSerialMessageType::RUN_SCRIPT_ACK;
-    case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN_NAK:
+    case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
         return AstrOsSerialMessageType::RUN_SCRIPT_NAK;
-    case AstrOsInterfaceResponseType::SEND_FORMAT_SD_ACK:
+    case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
         return AstrOsSerialMessageType::FORMAT_SD_ACK;
-    case AstrOsInterfaceResponseType::SEND_FORMAT_SD_NAK:
+    case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
         return AstrOsSerialMessageType::FORMAT_SD_NAK;
 
     default:
@@ -1191,7 +1193,7 @@ static void handleSaveScript(astros_interface_response_t msg)
     }
     else
     {
-        success = AstrOs_Storage.saveFile(parts[0], parts[1]);
+        success = AstrOs_Storage.saveFile("scripts/" + parts[0], parts[1]);
     }
 
     if (isMasterNode)

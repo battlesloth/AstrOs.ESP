@@ -19,14 +19,14 @@ enum class AstrOsInterfaceResponseType
     SAVE_SCRIPT_NAK,
     SCRIPT_RUN,
     SEND_SCRIPT_RUN,
-    SEND_SCRIPT_RUN_ACK,
-    SEND_SCRIPT_RUN_NAK,
+    SCRIPT_RUN_ACK,
+    SCRIPT_RUN_NAK,
     PANIC_STOP,
     SEND_PANIC_STOP,
     FORMAT_SD,
     SEND_FORMAT_SD,
-    SEND_FORMAT_SD_ACK,
-    SEND_FORMAT_SD_NAK,
+    FORMAT_SD_ACK,
+    FORMAT_SD_NAK,
 };
 
 typedef struct
