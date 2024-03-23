@@ -708,38 +708,6 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
  * Configuration methods
  *******************************************/
 
-void AstrOsEspNow::sendConfigUpdate(std::string peer, std::string msgId, std::string msg)
-{
-    if (!this->findPeer(peer))
-    {
-        ESP_LOGW(TAG, "Peer not found in peer list for config send: %s", peer.c_str());
-        return;
-    }
-
-    auto peerMac = AstrOsStringUtils::stringToMac(peer);
-    uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
-    memcpy(destMac, peerMac, ESP_NOW_ETH_ALEN);
-
-    std::stringstream ss;
-    ss << msgId << UNIT_SEPARATOR << msg;
-
-    ESP_LOGI(TAG, "Sending config update to " MACSTR, MAC2STR(destMac));
-
-    auto data = this->messageService.generateEspNowMsg(AstrOsPacketType::CONFIG, peer, ss.str());
-
-    for (auto &packet : data)
-    {
-        if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
-        }
-
-        free(packet.data);
-    }
-
-    free(destMac);
-}
-
 bool AstrOsEspNow::handleConfig(astros_packet_t packet)
 {
 
@@ -820,22 +788,6 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
  * Script Deployment methods
  *******************************************/
 
-void AstrOsEspNow::sendScriptDeploy(std::string peer, std::string msgId, std::string script)
-{
-    if (!this->findPeer(peer))
-    {
-        ESP_LOGW(TAG, "Peer not found in peer list for script deploy send: %s", peer.c_str());
-        return;
-    }
-
-    std::stringstream ss;
-    ss << msgId << UNIT_SEPARATOR << script;
-
-    ESP_LOGI(TAG, "Sending script deploy to %s", peer.c_str());
-
-    this->sendEspNowMessage(AstrOsPacketType::SCRIPT_DEPLOY, peer, ss.str());
-}
-
 bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
 {
     std::string payload;
@@ -875,22 +827,6 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
  * Script Run methods
  *******************************************/
 
-void AstrOsEspNow::sendScriptRun(std::string peer, std::string msgId, std::string scriptId)
-{
-    if (!this->findPeer(peer))
-    {
-        ESP_LOGW(TAG, "Peer not found in peer list for script run send: %s", peer.c_str());
-        return;
-    }
-
-    std::stringstream ss;
-    ss << msgId << UNIT_SEPARATOR << scriptId;
-
-    ESP_LOGI(TAG, "Sending script run to %s", peer.c_str());
-
-    this->sendEspNowMessage(AstrOsPacketType::SCRIPT_RUN, peer, ss.str());
-}
-
 bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
 {
     std::string payload;
@@ -923,19 +859,6 @@ bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
     return true;
 }
 
-void AstrOsEspNow::sendPanicStop(std::string peer, std::string msgId)
-{
-    if (!this->findPeer(peer))
-    {
-        ESP_LOGW(TAG, "Peer not found in peer list for panic stop send: %s", peer.c_str());
-        return;
-    }
-
-    ESP_LOGI(TAG, "Sending panic stop to %s", peer.c_str());
-
-    this->sendEspNowMessage(AstrOsPacketType::PANIC_STOP, peer, msgId);
-}
-
 bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
 {
     std::string payload;
@@ -956,7 +879,7 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
     // 0 is dest mac, 1 is orgination msg id
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 2)
+    if (parts.size() < 3)
     {
         ESP_LOGE(TAG, "Invalid panic stop payload: %s", payload.c_str());
         return false;
@@ -970,19 +893,6 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
 /*******************************************
  * Utility Methods
  *******************************************/
-
-void AstrOsEspNow::sendFormatSD(std::string peer, std::string msgId)
-{
-    if (!this->findPeer(peer))
-    {
-        ESP_LOGW(TAG, "Peer not found in peer list for format sd send: %s", peer.c_str());
-        return;
-    }
-
-    ESP_LOGI(TAG, "Sending format sd to %s", peer.c_str());
-
-    this->sendEspNowMessage(AstrOsPacketType::FORMAT_SD, peer, msgId);
-}
 
 bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
 {
@@ -1004,7 +914,7 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
     // 0 is dest mac, 1 is orgination msg id
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
 
-    if (parts.size() < 2)
+    if (parts.size() < 3)
     {
         ESP_LOGE(TAG, "Invalid format sd payload: %s", payload.c_str());
         return false;
@@ -1019,6 +929,27 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
 /*******************************************
  * Common Methods
  *******************************************/
+
+/// @brief send a basic espnow message to the provided peer.
+/// @param type
+/// @param peer
+/// @param msgId
+/// @param msg
+void AstrOsEspNow::sendBasicCommand(AstrOsPacketType type, std::string peer, std::string msgId, std::string msg)
+{
+    if (!this->findPeer(peer))
+    {
+        ESP_LOGW(TAG, "Peer not found in peer list for script run send: %s", peer.c_str());
+        return;
+    }
+
+    std::stringstream ss;
+    ss << msgId << UNIT_SEPARATOR << msg;
+
+    ESP_LOGI(TAG, "Sending script run to %s for type %d", peer.c_str(), (int)type);
+
+    this->sendEspNowMessage(type, peer, ss.str());
+}
 
 /// @brief Sends a basic ack or nak to the master node for the provided packet type.
 /// @param msgId
@@ -1091,7 +1022,7 @@ AstrOsInterfaceResponseType AstrOsEspNow::getInterfaceResponseType(AstrOsPacketT
     case AstrOsPacketType::FORMAT_SD_NAK:
         return AstrOsInterfaceResponseType::FORMAT_SD_NAK;
     default:
-        return AstrOsInterfaceResponseType::UNKOWN;
+        return AstrOsInterfaceResponseType::UNKNOWN;
     }
 }
 

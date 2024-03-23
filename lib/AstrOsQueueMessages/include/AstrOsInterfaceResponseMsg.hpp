@@ -5,7 +5,7 @@
 
 enum class AstrOsInterfaceResponseType
 {
-    UNKOWN,
+    UNKNOWN,
     REGISTRATION_SYNC,
     SEND_POLL_ACK,
     SEND_POLL_NAK,

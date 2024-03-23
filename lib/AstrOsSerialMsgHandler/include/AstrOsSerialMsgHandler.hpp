@@ -2,6 +2,7 @@
 #define ASTROSSERIALMSGHANDLER_HPP
 
 #include <AstrOsMessaging.hpp>
+#include <AstrOsInterfaceResponseMsg.hpp>
 
 #include <string>
 #include <vector>
@@ -20,7 +21,12 @@ private:
     void handleRegistrationSync(std::string msgId);
     void handleDeployConfig(std::string msgId, std::string message);
     void handleDeployScript(std::string msgId, std::string message);
-    void handleRunScript(std::string msgId, std::string message);
+
+    void handleBasicCommand(AstrOsSerialMessageType type, std::string msgId, std::string message);
+
+    AstrOsInterfaceResponseType getResponseType(AstrOsSerialMessageType type, bool isMaster);
+    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId,
+                              std::string peerMac, std::string peerName, std::string message);
 
 public:
     AstrOsSerialMsgHandler();

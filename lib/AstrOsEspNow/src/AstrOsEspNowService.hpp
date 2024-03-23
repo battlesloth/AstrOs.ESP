@@ -92,13 +92,9 @@ public:
     bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
     void pollPadawans();
     void pollRepsonseTimeExpired();
-    void sendConfigUpdate(std::string peer, std::string msgId, std::string msg);
     void sendConfigAckNak(std::string msgId, bool success);
-    void sendScriptDeploy(std::string peer, std::string msgId, std::string msg);
-    void sendScriptRun(std::string peer, std::string msgId, std::string msg);
-    void sendPanicStop(std::string peer, std::string msgId);
-    void sendFormatSD(std::string peer, std::string msgId);
 
+    void sendBasicCommand(AstrOsPacketType type, std::string peer, std::string msgId, std::string msg);
     void sendBasicAckNak(std::string msgId, AstrOsPacketType type);
 
     std::string getMac();

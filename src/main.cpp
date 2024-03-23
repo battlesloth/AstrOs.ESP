@@ -556,7 +556,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG:
             {
-                AstrOs_EspNow.sendConfigUpdate(msg.peerMac, msg.originationMsgId, msg.message);
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::CONFIG, msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
             case AstrOsInterfaceResponseType::SAVE_SCRIPT:
@@ -566,7 +566,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_SCRIPT:
             {
-                AstrOs_EspNow.sendScriptDeploy(msg.peerMac, msg.originationMsgId, msg.message);
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_DEPLOY, msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
             case AstrOsInterfaceResponseType::SCRIPT_RUN:
@@ -576,7 +576,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN:
             {
-                AstrOs_EspNow.sendScriptRun(msg.peerMac, msg.originationMsgId, msg.message);
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_RUN, msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
             case AstrOsInterfaceResponseType::PANIC_STOP:
@@ -586,7 +586,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_PANIC_STOP:
             {
-                AstrOs_EspNow.sendPanicStop(msg.peerMac, msg.originationMsgId);
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::PANIC_STOP, msg.peerMac, msg.originationMsgId, "PANIC");
                 break;
             }
             case AstrOsInterfaceResponseType::FORMAT_SD:
@@ -596,7 +596,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SEND_FORMAT_SD:
             {
-                AstrOs_EspNow.sendFormatSD(msg.peerMac, msg.originationMsgId);
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::FORMAT_SD, msg.peerMac, msg.originationMsgId, "FORMATSD");
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
