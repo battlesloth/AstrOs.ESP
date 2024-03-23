@@ -748,7 +748,7 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     this->getMasterMac(destMac);
 
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << msgId << UNIT_SEPARATOR << this->getFingerprint();
+    ss << msgId << UNIT_SEPARATOR << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
     auto ackNak = success ? AstrOsPacketType::CONFIG_ACK : AstrOsPacketType::CONFIG_NAK;
 
@@ -779,7 +779,7 @@ bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
 
     auto responseType = this->getInterfaceResponseType(packet.packetType);
 
-    this->sendToInterfaceQueue(responseType, parts[0], parts[1], parts[2], parts[3]);
+    this->sendToInterfaceQueue(responseType, parts[1], parts[0], parts[2], parts[3]);
 
     return true;
 }
