@@ -939,14 +939,14 @@ void AstrOsEspNow::sendBasicCommand(AstrOsPacketType type, std::string peer, std
 {
     if (!this->findPeer(peer))
     {
-        ESP_LOGW(TAG, "Peer not found in peer list for script run send: %s", peer.c_str());
+        ESP_LOGW(TAG, "Peer not found in peer list for command %d to: %s", (int)type, peer.c_str());
         return;
     }
 
     std::stringstream ss;
     ss << msgId << UNIT_SEPARATOR << msg;
 
-    ESP_LOGI(TAG, "Sending script run to %s for type %d", peer.c_str(), (int)type);
+    ESP_LOGI(TAG, "Sending command run to %s for type %d", peer.c_str(), (int)type);
 
     this->sendEspNowMessage(type, peer, ss.str());
 }
