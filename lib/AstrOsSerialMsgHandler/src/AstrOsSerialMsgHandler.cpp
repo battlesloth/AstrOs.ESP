@@ -185,6 +185,12 @@ AstrOsInterfaceResponseType AstrOsSerialMsgHandler::getResponseType(AstrOsSerial
             return AstrOsInterfaceResponseType::SAVE_SCRIPT;
         case AstrOsSerialMessageType::RUN_SCRIPT:
             return AstrOsInterfaceResponseType::SCRIPT_RUN;
+        case AstrOsSerialMessageType::PANIC_STOP:
+            return AstrOsInterfaceResponseType::PANIC_STOP;
+        case AstrOsSerialMessageType::FORMAT_SD:
+            return AstrOsInterfaceResponseType::FORMAT_SD;
+        case AstrOsSerialMessageType::RUN_COMMAND:
+            return AstrOsInterfaceResponseType::COMMAND;
         default:
             return AstrOsInterfaceResponseType::UNKNOWN;
         }
@@ -199,6 +205,12 @@ AstrOsInterfaceResponseType AstrOsSerialMsgHandler::getResponseType(AstrOsSerial
             return AstrOsInterfaceResponseType::SEND_SCRIPT;
         case AstrOsSerialMessageType::RUN_SCRIPT:
             return AstrOsInterfaceResponseType::SEND_SCRIPT_RUN;
+        case AstrOsSerialMessageType::PANIC_STOP:
+            return AstrOsInterfaceResponseType::SEND_PANIC_STOP;
+        case AstrOsSerialMessageType::FORMAT_SD:
+            return AstrOsInterfaceResponseType::SEND_FORMAT_SD;
+        case AstrOsSerialMessageType::RUN_COMMAND:
+            return AstrOsInterfaceResponseType::SEND_COMMAND;
         default:
             return AstrOsInterfaceResponseType::UNKNOWN;
         }

@@ -27,6 +27,10 @@ enum class AstrOsInterfaceResponseType
     SEND_FORMAT_SD,
     FORMAT_SD_ACK,
     FORMAT_SD_NAK,
+    COMMAND,
+    SEND_COMMAND,
+    COMMAND_ACK,
+    COMMAND_NAK,
 };
 
 typedef struct

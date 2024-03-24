@@ -27,6 +27,10 @@ AstrOsSerialMessageService::AstrOsSerialMessageService()
         {AstrOsSerialMessageType::RUN_COMMAND, AstrOsSC::RUN_COMMAND},
         {AstrOsSerialMessageType::RUN_COMMAND_ACK, AstrOsSC::RUN_COMMAND_ACK},
         {AstrOsSerialMessageType::RUN_COMMAND_NAK, AstrOsSC::RUN_COMMAND_NAK},
+        {AstrOsSerialMessageType::FORMAT_SD, AstrOsSC::FORMAT_SD},
+        {AstrOsSerialMessageType::FORMAT_SD_ACK, AstrOsSC::FORMAT_SD_ACK},
+        {AstrOsSerialMessageType::FORMAT_SD_NAK, AstrOsSC::FORMAT_SD_NAK},
+        {AstrOsSerialMessageType::PANIC_STOP, AstrOsSC::PANIC_STOP},
     };
 }
 
