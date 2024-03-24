@@ -599,8 +599,13 @@ void interfaceResponseQueueTask(void *arg)
                 AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::FORMAT_SD, msg.peerMac, msg.originationMsgId, "FORMATSD");
                 break;
             }
-            case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
             case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+            {
+                auto responseType = getSerialMessageType(msg.type);
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
             case AstrOsInterfaceResponseType::SCRIPT_RUN_ACK:

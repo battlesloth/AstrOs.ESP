@@ -142,19 +142,19 @@ void AstrOsSerialMsgHandler::handleBasicCommand(AstrOsSerialMessageType type, st
 
         if (msgParts.size() != 3)
         {
-            ESP_LOGE(TAG, "Invalid script: %s", controller.c_str());
+            ESP_LOGE(TAG, "Invalid command: %s", controller.c_str());
             continue;
         }
 
         if (msgParts[0].empty())
         {
-            ESP_LOGW(TAG, "Empty script destination: %s", controller.c_str());
+            ESP_LOGW(TAG, "Empty command destination: %s", controller.c_str());
             continue;
         }
 
         if (msgParts[2].empty())
         {
-            ESP_LOGW(TAG, "Empty script: %s", controller.c_str());
+            ESP_LOGW(TAG, "Empty command value: %s", controller.c_str());
             continue;
         }
 
