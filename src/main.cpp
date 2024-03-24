@@ -408,9 +408,9 @@ static void animationTimerCallback(void *arg)
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
             queue_msg_t msg;
-            msg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
-            memcpy(msg.data, val.c_str(), strlen(val.c_str()));
-            msg.data[sizeof(msg.data) - 1] = '\0';
+            msg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(msg.data, val.c_str(), val.size());
+            msg.data[val.size()] = '\0';
 
             xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
             break;
@@ -419,9 +419,9 @@ static void animationTimerCallback(void *arg)
         {
             ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
             queue_msg_t servoMsg;
-            servoMsg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
-            memcpy(servoMsg.data, val.c_str(), strlen(val.c_str()));
-            servoMsg.data[sizeof(servoMsg.data) - 1] = '\0';
+            servoMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(servoMsg.data, val.c_str(), val.size());
+            servoMsg.data[val.size()] = '\0';
 
             xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
             break;
@@ -430,9 +430,9 @@ static void animationTimerCallback(void *arg)
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
             queue_msg_t i2cMsg;
-            i2cMsg.data = (uint8_t *)malloc(strlen(val.c_str()) + 1);
-            memcpy(i2cMsg.data, val.c_str(), strlen(val.c_str()));
-            i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
+            i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(i2cMsg.data, val.c_str(), val.size());
+            i2cMsg.data[val.size()] = '\0';
 
             xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
             break;

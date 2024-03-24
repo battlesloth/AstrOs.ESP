@@ -2,6 +2,7 @@
 #include <AnimationCommon.hpp>
 #include <string>
 #include <vector>
+#include <esp_log.h>
 
 CommandTemplate::CommandTemplate(CommandType type, std::string val) : val(std::move(val))
 {
@@ -85,6 +86,19 @@ SerialCommand::SerialCommand(std::string val)
 
     str_vec_t parts = SplitTemplate(val);
 
+    if (parts.size() < 4)
+    {
+        ESP_LOGE("SerialCommand", "Invalid number of parts in command: %s", val.c_str());
+        SerialCommand::type = CommandType::None;
+        SerialCommand::serialChannel = -1;
+        SerialCommand::ch = -1;
+        SerialCommand::cmd = -1;
+        SerialCommand::spd = -1;
+        SerialCommand::pos = -1;
+        SerialCommand::value = "";
+        return;
+    }
+
     SerialCommand::type = static_cast<CommandType>(std::stoi(parts.at(0)));
 
     SerialCommand::serialChannel = std::stoi(parts.at(2));
@@ -156,18 +170,35 @@ std::string SerialCommand::ToKangarooCommand()
 
 ServoCommand::ServoCommand(std::string val)
 {
-
     str_vec_t parts = SplitTemplate(val);
+
+    if (parts.size() < 5)
+    {
+        ESP_LOGE("ServoCommand", "Invalid number of parts in command: %s", val.c_str());
+        ServoCommand::channel = -1;
+        ServoCommand::position = -1;
+        ServoCommand::speed = -1;
+        return;
+    }
 
     ServoCommand::channel = std::stoi(parts.at(2));
     ServoCommand::position = std::stoi(parts.at(3));
     ServoCommand::speed = std::stoi(parts.at(4));
 }
+
 ServoCommand::~ServoCommand() {}
 
 I2cCommand::I2cCommand(std::string val)
 {
     str_vec_t parts = SplitTemplate(val);
+
+    if (parts.size() < 4)
+    {
+        ESP_LOGE("I2cCommand", "Invalid number of parts in command: %s", val.c_str());
+        I2cCommand::channel = -1;
+        I2cCommand::value = "";
+        return;
+    }
 
     I2cCommand::channel = std::stoi(parts.at(2));
     I2cCommand::value = parts.at(3);
