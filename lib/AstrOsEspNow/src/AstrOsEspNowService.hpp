@@ -95,7 +95,7 @@ public:
     void sendConfigAckNak(std::string msgId, bool success);
 
     void sendBasicCommand(AstrOsPacketType type, std::string peer, std::string msgId, std::string msg);
-    void sendBasicAckNak(std::string msgId, AstrOsPacketType type);
+    void sendBasicAckNak(std::string msgId, AstrOsPacketType type, std::string msg);
 
     std::string getMac();
     std::string getName();

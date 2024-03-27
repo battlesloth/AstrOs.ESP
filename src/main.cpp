@@ -31,22 +31,12 @@
 static const char *TAG = AstrOsConstants::ModuleName;
 
 /**********************************
- * Jedi Knight or Padawan
- **********************************/
-#ifdef JEDI_KNIGHT
-#define isMasterNode true
-#define rank "Jedi Knight"
-#define ASTRO_PORT UART_NUM_1
-#else
-#define isMasterNode false
-#define rank "Padawan"
-#define ASTRO_PORT UART_NUM_0
-#endif
-
-/**********************************
  * States
  **********************************/
 static bool discoveryMode = false;
+static bool isMasterNode = false;
+static uint8_t ASTRO_PORT = UART_NUM_0;
+static std::string rank = "Padawan";
 
 /**********************************
  * queues
@@ -124,6 +114,8 @@ static esp_timer_handle_t animationTimer;
  *********************************/
 void init(void);
 
+static void loadConfig();
+
 static void initTimers(void);
 static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
@@ -154,7 +146,7 @@ static void handleSetConfig(astros_interface_response_t msg);
 static void handleSaveScript(astros_interface_response_t msg);
 static void handleRunSctipt(astros_interface_response_t msg);
 static void handlePanicStop(astros_interface_response_t msg);
-static void handleFormatSD(astros_interface_response_t msg);
+static void handleFormatSD(std::string id);
 
 esp_err_t mountSdCard(void);
 
@@ -202,6 +194,8 @@ void init(void)
 
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
 
+    loadConfig();
+
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialQueue);
@@ -230,6 +224,7 @@ void init(void)
     {
         serialConf.baudRate1 = 9600;
     }
+
     serialConf.txPin1 = TX_PIN_1;
     serialConf.rxPin1 = RX_PIN_1;
     serialConf.baudRate2 = BAUD_RATE_2;
@@ -591,7 +586,20 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::FORMAT_SD:
             {
-                handleFormatSD(msg);
+                auto id = std::string(msg.originationMsgId);
+
+                queue_svc_cmd_t cmd;
+                cmd.cmd = SERVICE_COMMAND::FORMAT_SD;
+                cmd.data = (uint8_t *)malloc(id.size() + 1); // dummy data
+                memccpy(cmd.data, id.c_str(), 0, id.size());
+                cmd.data[id.size()] = '\0';
+                cmd.dataSize = id.size() + 1;
+
+                if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send espnow queue fail");
+                    free(cmd.data);
+                }
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_FORMAT_SD:
@@ -614,7 +622,7 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
             {
                 auto responseType = getSerialMessageType(msg.type);
-                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, "");
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
                 break;
             }
             default:
@@ -698,6 +706,12 @@ void serviceQueueTask(void *arg)
 
             switch (msg.cmd)
             {
+            case SERVICE_COMMAND::FORMAT_SD:
+            {
+                ESP_LOGI(TAG, "Formatting SD card");
+                std::string data(reinterpret_cast<char *>(msg.data), msg.dataSize);
+                handleFormatSD(data);
+            }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
             {
                 discoveryMode = true;
@@ -1028,6 +1042,41 @@ void espnowQueueTask(void *arg)
 }
 
 /**********************************
+ * Configuration Methods
+ *********************************/
+
+static void loadConfig()
+{
+    auto cfig = AstrOs_Storage.readFile("config.txt");
+
+    if (cfig != "error")
+    {
+        ESP_LOGI(TAG, "Service config file: %s", cfig.c_str());
+
+        auto lines = AstrOsStringUtils::splitString(cfig, '\n');
+
+        for (auto line : lines)
+        {
+            auto parts = AstrOsStringUtils::splitString(line, '=');
+
+            if (parts.size() == 2)
+            {
+                if (parts[0] == "isMasterNode")
+                {
+                    isMasterNode = parts[1] == "true";
+                    ASTRO_PORT = isMasterNode ? UART_NUM_1 : UART_NUM_0;
+                    rank = isMasterNode ? "Master" : "Padawan";
+                }
+            }
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Service config file not found");
+    }
+}
+
+/**********************************
  * callbacks
  *********************************/
 
@@ -1205,12 +1254,12 @@ static void handleSaveScript(astros_interface_response_t msg)
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
 
-        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", parts[0]);
     }
     else
     {
         auto ackNak = success ? AstrOsPacketType::SCRIPT_DEPLOY_ACK : AstrOsPacketType::SCRIPT_DEPLOY_NAK;
-        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak, parts[0]);
     }
 }
 
@@ -1234,12 +1283,12 @@ static void handleRunSctipt(astros_interface_response_t msg)
     {
         auto ackNak = success ? AstrOsSerialMessageType::RUN_SCRIPT_ACK : AstrOsSerialMessageType::RUN_SCRIPT_NAK;
 
-        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", parts[0]);
     }
     else
     {
         auto ackNak = success ? AstrOsPacketType::SCRIPT_RUN_ACK : AstrOsPacketType::SCRIPT_RUN_NAK;
-        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak, parts[0]);
     }
 }
 
@@ -1248,19 +1297,26 @@ static void handlePanicStop(astros_interface_response_t msg)
     AnimationCtrl.panicStop();
 }
 
-static void handleFormatSD(astros_interface_response_t msg)
+static void handleFormatSD(std::string id)
 {
+    auto cfig = AstrOs_Storage.readFile("config.txt");
+
     auto success = AstrOs_Storage.formatSdCard();
+
+    if (cfig != "error")
+    {
+        AstrOs_Storage.saveFile("config.txt", cfig);
+    }
 
     if (isMasterNode)
     {
         auto ackNak = success ? AstrOsSerialMessageType::FORMAT_SD_ACK : AstrOsSerialMessageType::FORMAT_SD_NAK;
 
-        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "");
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, id, AstrOs_EspNow.getMac(), "master", "FORMAT");
     }
     else
     {
         auto ackNak = success ? AstrOsPacketType::FORMAT_SD_ACK : AstrOsPacketType::FORMAT_SD_NAK;
-        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak);
+        AstrOs_EspNow.sendBasicAckNak(id, ackNak, "FORMAT");
     }
 }

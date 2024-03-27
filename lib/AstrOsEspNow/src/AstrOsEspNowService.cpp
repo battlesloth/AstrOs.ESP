@@ -954,7 +954,7 @@ void AstrOsEspNow::sendBasicCommand(AstrOsPacketType type, std::string peer, std
 /// @brief Sends a basic ack or nak to the master node for the provided packet type.
 /// @param msgId
 /// @param type
-void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type)
+void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std::string msg)
 {
     uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
 
@@ -991,9 +991,20 @@ bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
         return false;
     }
 
+    std::string msg;
+
+    if (parts.size() > 3)
+    {
+        msg = parts[3];
+    }
+    else
+    {
+        msg = "na";
+    }
+
     auto responseType = this->getInterfaceResponseType(packet.packetType);
 
-    this->sendToInterfaceQueue(responseType, parts[0], parts[1], parts[2], "");
+    this->sendToInterfaceQueue(responseType, parts[2], parts[0], parts[1], msg);
 
     return true;
 }
