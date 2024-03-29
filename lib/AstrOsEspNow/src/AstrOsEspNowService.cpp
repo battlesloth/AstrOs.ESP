@@ -961,7 +961,7 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
     this->getMasterMac(destMac);
 
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << msgId;
+    ss << this->getName() << UNIT_SEPARATOR << msgId << UNIT_SEPARATOR << msg;
 
     auto packet = this->messageService.generateEspNowMsg(type, this->getMac(), ss.str())[0];
 
