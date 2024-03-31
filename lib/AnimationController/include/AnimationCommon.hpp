@@ -1,0 +1,15 @@
+#ifndef ANIMATIONCOMMON_H
+#define ANIMATIONCOMMON_H
+
+typedef enum
+{
+    NONE,
+    START,
+    HOME,
+    SPEED,
+    POSITION,
+    SPEED_INCREMENTAL,
+    POSITION_INCREMENTAL
+} KANGAROO_ACTION;
+
+#endif

@@ -3,45 +3,52 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
-#include "esp_timer.h"
-#include "esp_netif.h"
+#include <esp_timer.h>
+#include <esp_netif.h>
 #include <driver/rmt.h>
 #include <esp_log.h>
 #include <driver/uart.h>
 #include <nvs_flash.h>
 #include <esp_event.h>
 #include <esp_random.h>
+#include <string.h>
 
-#include <AstrOsInterface.h>
-#include <KangarooInterface.h>
-#include <AnimationController.h>
-#include <AnimationCommand.h>
-#include <SerialModule.h>
-#include <ServoModule.h>
-#include <I2cModule.h>
+#include <AstrOsSerialMsgHandler.hpp>
+#include <AnimationController.hpp>
+#include <AnimationCommand.hpp>
+#include <AstrOsDisplay.hpp>
+#include <SerialModule.hpp>
+#include <ServoModule.hpp>
+#include <I2cModule.hpp>
 #include <AstrOsUtility.h>
-#include <AstrOsNetwork.h>
-#include <AstrOsConstants.h>
-#include <StorageManager.h>
+#include <AstrOsUtility_Esp.h>
+#include <AstrOsEspNow.h>
+#include <AstrOsNames.h>
+#include <AstrOsStorageManager.hpp>
+#include <AstrOsInterfaceResponseMsg.hpp>
+#include <guid.h>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
 /**********************************
- * network
+ * States
  **********************************/
-static const char *WIFI_AP_SSID = AstrOsConstants::ApSsid;
-static const char *WIFI_AP_PASS = AstrOsConstants::Password;
+static bool discoveryMode = false;
+static bool isMasterNode = false;
+static uint8_t ASTRO_PORT = UART_NUM_0;
+static std::string rank = "Padawan";
 
 /**********************************
  * queues
  **********************************/
 
 static QueueHandle_t animationQueue;
-static QueueHandle_t hardwareQueue;
+static QueueHandle_t interfaceResponseQueue;
 static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
+static QueueHandle_t espnowQueue;
 
 /**********************************
  * UART
@@ -49,12 +56,12 @@ static QueueHandle_t i2cQueue;
 
 static const int RX_BUF_SIZE = 1024;
 
-#define ASTRO_PORT UART_NUM_0
-#define KANGAROO_PORT UART_NUM_1
-
 /**********************************
  * timers
  **********************************/
+
+static esp_timer_handle_t pollingTimer;
+static bool polling = false;
 
 static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
@@ -68,71 +75,101 @@ static esp_timer_handle_t animationTimer;
  * Reset Button
  **********************************/
 #define RESET_GPIO (GPIO_NUM_13)
-#define LONG_PRESS_THRESHOLD_MS 3000 // 3 seconds
+#define MEDIUM_PRESS_THRESHOLD_MS 3000 // 3 second
+#define LONG_PRESS_THRESHOLD_MS 10000  // 10 seconds
 
 /**********************************
- * Kangaroo Interface
+ * Serial Settings
  **********************************/
+#define ASTROS_INTEFACE_BAUD_RATE (115200)
 
-#ifdef DARTHSERVO
-#define KI_TX_PIN (GPIO_NUM_16)
-#define KI_RX_PIN (GPIO_NUM_3)
-#else
 #define BAUD_RATE_1 (9600)
 #define TX_PIN_1 (GPIO_NUM_2)
-#define RX_PIN_1 (GPIO_NUM_0)
+#define RX_PIN_1 (GPIO_NUM_15)
 #define BAUD_RATE_2 (9600)
 #define TX_PIN_2 (GPIO_NUM_32)
 #define RX_PIN_2 (GPIO_NUM_33)
 #define BAUD_RATE_3 (9600)
 #define TX_PIN_3 (GPIO_NUM_12)
 #define RX_PIN_3 (GPIO_NUM_13)
-#endif
 
 /**********************************
  * I2C Settings
  **********************************/
-#ifdef DARTHSERVO
-#define SDA_PIN (GPIO_NUM_18)
-#define SCL_PIN (GPIO_NUM_17)
-#else
+
 #define SDA_PIN (GPIO_NUM_21)
 #define SCL_PIN (GPIO_NUM_22)
-#endif
-#define I2C_PORT 0
+
+#define I2C_PORT I2C_NUM_0
 
 /**********************************
  * Servo Settings
  **********************************/
-#ifdef DARTHSERVO
+
 #define SERVO_BOARD_0_ADDR 0x40
 #define SERVO_BOARD_1_ADDR 0x41
-#else
-#define SERVO_BOARD_0_ADDR 0x40
-#define SERVO_BOARD_1_ADDR 0x41
-#endif
 
 /**********************************
  * Method definitions
  *********************************/
+void init(void);
+
+static void loadConfig();
+
 static void initTimers(void);
+static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 
+// espnow call backs
+bool cachePeer(espnow_peer_t peer);
+void updateSeviceConfig(std::string name, uint8_t *mac);
+void displaySetDefault(std::string line1, std::string line2, std::string line3);
+static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status);
+static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
+
+// tasks
 void buttonListenerTask(void *arg);
 void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
-void hardwareQueueTask(void *arg);
+void interfaceResponseQueueTask(void *arg);
 void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
+void espnowQueueTask(void *arg);
+
+// handlers
+static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
+static void handleRegistrationSync(astros_interface_response_t msg);
+static void handleSetConfig(astros_interface_response_t msg);
+static void handleSaveScript(astros_interface_response_t msg);
+static void handleRunSctipt(astros_interface_response_t msg);
+static void handlePanicStop(astros_interface_response_t msg);
+static void handleFormatSD(std::string id);
 
 esp_err_t mountSdCard(void);
 
 extern "C"
 {
     void app_main(void);
+}
+
+void app_main()
+{
+    init();
+
+    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
+    xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL, 1);
+    xTaskCreatePinnedToCore(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
+    xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
+    xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
+
+    initTimers();
 }
 
 void init(void)
@@ -149,21 +186,19 @@ void init(void)
 
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
-    hardwareQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_hw_cmd_t));
+    interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
-    ESP_ERROR_CHECK(Storage.Init());
+    ESP_ERROR_CHECK(AstrOs_Storage.Init());
 
-    ESP_ERROR_CHECK(uart_driver_install(ASTRO_PORT, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    loadConfig();
 
-    // init TCP/IP stack
-    ESP_ERROR_CHECK(esp_netif_init());
-    // init defult background loop
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs.Init(animationQueue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     i2c_config_t conf;
@@ -181,15 +216,23 @@ void init(void)
 
     serial_config_t serialConf;
 
-    serialConf.baudRate1 = 9600;
+    if (isMasterNode)
+    {
+        serialConf.baudRate1 = ASTROS_INTEFACE_BAUD_RATE;
+    }
+    else
+    {
+        serialConf.baudRate1 = 9600;
+    }
+
     serialConf.txPin1 = TX_PIN_1;
     serialConf.rxPin1 = RX_PIN_1;
-    serialConf.baudRate2 = 9600;
+    serialConf.baudRate2 = BAUD_RATE_2;
     serialConf.txPin2 = TX_PIN_2;
     serialConf.rxPin2 = RX_PIN_2;
-    serialConf.baudRate3 = 9600;
+    serialConf.baudRate3 = BAUD_RATE_3;
     serialConf.txPin3 = TX_PIN_3;
-    serialConf.rxPin3 = RX_PIN_3; 
+    serialConf.rxPin3 = RX_PIN_3;
 
     ESP_ERROR_CHECK(SerialMod.Init(serialConf));
     ESP_LOGI(TAG, "Serial Module initiated");
@@ -200,57 +243,55 @@ void init(void)
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
 
-    initTimers();
+    svc_config_t svcConfig;
 
-    const char alphanum[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    const int string_length = 3;
-    std::string random_string(WIFI_AP_SSID);
-
-    for (int i = 0; i < string_length; ++i) {
-        int num = esp_random() % (sizeof(alphanum) - 1);
-        
-        ESP_LOGI(TAG, "%d", num);
-        ESP_LOGI(TAG, "%c", alphanum[num]);
-        random_string += alphanum[num];
-    }
-
-    ESP_LOGI(TAG, "%s", random_string.c_str());
-
-    ESP_ERROR_CHECK(astrOsNetwork.init(random_string.c_str(), WIFI_AP_PASS, serviceQueue, animationQueue, hardwareQueue));
-}
-
-void app_main()
-{
-    init();
-
-    xTaskCreate(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 10, NULL);
-    xTaskCreate(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 10, NULL);
-    xTaskCreate(&hardwareQueueTask, "hardware_queue_task", 4096, (void *)hardwareQueue, 10, NULL);
-    xTaskCreate(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 10, NULL);
-    xTaskCreate(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL);
-    xTaskCreate(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 10, NULL);
-
-    xTaskCreate(&astrosRxTask, "astros_rx_task", 2048, (void *)animationQueue, 10, NULL);
-
-    svc_config_t config;
-
-    if (Storage.loadServiceConfig(&config))
+    if (AstrOs_Storage.loadServiceConfig(&svcConfig))
     {
-        ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID);
-
-        std::string temp = std::string(config.networkPass);
-
-        temp.replace(temp.begin() + 1, temp.end() - 1, std::string(temp.length() - 2, '*'));
-
-        ESP_LOGI(TAG, "Network Password: %s", temp.c_str());
-
-        astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
+        ESP_LOGI(TAG, "Master MAC address loaded from AstrOs_Storage. " MACSTR, MAC2STR(svcConfig.masterMacAddress));
     }
     else
     {
-        astrOsNetwork.startWifiAp();
+        ESP_LOGI(TAG, "Service config not found in storage.");
     }
+
+    auto name = std::string(svcConfig.name, strlen(svcConfig.name));
+    auto fingerprint = std::string(svcConfig.fingerprint, strlen(svcConfig.fingerprint));
+    // reinterpret_cast<char *>
+    int peerCount = 0;
+    espnow_peer_t peerList[10] = {};
+
+    // Load current peer list.
+    peerCount = AstrOs_Storage.loadEspNowPeerConfigs(peerList);
+
+    ESP_LOGI(TAG, "Loaded %d peers", peerCount);
+
+    for (int i = 0; i < peerCount; i++)
+    {
+        ESP_LOGI(TAG, "Peer %s: " MACSTR, peerList[i].name, MAC2STR(peerList[i].mac_addr));
+    }
+
+    astros_espnow_config_t config = {
+        .masterMac = svcConfig.masterMacAddress,
+        .name = name,
+        .fingerprint = fingerprint,
+        .isMaster = isMasterNode,
+        .peers = peerList,
+        .peerCount = peerCount,
+        .serviceQueue = serviceQueue,
+        .interfaceQueue = interfaceResponseQueue,
+        .espnowSend_cb = &espnowSendCallback,
+        .espnowRecv_cb = &espnowRecvCallback,
+        .cachePeer_cb = &cachePeer,
+        .updateSeviceConfig_cb = &updateSeviceConfig,
+        .displayUpdate_cb = &displaySetDefault};
+
+    ESP_LOGI(TAG, "Master MAC: " MACSTR, MAC2STR(config.masterMac));
+    ESP_LOGI(TAG, "Name: %s", config.name.c_str());
+    ESP_LOGI(TAG, "Fingerprint: %s", config.fingerprint.c_str());
+
+    AstrOs_EspNow.init(config);
+    AstrOs_Display.init(i2cQueue);
+    AstrOs_Display.setDefault(rank, "", name);
 }
 
 /******************************************
@@ -259,18 +300,34 @@ void app_main()
 
 static void initTimers(void)
 {
+
+    const esp_timer_create_args_t pTimerArgs = {
+        .callback = &pollingTimerCallback,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "polling",
+        .skip_unhandled_events = true};
+
     const esp_timer_create_args_t aTimerArgs = {
         .callback = &animationTimerCallback,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
         .name = "animation",
         .skip_unhandled_events = true};
 
     const esp_timer_create_args_t mTimerArgs = {
         .callback = &maintenanceTimerCallback,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
         .name = "maintenance",
         .skip_unhandled_events = true};
 
+    ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(pollingTimer, 2 * 1000 * 1000));
+    ESP_LOGI("init_timer", "Started polling timer");
+
     ESP_ERROR_CHECK(esp_timer_create(&aTimerArgs, &animationTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5000 * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started animation timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
@@ -278,9 +335,53 @@ static void initTimers(void)
     ESP_LOGI("init_timer", "Started maintenance timer");
 }
 
+static void pollingTimerCallback(void *arg)
+{
+    ESP_LOGI(TAG, "Heartbeat");
+
+    // only send register requests during discovery mode
+    if (isMasterNode && !discoveryMode)
+    {
+        queue_espnow_msg_t msg;
+        msg.data = nullptr;
+
+        if (!polling)
+        {
+            msg.eventType = POLL_PADAWANS;
+            polling = true;
+
+            char *fingerprint = (char *)malloc(37);
+            AstrOs_Storage.getControllerFingerprint(fingerprint);
+            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master",
+                                                   std::string(fingerprint), true);
+        }
+        else
+        {
+            msg.eventType = EXPIRE_POLLS;
+            polling = false;
+        }
+
+        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send espnow queue fail");
+        }
+    }
+    else if (!isMasterNode && discoveryMode)
+    {
+        queue_espnow_msg_t msg;
+        msg.data = nullptr;
+
+        msg.eventType = SEND_REGISTRAION_REQ;
+
+        if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(250)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send espnow queue fail");
+        }
+    }
+}
+
 static void maintenanceTimerCallback(void *arg)
 {
-
     ESP_LOGI(TAG, "RAM left %lu", esp_get_free_heap_size());
 }
 
@@ -301,27 +402,33 @@ static void animationTimerCallback(void *arg)
         case CommandType::GenericSerial:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
-            queue_msg_t msg = {0, 0};
-            strncpy(msg.data, val.c_str(), sizeof(msg.data));
-            msg.data[sizeof(msg.data) - 1] = '\0';
+            queue_msg_t msg;
+            msg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(msg.data, val.c_str(), val.size());
+            msg.data[val.size()] = '\0';
+
             xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
             break;
         }
         case CommandType::PWM:
         {
             ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
-            queue_msg_t servoMsg = {0, 0};
-            strncpy(servoMsg.data, val.c_str(), sizeof(servoMsg.data));
-            servoMsg.data[sizeof(servoMsg.data) - 1] = '\0';
+            queue_msg_t servoMsg;
+            servoMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(servoMsg.data, val.c_str(), val.size());
+            servoMsg.data[val.size()] = '\0';
+
             xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
             break;
         }
         case CommandType::I2C:
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
-            queue_msg_t i2cMsg = {0, 0};
-            strncpy(i2cMsg.data, val.c_str(), sizeof(i2cMsg.data));
-            i2cMsg.data[sizeof(i2cMsg.data) - 1] = '\0';
+            queue_msg_t i2cMsg;
+            i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(i2cMsg.data, val.c_str(), val.size());
+            i2cMsg.data[val.size()] = '\0';
+
             xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
             break;
         }
@@ -345,14 +452,9 @@ static void animationTimerCallback(void *arg)
 
 void buttonListenerTask(void *arg)
 {
-
-    QueueHandle_t svcQueue;
-
-    svcQueue = (QueueHandle_t)arg;
     uint32_t buttonStartTime = 0;
-    bool restartSent = false;
+    bool buttonHandled = true;
 
-    uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
     while (1)
     {
         if (gpio_get_level(RESET_GPIO) == 0)
@@ -360,51 +462,229 @@ void buttonListenerTask(void *arg)
             if (buttonStartTime == 0)
             {
                 ESP_LOGI(TAG, "Button Pressed");
+                buttonHandled = false;
                 buttonStartTime = xTaskGetTickCount();
-            }
-            else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(LONG_PRESS_THRESHOLD_MS))
-            {
-                
-                if (!restartSent){
-                    queue_svc_cmd_t msg = {SERVICE_COMMAND::SWITCH_TO_WIFI_AP, NULL};
-                    xQueueSend(svcQueue, &msg, pdMS_TO_TICKS(2000));
-                    restartSent = true;
-                    ESP_LOGI(TAG, "AP Switch Sent");
-                }
             }
         }
         else
         {
+            if (!buttonHandled)
+            {
+                ESP_LOGI(TAG, "Button Released");
+                buttonHandled = true;
+
+                if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(LONG_PRESS_THRESHOLD_MS))
+                {
+                    ESP_LOGI(TAG, "Clearing ESP-NOW peer config");
+
+                    AstrOs_Storage.clearServiceConfig();
+
+                    esp_restart();
+                }
+                else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(MEDIUM_PRESS_THRESHOLD_MS))
+                {
+                    queue_svc_cmd_t cmd;
+                    if (discoveryMode)
+                    {
+                        cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
+                    }
+                    else
+                    {
+                        cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON;
+                    }
+
+                    cmd.data = nullptr;
+
+                    if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send espnow queue fail");
+                    }
+
+                    ESP_LOGI(TAG, "Discovery Switch Sent");
+                }
+            }
+
             buttonStartTime = 0;
-            restartSent = false;
         }
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
-    free(data);
+}
+
+void interfaceResponseQueueTask(void *arg)
+{
+    QueueHandle_t serverResponseQueue;
+
+    serverResponseQueue = (QueueHandle_t)arg;
+    astros_interface_response_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(serverResponseQueue, &(msg), 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Server Response Queue Stack HWM: %d", highWaterMark);
+            }
+
+            switch (msg.type)
+            {
+            case AstrOsInterfaceResponseType::SEND_POLL_ACK:
+            {
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, msg.message, true);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_POLL_NAK:
+            {
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", false);
+                break;
+            }
+            case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
+            {
+                handleRegistrationSync(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SET_CONFIG:
+            {
+                handleSetConfig(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::CONFIG, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT:
+            {
+                handleSaveScript(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_SCRIPT:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_DEPLOY, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SCRIPT_RUN:
+            {
+                handleRunSctipt(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_SCRIPT_RUN:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_RUN, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::PANIC_STOP:
+            {
+                handlePanicStop(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_PANIC_STOP:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::PANIC_STOP, msg.peerMac, msg.originationMsgId, "PANIC");
+                break;
+            }
+            case AstrOsInterfaceResponseType::FORMAT_SD:
+            {
+                auto id = std::string(msg.originationMsgId);
+
+                queue_svc_cmd_t cmd;
+                cmd.cmd = SERVICE_COMMAND::FORMAT_SD;
+                cmd.data = (uint8_t *)malloc(id.size() + 1); // dummy data
+                memccpy(cmd.data, id.c_str(), 0, id.size());
+                cmd.data[id.size()] = '\0';
+                cmd.dataSize = id.size() + 1;
+
+                if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send espnow queue fail");
+                    free(cmd.data);
+                }
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_FORMAT_SD:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::FORMAT_SD, msg.peerMac, msg.originationMsgId, "FORMATSD");
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+            {
+                auto responseType = getSerialMessageType(msg.type);
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
+            case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
+            case AstrOsInterfaceResponseType::SCRIPT_RUN_ACK:
+            case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
+            case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
+            case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
+            {
+                auto responseType = getSerialMessageType(msg.type);
+                AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
+                break;
+            }
+            default:
+                ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(msg.type));
+                break;
+            }
+
+            free(msg.originationMsgId);
+            free(msg.peerMac);
+            free(msg.peerName);
+            free(msg.message);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 void astrosRxTask(void *arg)
 {
 
+    size_t bufferLength = 2000;
+    int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
+    uint8_t *commandBuffer = (uint8_t *)malloc(bufferLength);
+
     while (1)
     {
-
         const int rxBytes = uart_read_bytes(ASTRO_PORT, data, RX_BUF_SIZE, pdMS_TO_TICKS(1000));
 
         if (rxBytes > 0)
         {
-            ESP_LOGI(TAG, "AstrOs RX Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "AstrOs RX Stack HWM: %d", highWaterMark);
+            }
 
-            data[rxBytes] = '\0';
-            ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", rxBytes, data);
+            for (int i = 0; i < rxBytes; i++)
+            {
+                if (data[i] == '\n')
+                {
+                    commandBuffer[bufferIndex] = '\0';
+                    ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
 
-            char msg[rxBytes];
-            memcpy(msg, data, rxBytes);
-            AstrOs.handleMessage(msg);
+                    AstrOs_SerialMsgHandler.handleMessage(std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
+
+                    bufferIndex = 0;
+                }
+                else
+                {
+                    commandBuffer[bufferIndex] = data[i];
+                    bufferIndex++;
+                    if (bufferIndex >= bufferLength)
+                    {
+                        ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        bufferIndex = 0;
+                    }
+                }
+            }
         }
     }
     free(data);
+    free(commandBuffer);
 }
 
 void serviceQueueTask(void *arg)
@@ -418,80 +698,61 @@ void serviceQueueTask(void *arg)
     {
         if (xQueueReceive(svcQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Service Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Service Queue Stack HWM: %d", highWaterMark);
+            }
 
             switch (msg.cmd)
             {
-            case SERVICE_COMMAND::START_WIFI_AP:
-                astrOsNetwork.startWifiAp();
-                break;
-            case SERVICE_COMMAND::STOP_WIFI_AP:
-                astrOsNetwork.stopWifiAp();
-                break;
-            case SERVICE_COMMAND::CONNECT_TO_NETWORK:
-                astrOsNetwork.connectToNetwork("", "");
-                break;
-            case SERVICE_COMMAND::DISCONNECT_FROM_NETWORK:
-                astrOsNetwork.disconnectFromNetwork();
-                break;
-            case SERVICE_COMMAND::SWITCH_TO_NETWORK:
+            case SERVICE_COMMAND::FORMAT_SD:
             {
-                svc_config_t config;
-
-                if (!Storage.loadServiceConfig(&config))
-                {
-                    ESP_LOGI(TAG, "Switch to network requested, but configuration couldn't load");
-                    break;
-                }
-
-                bool wifiConnected = false;
-                bool wifiStopped = astrOsNetwork.stopWifiAp();
-                if (wifiStopped)
-                {
-                    ESP_LOGI(TAG, "Network SSID: %s", config.networkSSID);
-
-                    std::string temp = std::string(config.networkPass);
-
-                    temp.replace(temp.begin() + 1, temp.end() - 1, std::string(temp.length() - 2, '*'));
-
-                    ESP_LOGI(TAG, "Network Password: %s", temp.c_str());
-
-                    wifiConnected = astrOsNetwork.connectToNetwork(config.networkSSID, config.networkPass);
-                }
-                if (wifiConnected)
-                {
-                    ESP_LOGI(TAG, "Succesfully switched to network!");
-                }
-                else
-                {
-                    astrOsNetwork.disconnectFromNetwork();
-                    astrOsNetwork.startWifiAp();
-                }
+                ESP_LOGI(TAG, "Formatting SD card");
+                std::string data(reinterpret_cast<char *>(msg.data), msg.dataSize);
+                handleFormatSD(data);
+            }
+            case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
+            {
+                discoveryMode = true;
+                AstrOs_Display.displayUpdate("Discovery", "Mode On");
+                ESP_LOGI(TAG, "Discovery mode on");
                 break;
             }
-            case SERVICE_COMMAND::SWITCH_TO_WIFI_AP:
+            case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF:
             {
-                ESP_LOGI(TAG, "Switching to WIFI AP");
-                bool apStarted = false;
-                bool wifiStopped = astrOsNetwork.disconnectFromNetwork();
-                if (wifiStopped)
+                discoveryMode = false;
+                AstrOs_Display.displayDefault();
+                ESP_LOGI(TAG, "Discovery mode off");
+                break;
+            }
+            case SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE:
+            {
+                queue_msg_t serialMsg;
+                serialMsg.message_id = 1;
+                serialMsg.data = (uint8_t *)malloc(msg.dataSize + 1);
+                memcpy(serialMsg.data, msg.data, msg.dataSize);
+                serialMsg.data[msg.dataSize] = '\n';
+                serialMsg.dataSize = msg.dataSize + 1;
+
+                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
                 {
-                    apStarted = astrOsNetwork.startWifiAp();
+                    ESP_LOGW(TAG, "Seinding AstrOs Interface message to serial queue fail");
+                    free(serialMsg.data);
                 }
-                if (apStarted)
-                {
-                    ESP_LOGI(TAG, "Succesfully switched to WIFI AP!");
-                }
-                else
-                {
-                    ESP_LOGI(TAG, "Restarting ESP32");
-                    esp_restart();
-                }
+
+                break;
+            }
+            case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
+            {
+                ServoMod.LoadServoConfig();
                 break;
             }
             default:
                 break;
             }
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -509,7 +770,12 @@ void animationQueueTask(void *arg)
     {
         if (xQueueReceive(animationQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Animation Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Animation Queue Stack HWM: %d", highWaterMark);
+            }
+
             switch (msg.cmd)
             {
             case ANIMATION_COMMAND::PANIC_STOP:
@@ -526,7 +792,7 @@ void animationQueueTask(void *arg)
     }
 }
 
-void hardwareQueueTask(void *arg)
+/*void hardwareQueueTask(void *arg)
 {
 
     QueueHandle_t hardwareQueue;
@@ -539,6 +805,7 @@ void hardwareQueueTask(void *arg)
         if (xQueueReceive(hardwareQueue, &(msg), 0))
         {
             ESP_LOGI(TAG, "Hardware Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
+
             switch (msg.cmd)
             {
             case HARDWARE_COMMAND::SEND_SERIAL:
@@ -586,10 +853,10 @@ void hardwareQueueTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+*/
 
 void serialQueueTask(void *arg)
 {
-
     QueueHandle_t serialQueue;
 
     serialQueue = (QueueHandle_t)arg;
@@ -599,9 +866,25 @@ void serialQueueTask(void *arg)
     {
         if (xQueueReceive(serialQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Serial Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "Serial command received on queue => %s", msg.data);
-            SerialMod.SendCommand(msg.data);
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Serial Queue Stack HWM: %d", highWaterMark);
+            }
+
+            if (msg.message_id == 0)
+            {
+                SerialMod.SendCommand(msg.data);
+            }
+            else if (msg.message_id == 1)
+            {
+                std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
+
+                ESP_LOGD(TAG, "Serial message: %s", str.c_str());
+                SerialMod.SendBytes(1, msg.data, msg.dataSize);
+            }
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -618,9 +901,16 @@ void servoQueueTask(void *arg)
     {
         if (xQueueReceive(pwmQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "Servo Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "Servo Command received on queue => %s", msg.data);
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Servo Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
             ServoMod.QueueCommand(msg.data);
+
+            free(msg.data);
         }
 
         ServoMod.MoveServos();
@@ -640,8 +930,14 @@ void i2cQueueTask(void *arg)
     {
         if (xQueueReceive(i2cQueue, &(msg), 0))
         {
-            ESP_LOGI(TAG, "I2C Queue Stack HWM: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGI(TAG, "I2C Command received on queue => %s", msg.data);
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "I2C Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+
             if (msg.message_id == 0)
             {
                 I2cMod.SendCommand(msg.data);
@@ -652,5 +948,375 @@ void i2cQueueTask(void *arg)
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void espnowQueueTask(void *arg)
+{
+    QueueHandle_t espnowQueue;
+
+    espnowQueue = (QueueHandle_t)arg;
+
+    vTaskDelay(pdMS_TO_TICKS(5 * 1000));
+
+    ESP_LOGI(TAG, "ESP-NOW Queue started");
+
+    AstrOs_Display.displayDefault();
+
+    queue_espnow_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(espnowQueue, &(msg), 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "ESP-NOW Queue Stack HWM: %d", highWaterMark);
+            }
+
+            switch (msg.eventType)
+            {
+            case SEND_REGISTRAION_REQ:
+            {
+                AstrOs_EspNow.sendRegistrationRequest();
+                break;
+            }
+            case POLL_PADAWANS:
+            {
+                AstrOs_EspNow.pollPadawans();
+                break;
+            }
+            case EXPIRE_POLLS:
+            {
+                AstrOs_EspNow.pollRepsonseTimeExpired();
+                break;
+            }
+            case ESPNOW_SEND:
+            {
+                ESP_LOGD(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
+
+                if (esp_now_send(msg.dest, msg.data, msg.data_len) != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Send error");
+                }
+
+                break;
+            }
+            case ESPNOW_RECV:
+            {
+                if (IS_BROADCAST_ADDR(msg.dest))
+                {
+                    ESP_LOGD(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
+
+                    // only handle broadcast messages in discovery mode
+                    if (!discoveryMode)
+                    {
+                        break;
+                    }
+
+                    AstrOs_EspNow.handleMessage(msg.src, msg.data, msg.data_len);
+                }
+                else if (esp_now_is_peer_exist(msg.src))
+                {
+                    ESP_LOGD(TAG, "Received unicast data from peer: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
+
+                    AstrOs_EspNow.handleMessage(msg.src, msg.data, msg.data_len);
+                }
+                else
+                {
+                    ESP_LOGW(TAG, "Peer does not exist:" MACSTR, MAC2STR(msg.src));
+                }
+                break;
+            }
+            default:
+                ESP_LOGE(TAG, "Callback type error: %d", msg.eventType);
+                break;
+            }
+
+            free(msg.data);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+/**********************************
+ * Configuration Methods
+ *********************************/
+
+static void loadConfig()
+{
+    auto cfig = AstrOs_Storage.readFile("config.txt");
+
+    if (cfig != "error")
+    {
+        ESP_LOGI(TAG, "Service config file: %s", cfig.c_str());
+
+        auto lines = AstrOsStringUtils::splitString(cfig, '\n');
+
+        for (auto line : lines)
+        {
+            auto parts = AstrOsStringUtils::splitString(line, '=');
+
+            if (parts.size() == 2)
+            {
+                if (parts[0] == "isMasterNode")
+                {
+                    isMasterNode = parts[1] == "true";
+                    ASTRO_PORT = isMasterNode ? UART_NUM_1 : UART_NUM_0;
+                    rank = isMasterNode ? "Master" : "Padawan";
+                }
+            }
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Service config file not found");
+    }
+}
+
+/**********************************
+ * callbacks
+ *********************************/
+
+bool cachePeer(espnow_peer_t peer)
+{
+    return AstrOs_Storage.saveEspNowPeer(peer);
+}
+
+void updateSeviceConfig(std::string name, uint8_t *mac)
+{
+    svc_config_t svcConfig;
+    memcpy(svcConfig.masterMacAddress, mac, ESP_NOW_ETH_ALEN);
+    strncpy(svcConfig.name, name.c_str(), sizeof(svcConfig.name));
+    svcConfig.name[sizeof(svcConfig.name) - 1] = '\0';
+    AstrOs_Storage.saveServiceConfig(svcConfig);
+}
+
+void displaySetDefault(std::string line1, std::string line2, std::string line3)
+{
+    return AstrOs_Display.setDefault(line1, line2, line3);
+}
+
+static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+    if (mac_addr == NULL)
+    {
+        ESP_LOGE(TAG, "Send cb arg error");
+        return;
+    }
+
+    ESP_LOGD(TAG, "Sending data to " MACSTR " status: %d", MAC2STR(mac_addr), status);
+}
+
+static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
+{
+    ESP_LOGD(TAG, "espnowRecvCallback called");
+
+    queue_espnow_msg_t msg;
+
+    uint8_t *src_addr = recv_info->src_addr;
+    uint8_t *dest_addr = recv_info->des_addr;
+
+    if (src_addr == NULL || data == NULL || len <= 0)
+    {
+        ESP_LOGE(TAG, "Receive cb arg error");
+        return;
+    }
+
+    msg.eventType = ESPNOW_RECV;
+    memcpy(msg.src, src_addr, ESP_NOW_ETH_ALEN);
+    memcpy(msg.dest, dest_addr, ESP_NOW_ETH_ALEN);
+    msg.data = (uint8_t *)malloc(len);
+    if (msg.data == NULL)
+    {
+        ESP_LOGE(TAG, "Malloc receive data fail");
+        return;
+    }
+    memcpy(msg.data, data, len);
+    msg.data_len = len;
+    if (xQueueSend(espnowQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send receive queue fail");
+        free(msg.data);
+    }
+}
+
+/**********************************
+ * Interface Response Methods
+ *********************************/
+static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type)
+{
+    switch (type)
+    {
+    case AstrOsInterfaceResponseType::SEND_CONFIG_ACK:
+        return AstrOsSerialMessageType::DEPLOY_CONFIG_ACK;
+    case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
+        return AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+    case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
+        return AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK;
+    case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
+        return AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
+    case AstrOsInterfaceResponseType::SCRIPT_RUN_ACK:
+        return AstrOsSerialMessageType::RUN_SCRIPT_ACK;
+    case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
+        return AstrOsSerialMessageType::RUN_SCRIPT_NAK;
+    case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
+        return AstrOsSerialMessageType::FORMAT_SD_ACK;
+    case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
+        return AstrOsSerialMessageType::FORMAT_SD_NAK;
+
+    default:
+        return AstrOsSerialMessageType::UNKNOWN;
+    }
+}
+
+static void handleRegistrationSync(astros_interface_response_t msg)
+{
+    std::vector<astros_peer_data_t> data = {};
+
+    auto peers = AstrOs_EspNow.getPeers();
+
+    for (auto peer : peers)
+    {
+        astros_peer_data_t pd;
+        pd.name = peer.name;
+        pd.mac = AstrOsStringUtils::macToString(peer.mac_addr);
+        pd.fingerprint = "na";
+        data.push_back(pd);
+    }
+
+    AstrOs_SerialMsgHandler.sendRegistraionAck(msg.originationMsgId, data);
+}
+
+static void handleSetConfig(astros_interface_response_t msg)
+{
+    auto success = AstrOs_Storage.saveServoConfig(msg.message);
+
+    std::string fingerprint;
+
+    if (success)
+    {
+        ESP_LOGI(TAG, "Updating Fingerprint");
+        fingerprint = guid::generate_guid();
+
+        success = AstrOs_Storage.setControllerFingerprint(fingerprint.c_str());
+    }
+
+    if (success)
+    {
+        AstrOs_EspNow.updateFingerprint(fingerprint);
+
+        ESP_LOGI(TAG, "New Fingerprint: %s", fingerprint.c_str());
+
+        // send servo reload message
+        queue_svc_cmd_t reloadMsg;
+        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
+        reloadMsg.data = nullptr;
+
+        if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "Send servo reload fail");
+        }
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(),
+                                                        "master", AstrOs_EspNow.getFingerprint());
+    }
+    else
+    {
+        AstrOs_EspNow.sendConfigAckNak(msg.originationMsgId, success);
+    }
+}
+
+static void handleSaveScript(astros_interface_response_t msg)
+{
+    auto message = std::string(msg.message);
+    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+
+    auto success = false;
+
+    if (parts.size() != 2)
+    {
+        ESP_LOGE(TAG, "Invalid script message: %s", message.c_str());
+    }
+    else
+    {
+        success = AstrOs_Storage.saveFile("scripts/" + parts[0], parts[1]);
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", parts[0]);
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::SCRIPT_DEPLOY_ACK : AstrOsPacketType::SCRIPT_DEPLOY_NAK;
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak, parts[0]);
+    }
+}
+
+static void handleRunSctipt(astros_interface_response_t msg)
+{
+    auto message = std::string(msg.message);
+    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+
+    auto success = false;
+
+    if (parts.size() != 1)
+    {
+        ESP_LOGE(TAG, "Invalid run script message: %s", message.c_str());
+    }
+    else
+    {
+        success = AnimationCtrl.queueScript(parts[0]);
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::RUN_SCRIPT_ACK : AstrOsSerialMessageType::RUN_SCRIPT_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", parts[0]);
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::SCRIPT_RUN_ACK : AstrOsPacketType::SCRIPT_RUN_NAK;
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak, parts[0]);
+    }
+}
+
+static void handlePanicStop(astros_interface_response_t msg)
+{
+    AnimationCtrl.panicStop();
+}
+
+static void handleFormatSD(std::string id)
+{
+    auto cfig = AstrOs_Storage.readFile("config.txt");
+
+    auto success = AstrOs_Storage.formatSdCard();
+
+    if (cfig != "error")
+    {
+        AstrOs_Storage.saveFile("config.txt", cfig);
+    }
+
+    if (isMasterNode)
+    {
+        auto ackNak = success ? AstrOsSerialMessageType::FORMAT_SD_ACK : AstrOsSerialMessageType::FORMAT_SD_NAK;
+
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(ackNak, id, AstrOs_EspNow.getMac(), "master", "FORMAT");
+    }
+    else
+    {
+        auto ackNak = success ? AstrOsPacketType::FORMAT_SD_ACK : AstrOsPacketType::FORMAT_SD_NAK;
+        AstrOs_EspNow.sendBasicAckNak(id, ackNak, "FORMAT");
     }
 }
