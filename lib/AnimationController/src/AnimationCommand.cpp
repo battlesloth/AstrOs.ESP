@@ -205,3 +205,21 @@ I2cCommand::I2cCommand(std::string val)
 }
 
 I2cCommand::~I2cCommand() {}
+
+GpioCommand::GpioCommand(std::string val)
+{
+    str_vec_t parts = SplitTemplate(val);
+
+    if (parts.size() < 4)
+    {
+        ESP_LOGE("GpioCommand", "Invalid number of parts in command: %s", val.c_str());
+        GpioCommand::channel = -1;
+        GpioCommand::state = false;
+        return;
+    }
+
+    GpioCommand::channel = std::stoi(parts.at(2));
+    GpioCommand::state = std::stoi(parts.at(3));
+}
+
+GpioCommand::~GpioCommand() {}

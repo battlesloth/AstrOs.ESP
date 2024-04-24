@@ -20,6 +20,7 @@
 #include <SerialModule.hpp>
 #include <ServoModule.hpp>
 #include <I2cModule.hpp>
+#include <GpioModule.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
@@ -48,6 +49,7 @@ static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
+static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
 
 /**********************************
@@ -110,6 +112,22 @@ static esp_timer_handle_t animationTimer;
 #define SERVO_BOARD_1_ADDR 0x41
 
 /**********************************
+ * GPIO Settings
+ * -1 for unused/unavailable
+ **********************************/
+
+#define GPIO_PIN_0 (GPIO_NUM_4)
+#define GPIO_PIN_1 (GPIO_NUM_5)
+#define GPIO_PIN_2 (GPIO_NUM_18)
+#define GPIO_PIN_3 (GPIO_NUM_19)
+#define GPIO_PIN_4 (GPIO_NUM_23)
+#define GPIO_PIN_5 (-1)
+#define GPIO_PIN_6 (-1)
+#define GPIO_PIN_7 (-1)
+#define GPIO_PIN_8 (-1)
+#define GPIO_PIN_9 (-1)
+
+/**********************************
  * Method definitions
  *********************************/
 void init(void);
@@ -137,6 +155,7 @@ void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
+void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
 // handlers
@@ -159,6 +178,7 @@ void app_main()
 {
     init();
 
+    // core 1
     xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
@@ -166,6 +186,9 @@ void app_main()
     xTaskCreatePinnedToCore(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 9, NULL, 1);
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+
+    // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
     xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
 
@@ -190,6 +213,7 @@ void init(void)
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
@@ -242,6 +266,11 @@ void init(void)
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
+
+    ESP_ERROR_CHECK(GpioMod.Init(
+        {GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2, GPIO_PIN_3, GPIO_PIN_4,
+         GPIO_PIN_5, GPIO_PIN_6, GPIO_PIN_7, GPIO_PIN_8, GPIO_PIN_9}));
+    ESP_LOGI(TAG, "GPIO Module initiated");
 
     svc_config_t svcConfig;
 
@@ -407,7 +436,11 @@ static void animationTimerCallback(void *arg)
             memcpy(msg.data, val.c_str(), val.size());
             msg.data[val.size()] = '\0';
 
-            xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send serial queue fail");
+                free(msg.data);
+            }
             break;
         }
         case CommandType::PWM:
@@ -418,7 +451,11 @@ static void animationTimerCallback(void *arg)
             memcpy(servoMsg.data, val.c_str(), val.size());
             servoMsg.data[val.size()] = '\0';
 
-            xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send servo queue fail");
+                free(servoMsg.data);
+            }
             break;
         }
         case CommandType::I2C:
@@ -429,7 +466,26 @@ static void animationTimerCallback(void *arg)
             memcpy(i2cMsg.data, val.c_str(), val.size());
             i2cMsg.data[val.size()] = '\0';
 
-            xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send i2c queue fail");
+                free(i2cMsg.data);
+            }
+            break;
+        }
+        case CommandType::Gpio:
+        {
+            ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
+            queue_msg_t gpioMsg;
+            gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(gpioMsg.data, val.c_str(), val.size());
+            gpioMsg.data[val.size()] = '\0';
+
+            if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) == pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send gpio queue fail");
+                free(gpioMsg.data);
+            }
             break;
         }
         default:
@@ -946,6 +1002,35 @@ void i2cQueueTask(void *arg)
             {
                 I2cMod.WriteDisplay(msg.data);
             }
+
+            free(msg.data);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void gpioQueueTask(void *arg)
+{
+    QueueHandle_t gpioQueue;
+
+    gpioQueue = (QueueHandle_t)arg;
+    queue_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(gpioQueue, &(msg), 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "GPIO Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "GPIO Command received on queue => %d, %s", msg.message_id, msg.data);
+
+            GpioMod.SendCommand(msg.data);
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

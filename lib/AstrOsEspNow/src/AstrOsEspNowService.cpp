@@ -453,7 +453,28 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
     }
 
     std::string macStr = AstrOsStringUtils::macToString(src);
-    std::string padewanName = "test";
+
+    std::string padewanName;
+    auto s = this->peers.size();
+
+    switch (s)
+    {
+    case 0:
+        padewanName = "Ashoka";
+        break;
+    case 1:
+        padewanName = "Grogu";
+        break;
+    case 2:
+        padewanName = "Anakin";
+        break;
+    case 3:
+        padewanName = "Obi-Wan";
+        break;
+    default:
+        break;
+    }
+
     astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
