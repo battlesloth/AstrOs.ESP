@@ -27,7 +27,7 @@ esp_err_t GpioModule::Init(std::vector<int> channels)
     {
         this->gpioChannels.push_back(channels.at(i));
 
-        if (channels.at(i) != -1)
+        if (channels.at(i) != 0)
         {
             result = gpio_set_direction(static_cast<gpio_num_t>(channels.at(i)), GPIO_MODE_OUTPUT);
             if (logError(TAG, "gpio_set_direction", __LINE__, result))

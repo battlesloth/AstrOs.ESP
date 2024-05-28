@@ -80,11 +80,7 @@ esp_err_t AstrOsStorageManager::Init()
 
     ESP_LOGI(TAG, "Mounting SD Card");
 
-#ifndef DARTHSERVO
     return AstrOsStorageManager::mountSdCard();
-#else
-    return err;
-#endif
 }
 
 bool AstrOsStorageManager::saveServiceConfig(svc_config_t config)
@@ -330,17 +326,31 @@ esp_err_t AstrOsStorageManager::mountSdCard()
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
 
+#ifdef METRO_S3
+    auto dma_chan = SPI_DMA_CH_AUTO;
+    auto mosi = 42;
+    auto miso = 21;
+    auto sclk = 39;
+    auto cs = 45;
+#else
+    auto dma_chan = SPI_DMA_CHAN;
+    auto mosi = PIN_NUM_MOSI;
+    auto miso = PIN_NUM_MISO;
+    auto sclk = PIN_NUM_CLK;
+    auto cs = PIN_NUM_CS;
+#endif
+
     spi_bus_config_t bus_cfg = {
-        .mosi_io_num = PIN_NUM_MOSI,
-        .miso_io_num = PIN_NUM_MISO,
-        .sclk_io_num = PIN_NUM_CLK,
+        .mosi_io_num = mosi,
+        .miso_io_num = miso,
+        .sclk_io_num = sclk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
         .max_transfer_sz = 4000};
 
     spi_host_device_t device = static_cast<spi_host_device_t>(host.slot);
 
-    err = spi_bus_initialize(device, &bus_cfg, SPI_DMA_CHAN);
+    err = spi_bus_initialize(device, &bus_cfg, dma_chan);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         ESP_LOGE(TAG, "Failed to initialize bus.");
@@ -348,7 +358,7 @@ esp_err_t AstrOsStorageManager::mountSdCard()
     }
 
     sdspi_device_config_t slotConfig = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slotConfig.gpio_cs = static_cast<gpio_num_t>(PIN_NUM_CS);
+    slotConfig.gpio_cs = static_cast<gpio_num_t>(cs);
     slotConfig.host_id = device;
 
     ESP_LOGI(TAG, "Mounting file system");

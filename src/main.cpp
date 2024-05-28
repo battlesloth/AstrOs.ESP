@@ -76,7 +76,7 @@ static esp_timer_handle_t animationTimer;
 /**********************************
  * Reset Button
  **********************************/
-#define RESET_GPIO (GPIO_NUM_13)
+
 #define MEDIUM_PRESS_THRESHOLD_MS 3000 // 3 second
 #define LONG_PRESS_THRESHOLD_MS 10000  // 10 seconds
 
@@ -86,21 +86,12 @@ static esp_timer_handle_t animationTimer;
 #define ASTROS_INTEFACE_BAUD_RATE (115200)
 
 #define BAUD_RATE_1 (9600)
-#define TX_PIN_1 (GPIO_NUM_2)
-#define RX_PIN_1 (GPIO_NUM_15)
 #define BAUD_RATE_2 (9600)
-#define TX_PIN_2 (GPIO_NUM_32)
-#define RX_PIN_2 (GPIO_NUM_33)
 #define BAUD_RATE_3 (9600)
-#define TX_PIN_3 (GPIO_NUM_12)
-#define RX_PIN_3 (GPIO_NUM_13)
 
 /**********************************
  * I2C Settings
  **********************************/
-
-#define SDA_PIN (GPIO_NUM_21)
-#define SCL_PIN (GPIO_NUM_22)
 
 #define I2C_PORT I2C_NUM_0
 
@@ -110,22 +101,6 @@ static esp_timer_handle_t animationTimer;
 
 #define SERVO_BOARD_0_ADDR 0x40
 #define SERVO_BOARD_1_ADDR 0x41
-
-/**********************************
- * GPIO Settings
- * -1 for unused/unavailable
- **********************************/
-
-#define GPIO_PIN_0 (GPIO_NUM_4)
-#define GPIO_PIN_1 (GPIO_NUM_5)
-#define GPIO_PIN_2 (GPIO_NUM_18)
-#define GPIO_PIN_3 (GPIO_NUM_19)
-#define GPIO_PIN_4 (GPIO_NUM_23)
-#define GPIO_PIN_5 (-1)
-#define GPIO_PIN_6 (-1)
-#define GPIO_PIN_7 (-1)
-#define GPIO_PIN_8 (-1)
-#define GPIO_PIN_9 (-1)
 
 /**********************************
  * Method definitions
@@ -164,6 +139,7 @@ static void handleRegistrationSync(astros_interface_response_t msg);
 static void handleSetConfig(astros_interface_response_t msg);
 static void handleSaveScript(astros_interface_response_t msg);
 static void handleRunSctipt(astros_interface_response_t msg);
+static void handleRunCommand(astros_interface_response_t msg);
 static void handlePanicStop(astros_interface_response_t msg);
 static void handleFormatSD(std::string id);
 
@@ -202,7 +178,7 @@ void init(void)
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = 1ULL << RESET_GPIO;
+    io_conf.pin_bit_mask = 1ULL << RESET_PIN;
     io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
@@ -481,7 +457,7 @@ static void animationTimerCallback(void *arg)
             memcpy(gpioMsg.data, val.c_str(), val.size());
             gpioMsg.data[val.size()] = '\0';
 
-            if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) == pdTRUE)
+            if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
             {
                 ESP_LOGW(TAG, "Send gpio queue fail");
                 free(gpioMsg.data);
@@ -513,7 +489,7 @@ void buttonListenerTask(void *arg)
 
     while (1)
     {
-        if (gpio_get_level(RESET_GPIO) == 0)
+        if (gpio_get_level(static_cast<gpio_num_t>(RESET_PIN)) == 0)
         {
             if (buttonStartTime == 0)
             {
@@ -630,6 +606,16 @@ void interfaceResponseQueueTask(void *arg)
                 AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_RUN, msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
+            case AstrOsInterfaceResponseType::COMMAND:
+            {
+                handleRunCommand(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_COMMAND:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::COMMAND_RUN, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
             case AstrOsInterfaceResponseType::PANIC_STOP:
             {
                 handlePanicStop(msg);
@@ -676,6 +662,8 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
             case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
             case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
+            case AstrOsInterfaceResponseType::COMMAND_ACK:
+            case AstrOsInterfaceResponseType::COMMAND_NAK:
             {
                 auto responseType = getSerialMessageType(msg.type);
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
@@ -1375,6 +1363,11 @@ static void handleRunSctipt(astros_interface_response_t msg)
         auto ackNak = success ? AstrOsPacketType::SCRIPT_RUN_ACK : AstrOsPacketType::SCRIPT_RUN_NAK;
         AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, ackNak, parts[0]);
     }
+}
+
+static void handleRunCommand(astros_interface_response_t msg)
+{
+    AnimationCtrl.queueCommand(msg.message);
 }
 
 static void handlePanicStop(astros_interface_response_t msg)

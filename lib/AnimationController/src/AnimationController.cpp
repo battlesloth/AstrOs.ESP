@@ -54,6 +54,13 @@ bool AnimationController::queueScript(std::string scriptId)
     return true;
 }
 
+bool AnimationController::queueCommand(std::string command)
+{
+    AnimationCommand cmd = AnimationCommand(command);
+    scriptEvents.push_back(cmd);
+    return false;
+}
+
 bool AnimationController::queueIsFull()
 {
     return (queueSize == queueCapacity);

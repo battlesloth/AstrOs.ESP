@@ -385,6 +385,8 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         return this->handlePanicStop(packet);
     case AstrOsPacketType::FORMAT_SD:
         return this->handleFormatSD(packet);
+    case AstrOsPacketType::COMMAND_RUN:
+        return this->handleCommandRun(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
     case AstrOsPacketType::SCRIPT_RUN_ACK:
@@ -911,6 +913,43 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
 
     return true;
 }
+
+/*******************************************
+ * Command Run methods
+ *******************************************/
+
+bool AstrOsEspNow::handleCommandRun(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id, 2 is command
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid command run payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND,
+                               parts[1], "", "", parts[2]);
+
+    return true;
+}
+
 /*******************************************
  * Utility Methods
  *******************************************/

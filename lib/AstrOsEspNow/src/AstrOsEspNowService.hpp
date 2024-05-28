@@ -73,6 +73,7 @@ private:
     bool handleConfigAckNak(astros_packet_t packet);
     bool handleScriptDeploy(astros_packet_t packet);
     bool handleScriptRun(astros_packet_t packet);
+    bool handleCommandRun(astros_packet_t packet);
     bool handlePanicStop(astros_packet_t packet);
     bool handleFormatSD(astros_packet_t packet);
 
