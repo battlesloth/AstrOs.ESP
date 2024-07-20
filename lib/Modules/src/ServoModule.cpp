@@ -40,7 +40,7 @@ ServoModule::~ServoModule()
 {
 }
 
-esp_err_t ServoModule::Init(uint8_t board0addr, u_int8_t board1addr)
+esp_err_t ServoModule::Init(uint8_t board0addr, uint8_t board1addr)
 {
     esp_err_t result = ESP_OK;
 

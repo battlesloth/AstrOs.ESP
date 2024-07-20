@@ -36,7 +36,7 @@ static const char *TAG = AstrOsConstants::ModuleName;
  **********************************/
 static bool discoveryMode = false;
 static bool isMasterNode = false;
-static uint8_t ASTRO_PORT = UART_NUM_0;
+static uart_port_t ASTRO_PORT = UART_NUM_0;
 static std::string rank = "Padawan";
 
 /**********************************

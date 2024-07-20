@@ -240,7 +240,7 @@ esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
     return err;
 }
 
-bool AstrOsEspNow::cachePeer(u_int8_t *macAddress, std::string name)
+bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
 {
 
     if (peers.size() > 10)
@@ -336,7 +336,7 @@ void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
 /// @param data
 /// @param len
 /// @return
-bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
+bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
 {
     astros_packet_t packet = this->messageService.parsePacket(data);
 
@@ -441,7 +441,7 @@ void AstrOsEspNow::sendRegistrationRequest()
     free(destMac);
 }
 
-bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
+bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
 {
     esp_err_t err = ESP_OK;
 
@@ -489,7 +489,7 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
     return true;
 }
 
-bool AstrOsEspNow::handleRegistration(u_int8_t *src, astros_packet_t packet)
+bool AstrOsEspNow::handleRegistration(uint8_t *src, astros_packet_t packet)
 {
     esp_err_t err = ESP_OK;
 
@@ -579,7 +579,7 @@ bool AstrOsEspNow::sendRegistrationAck()
     return result;
 }
 
-bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, astros_packet_t packet)
+bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
 {
     std::string payloadStr(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
 
