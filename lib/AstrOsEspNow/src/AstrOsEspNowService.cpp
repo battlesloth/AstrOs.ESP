@@ -506,8 +506,9 @@ bool AstrOsEspNow::handleRegistration(uint8_t *src, astros_packet_t packet)
         return false;
     }
 
-    name = parts[0];
-    mac = parts[1];
+    mac = parts[0];
+    name = parts[1];
+    
 
     if (name.empty() || mac.empty())
     {
@@ -591,8 +592,9 @@ bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
         return false;
     }
 
-    name = parts[0];
-    mac = parts[1];
+    mac = parts[0];
+    name = parts[1];
+
 
     if (name.empty() || mac.empty())
     {
