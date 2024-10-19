@@ -21,6 +21,7 @@ public:
     void setDefault(std::string line1, std::string line2, std::string line3);
     void displayDefault();
     void displayUpdate(std::string line1, std::string line2 = "", std::string line3 = "");
+    void displayClear();
 };
 
 extern AstrOsDisplayService AstrOs_Display;

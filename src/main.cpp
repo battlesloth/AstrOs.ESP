@@ -34,6 +34,8 @@ static const char *TAG = AstrOsConstants::ModuleName;
 /**********************************
  * States
  **********************************/
+static int displayTimeout = 0;
+static int defaultDisplayTimeout = 10;
 static bool discoveryMode = false;
 static bool isMasterNode = false;
 static uart_port_t ASTRO_PORT = UART_NUM_0;
@@ -383,6 +385,16 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
+
+    if (!discoveryMode && displayTimeout > 0)
+    {
+        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout);
+        displayTimeout -= 2;
+        if (displayTimeout <= 0)
+        {
+            AstrOs_Display.displayClear();
+        }
+    }
 }
 
 static void maintenanceTimerCallback(void *arg)
@@ -533,6 +545,19 @@ void buttonListenerTask(void *arg)
                     }
 
                     ESP_LOGI(TAG, "Discovery Switch Sent");
+                }
+                else if (!discoveryMode)
+                {
+                    queue_svc_cmd_t cmd;
+                    cmd.cmd = SERVICE_COMMAND::SHOW_DISPLAY;
+                    cmd.data = nullptr;
+
+                    if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send espnow queue fail");
+                    }
+
+                    ESP_LOGI(TAG, "Show Display Sent");
                 }
             }
 
@@ -756,6 +781,12 @@ void serviceQueueTask(void *arg)
                 std::string data(reinterpret_cast<char *>(msg.data), msg.dataSize);
                 handleFormatSD(data);
             }
+            case SERVICE_COMMAND::SHOW_DISPLAY:
+            {
+                AstrOs_Display.displayDefault();
+                displayTimeout = defaultDisplayTimeout;
+                break;
+            }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
             {
                 discoveryMode = true;
@@ -767,6 +798,7 @@ void serviceQueueTask(void *arg)
             {
                 discoveryMode = false;
                 AstrOs_Display.displayDefault();
+                displayTimeout = defaultDisplayTimeout;
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -781,7 +813,7 @@ void serviceQueueTask(void *arg)
 
                 if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
                 {
-                    ESP_LOGW(TAG, "Seinding AstrOs Interface message to serial queue fail");
+                    ESP_LOGW(TAG, "Sending AstrOs Interface message to serial queue fail");
                     free(serialMsg.data);
                 }
 
@@ -1035,6 +1067,7 @@ void espnowQueueTask(void *arg)
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.displayDefault();
+    displayTimeout = defaultDisplayTimeout;
 
     queue_espnow_msg_t msg;
 

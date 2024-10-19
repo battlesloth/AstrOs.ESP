@@ -7,6 +7,7 @@ extern "C"
 
     typedef enum
     {
+        SHOW_DISPLAY,
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF,
         ASTROS_INTERFACE_MESSAGE,

@@ -68,5 +68,6 @@
         "variant": "cpp"
     },
     "C_Cpp.errorSquiggles": "enabled",
-    "cmake.configureOnOpen": false
+    "cmake.configureOnOpen": false,
+    "idf.adapterTargetName": "esp32"
 }
