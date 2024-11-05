@@ -41,6 +41,17 @@ static bool isMasterNode = false;
 static uart_port_t ASTRO_PORT = UART_NUM_0;
 static std::string rank = "Padawan";
 
+
+/**********************************
+ * Time trackers
+ **********************************/
+static uint64_t animation_loop_start = 0;
+static uint64_t animation_loop_end = 0;
+static uint64_t animation_loop_drift = 0;
+
+static uint64_t lastHeartBeat = 0;
+
+
 /**********************************
  * queues
  **********************************/
@@ -344,7 +355,10 @@ static void initTimers(void)
 
 static void pollingTimerCallback(void *arg)
 {
-    ESP_LOGI(TAG, "Heartbeat");
+    int now = esp_timer_get_time();
+    int seconds = (now - lastHeartBeat) / 1000;
+    lastHeartBeat = now;
+    ESP_LOGI(TAG, "Heartbeat, %d milliseconds since last", seconds);
 
     // only send register requests during discovery mode
     if (isMasterNode && !discoveryMode)

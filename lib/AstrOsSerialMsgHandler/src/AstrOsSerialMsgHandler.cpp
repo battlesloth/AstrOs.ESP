@@ -41,20 +41,28 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
         break;
     }
     case AstrOsSerialMessageType::DEPLOY_CONFIG:
+    {
         this->handleDeployConfig(validation.msgId, message);
         break;
+    }
     case AstrOsSerialMessageType::DEPLOY_SCRIPT:
+    {
         this->handleDeployScript(validation.msgId, message);
         break;
+    }
     case AstrOsSerialMessageType::RUN_SCRIPT:
     case AstrOsSerialMessageType::PANIC_STOP:
     case AstrOsSerialMessageType::FORMAT_SD:
     case AstrOsSerialMessageType::RUN_COMMAND:
+    {
         this->handleBasicCommand(validation.type, validation.msgId, message);
         break;
+    }
     default:
+    {
         ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(validation.type));
         break;
+    }
     }
 }
 

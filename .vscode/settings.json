@@ -69,5 +69,6 @@
     },
     "C_Cpp.errorSquiggles": "enabled",
     "cmake.configureOnOpen": false,
-    "idf.adapterTargetName": "esp32"
+    "idf.adapterTargetName": "esp32",
+    "idf.portWin": "COM5"
 }

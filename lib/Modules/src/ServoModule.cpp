@@ -89,7 +89,7 @@ void ServoModule::LoadServoConfig()
             {
                 // Board 0
 
-                // convert from micorseconds to PWM
+                // convert from microseconds to PWM
                 // based on 500 => 100, 2500 => 510 as 20ms
                 // which works for the servos I tested with
 

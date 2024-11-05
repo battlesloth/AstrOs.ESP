@@ -7,6 +7,9 @@
 #include <sstream>
 #include <cstring>
 #include <cstdint>
+#include <esp_log.h>
+
+static const char *TAG = "AstrOsSerialMessageService";
 
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
@@ -51,6 +54,7 @@ astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std
 
     if (parts.size() != 3)
     {
+        ESP_LOGI(TAG, "Invalid message, %d parts: %s",parts.size(), msg.c_str());
         return result;
     }
 
