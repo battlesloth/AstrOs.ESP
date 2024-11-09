@@ -387,12 +387,15 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
         return this->handleFormatSD(packet);
     case AstrOsPacketType::COMMAND_RUN:
         return this->handleCommandRun(packet);
+    case AstrOsPacketType::SERVO_TEST:
+        return this->handleServoTest(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
     case AstrOsPacketType::SCRIPT_RUN_ACK:
     case AstrOsPacketType::SCRIPT_RUN_NAK:
     case AstrOsPacketType::FORMAT_SD_ACK:
     case AstrOsPacketType::FORMAT_SD_NAK:
+    case AstrOsPacketType::SERVO_TEST_ACK:
         ESP_LOGD(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
         return this->handleBasicAckNak(packet);
     default:
@@ -988,6 +991,38 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
     return true;
 }
 
+
+bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid servo test payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST,
+                               parts[1], "", "", parts[2]);
+
+    return true;
+}
 /*******************************************
  * Common Methods
  *******************************************/

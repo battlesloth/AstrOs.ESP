@@ -375,8 +375,8 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.inverted = inverted > 0;
         channel.currentPos = channel.minPos;
         channel.requestedPos = channel.minPos;
-        channel.moveFactor = 1;
         channel.speed = 1;
+        channel.on = false;
 
         config[i] = channel;
     }

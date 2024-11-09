@@ -76,6 +76,7 @@ private:
     bool handleCommandRun(astros_packet_t packet);
     bool handlePanicStop(astros_packet_t packet);
     bool handleFormatSD(astros_packet_t packet);
+    bool handleServoTest(astros_packet_t packet);
 
     bool handleBasicAckNak(astros_packet_t packet);
     AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);

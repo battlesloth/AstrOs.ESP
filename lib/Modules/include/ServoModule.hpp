@@ -4,27 +4,52 @@
 #include <AnimationCommand.hpp>
 #include <AstrOsUtility.h>
 #include <pca9685.hpp>
+#include <I2cMaster.hpp>
 
 #include <esp_system.h>
 #include <string>
-#include <driver/i2c.h>
+
+#define SERVO_STEPS 360
+#define SERVO_ZERO_SPEED 180
+
+struct servo_module_config_t {
+    uint8_t board0Addr;
+    long board0Freq;
+    int board0Slop;
+    uint8_t board1Addr;
+    long board1Freq;
+    int board1Slop;
+};
 
 class ServoModule
 {
 private:
-    void SetCommandByBoard(servo_channel *servos, ServoCommand *cmd);
-    void MoveServoByBoard(Pca9685 *board, servo_channel *servos, int idx);
     bool loading;
 
+    int board0Freq;
+    int board0Slop;
+
+    int board1Freq;
+    int board1Slop;
+
+    uint16_t board0StepMap[SERVO_STEPS];
+    uint16_t board1StepMap[SERVO_STEPS];
+    void setChannelConfig(int boardId, servo_channel *channel, int minStep, int maxStep, double freqMs);
+    void zeroServo(servo_channel *servo); 
+    void setCommandByBoard(servo_channel *servos, ServoCommand *cmd);
+    void moveServoByBoard(Pca9685 *board, servo_channel *servo, int idx, uint16_t *stepMap);
+    void setServoToPosition(Pca9685 *board, servo_channel *channel, uint16_t *stepMap, int ms);
 public:
     ServoModule();
     ~ServoModule();
-    esp_err_t Init(uint8_t board0addr, uint8_t board1addr);
+    esp_err_t Init(I2cMaster i2cMaster, servo_module_config_t config);
     void LoadServoConfig();
     void QueueCommand(uint8_t *cmd);
     void ZeroServos();
     void MoveServos();
     void Panic();
+    bool UpdateBoard(uint8_t board, long frequency, int slop);
+    void SetServoPosition(uint8_t board, uint8_t channel, int ms);
 };
 
 extern ServoModule ServoMod;

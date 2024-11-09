@@ -54,6 +54,7 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
     case AstrOsSerialMessageType::PANIC_STOP:
     case AstrOsSerialMessageType::FORMAT_SD:
     case AstrOsSerialMessageType::RUN_COMMAND:
+    case AstrOsSerialMessageType::SERVO_TEST:
     {
         this->handleBasicCommand(validation.type, validation.msgId, message);
         break;
@@ -199,6 +200,8 @@ AstrOsInterfaceResponseType AstrOsSerialMsgHandler::getResponseType(AstrOsSerial
             return AstrOsInterfaceResponseType::FORMAT_SD;
         case AstrOsSerialMessageType::RUN_COMMAND:
             return AstrOsInterfaceResponseType::COMMAND;
+        case AstrOsSerialMessageType::SERVO_TEST:
+            return AstrOsInterfaceResponseType::SERVO_TEST;
         default:
             return AstrOsInterfaceResponseType::UNKNOWN;
         }
@@ -219,6 +222,8 @@ AstrOsInterfaceResponseType AstrOsSerialMsgHandler::getResponseType(AstrOsSerial
             return AstrOsInterfaceResponseType::SEND_FORMAT_SD;
         case AstrOsSerialMessageType::RUN_COMMAND:
             return AstrOsInterfaceResponseType::SEND_COMMAND;
+        case AstrOsSerialMessageType::SERVO_TEST:
+            return AstrOsInterfaceResponseType::SEND_SERVO_TEST;
         default:
             return AstrOsInterfaceResponseType::UNKNOWN;
         }

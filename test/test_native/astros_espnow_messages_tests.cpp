@@ -2,8 +2,8 @@
 #include <gmock/gmock.h>
 #include <AstrOsMessaging.hpp>
 
-using ::testing::MatchesRegex;
-using ::testing::StartsWith;
+//using ::testing::MatchesRegex;
+//using ::testing::StartsWith;
 
 TEST(EspNowMessages, InvalidPacket)
 {

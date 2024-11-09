@@ -3,8 +3,8 @@
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 
-using ::testing::MatchesRegex;
-using ::testing::StartsWith;
+//using ::testing::MatchesRegex;
+//using ::testing::StartsWith;
 
 TEST(SerialMessages, PollAckMessage)
 {
