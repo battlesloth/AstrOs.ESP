@@ -351,7 +351,7 @@ void ServoModule::moveServoByBoard(Pca9685 *board, servo_channel *servo, int idx
     // if the servo is not set, turn it off
     if (!servo->set && servo->on)
     {
-        board->SetPwm(idx, 0, 4096);
+        board->SetPwm(idx, 0, 0);
         servo->on = false;
         ESP_LOGI(TAG, "Servo is not set. Setting servo channel %d on board %d off", idx, board->GetAddress());
         return;
@@ -364,7 +364,7 @@ void ServoModule::moveServoByBoard(Pca9685 *board, servo_channel *servo, int idx
     {
         if (servo->on)
         {
-            board->SetPwm(idx, 0, 4096);
+            board->SetPwm(idx, 0, 0);
             servo->on = false;
             ESP_LOGI(TAG, "Setting servo channel %d on board %d off", idx, board->GetAddress());
         }
@@ -398,6 +398,10 @@ void ServoModule::moveServoByBoard(Pca9685 *board, servo_channel *servo, int idx
 
 void ServoModule::setServoToPosition(Pca9685 *board, servo_channel *channel, uint16_t *stepMap, int ms)
 {
+    if (ms == 0){
+        board->SetPwm(channel->id, 0, 0);
+    }
+
     auto pos = MicroSecondsToMapPosition(
         ms,
         (double)(1000000.0 / board->GetFrequency()),

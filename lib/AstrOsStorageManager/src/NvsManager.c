@@ -353,7 +353,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         err = nvs_get_u16(nvsHandle, maxPosConfig, &max);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
-            max = 4096;
+            max = 0;
         }
         err = nvs_get_u8(nvsHandle, setConfig, &set);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
