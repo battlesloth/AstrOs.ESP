@@ -162,6 +162,52 @@ TEST(SerialMessages, RunCommandMessage)
     EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
 }
 
+TEST(SerialMessages, PanicStopMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::string msgId = "testId";
+
+    auto value = msgSvc.getPanicStop(msgId);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::PANIC_STOP, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+}
+ 
+
+TEST(SerialMessages, FormatSDMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::string msgId = "testId";
+
+    auto value = msgSvc.getFormatSD(msgId);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FORMAT_SD, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+}
+
+TEST(SerialMessages, ServoTestMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::string msgId = "testId";
+    std::string macAddress = "macAddress";
+    std::string controller = "controller";
+    std::string data = "data";
+
+    auto value = msgSvc.getServoTest(msgId, macAddress, controller, data);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::SERVO_TEST, validation.type);
+    EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
+}
+
 //=================================================================================================
 // Ack/Nak messages
 //=================================================================================================
@@ -230,4 +276,19 @@ TEST(SerialMessages, RunCommandAckMessage)
 TEST(SerialMessages, RunCommandNakMessage)
 {
     RunAckNakTest(AstrOsSerialMessageType::RUN_COMMAND_NAK);
+}
+
+TEST(SerialMessages, FormatSDAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::FORMAT_SD_ACK);
+}
+
+TEST(SerialMessages, FormatSDNakMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::FORMAT_SD_NAK);
+}
+
+TEST(SerialMessages, ServoTestAckMessage)
+{
+    RunAckNakTest(AstrOsSerialMessageType::SERVO_TEST_ACK);
 }

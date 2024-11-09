@@ -102,6 +102,10 @@ public:
     std::string getDeployScript(std::string msgId, std::string scriptId, std::vector<std::string> controllers, std::vector<std::string> scripts);
     std::string getRunScript(std::string msgId, std::string scriptId);
     std::string getRunCommand(std::string msgId, std::string controller, std::string command);
+    std::string getPanicStop(std::string msgId);
+    std::string getFormatSD(std::string msgId);
+    std::string getServoTest(std::string msgId, std::string macAddress, std::string controller, std::string data);
+    
 };
 
 #endif
