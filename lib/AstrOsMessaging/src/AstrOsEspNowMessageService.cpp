@@ -28,6 +28,8 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::FORMAT_SD] = AstrOsENC::FORMAT_SD;
     packetTypeMap[AstrOsPacketType::FORMAT_SD_ACK] = AstrOsENC::FORMAT_SD_ACK;
     packetTypeMap[AstrOsPacketType::FORMAT_SD_NAK] = AstrOsENC::FORMAT_SD_NAK;
+    packetTypeMap[AstrOsPacketType::SERVO_TEST] = AstrOsENC::SERVO_TEST;
+    packetTypeMap[AstrOsPacketType::SERVO_TEST_ACK] = AstrOsENC::SERVO_TEST_ACK;
 }
 
 AstrOsEspNowMessageService::~AstrOsEspNowMessageService()

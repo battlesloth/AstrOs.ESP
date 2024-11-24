@@ -240,7 +240,7 @@ esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
     return err;
 }
 
-bool AstrOsEspNow::cachePeer(u_int8_t *macAddress, std::string name)
+bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
 {
 
     if (peers.size() > 10)
@@ -336,7 +336,7 @@ void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
 /// @param data
 /// @param len
 /// @return
-bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
+bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
 {
     astros_packet_t packet = this->messageService.parsePacket(data);
 
@@ -385,12 +385,17 @@ bool AstrOsEspNow::handleMessage(u_int8_t *src, u_int8_t *data, size_t len)
         return this->handlePanicStop(packet);
     case AstrOsPacketType::FORMAT_SD:
         return this->handleFormatSD(packet);
+    case AstrOsPacketType::COMMAND_RUN:
+        return this->handleCommandRun(packet);
+    case AstrOsPacketType::SERVO_TEST:
+        return this->handleServoTest(packet);
     case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
     case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
     case AstrOsPacketType::SCRIPT_RUN_ACK:
     case AstrOsPacketType::SCRIPT_RUN_NAK:
     case AstrOsPacketType::FORMAT_SD_ACK:
     case AstrOsPacketType::FORMAT_SD_NAK:
+    case AstrOsPacketType::SERVO_TEST_ACK:
         ESP_LOGD(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
         return this->handleBasicAckNak(packet);
     default:
@@ -439,7 +444,7 @@ void AstrOsEspNow::sendRegistrationRequest()
     free(destMac);
 }
 
-bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
+bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
 {
     esp_err_t err = ESP_OK;
 
@@ -453,7 +458,28 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
     }
 
     std::string macStr = AstrOsStringUtils::macToString(src);
-    std::string padewanName = "test";
+
+    std::string padewanName;
+    auto s = this->peers.size();
+
+    switch (s)
+    {
+    case 0:
+        padewanName = "Ashoka";
+        break;
+    case 1:
+        padewanName = "Grogu";
+        break;
+    case 2:
+        padewanName = "Anakin";
+        break;
+    case 3:
+        padewanName = "Obi-Wan";
+        break;
+    default:
+        break;
+    }
+
     astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
@@ -466,7 +492,7 @@ bool AstrOsEspNow::handleRegistrationReq(u_int8_t *src)
     return true;
 }
 
-bool AstrOsEspNow::handleRegistration(u_int8_t *src, astros_packet_t packet)
+bool AstrOsEspNow::handleRegistration(uint8_t *src, astros_packet_t packet)
 {
     esp_err_t err = ESP_OK;
 
@@ -483,8 +509,9 @@ bool AstrOsEspNow::handleRegistration(u_int8_t *src, astros_packet_t packet)
         return false;
     }
 
-    name = parts[0];
-    mac = parts[1];
+    mac = parts[0];
+    name = parts[1];
+    
 
     if (name.empty() || mac.empty())
     {
@@ -556,7 +583,7 @@ bool AstrOsEspNow::sendRegistrationAck()
     return result;
 }
 
-bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, astros_packet_t packet)
+bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
 {
     std::string payloadStr(reinterpret_cast<char *>(packet.payload), packet.payloadSize);
 
@@ -568,8 +595,9 @@ bool AstrOsEspNow::handleRegistrationAck(u_int8_t *src, astros_packet_t packet)
         return false;
     }
 
-    name = parts[0];
-    mac = parts[1];
+    mac = parts[0];
+    name = parts[1];
+
 
     if (name.empty() || mac.empty())
     {
@@ -890,6 +918,43 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
 
     return true;
 }
+
+/*******************************************
+ * Command Run methods
+ *******************************************/
+
+bool AstrOsEspNow::handleCommandRun(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id, 2 is command
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid command run payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND,
+                               parts[1], "", "", parts[2]);
+
+    return true;
+}
+
 /*******************************************
  * Utility Methods
  *******************************************/
@@ -926,6 +991,38 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
     return true;
 }
 
+
+bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
+{
+    std::string payload;
+
+    if (packet.totalPackets > 1)
+    {
+        payload = this->handleMultiPacketMessage(packet);
+        if (payload.empty())
+        {
+            return true;
+        }
+    }
+    else
+    {
+        payload = std::string((char *)packet.payload, packet.payloadSize);
+    }
+
+    // 0 is dest mac, 1 is orgination msg id
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+
+    if (parts.size() < 3)
+    {
+        ESP_LOGE(TAG, "Invalid servo test payload: %s", payload.c_str());
+        return false;
+    }
+
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST,
+                               parts[1], "", "", parts[2]);
+
+    return true;
+}
 /*******************************************
  * Common Methods
  *******************************************/

@@ -31,6 +31,10 @@ enum class AstrOsInterfaceResponseType
     SEND_COMMAND,
     COMMAND_ACK,
     COMMAND_NAK,
+    SERVO_TEST,
+    SEND_SERVO_TEST,
+    SERVO_TEST_ACK,
+    SEND_SERVO_TEST_ACK
 };
 
 typedef struct

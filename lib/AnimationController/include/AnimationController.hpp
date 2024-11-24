@@ -47,6 +47,7 @@ public:
     ~AnimationController();
     void panicStop();
     bool queueScript(std::string script);
+    bool queueCommand(std::string command);
     bool scriptIsLoaded();
     CommandTemplate *getNextCommandPtr();
     int msTillNextServoCommand();

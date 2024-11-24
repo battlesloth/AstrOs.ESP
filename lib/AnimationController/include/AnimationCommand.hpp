@@ -12,7 +12,8 @@ enum CommandType
     PWM,
     I2C,
     GenericSerial,
-    Kangaroo
+    Kangaroo,
+    Gpio
 };
 
 class CommandTemplate
@@ -90,6 +91,16 @@ public:
     ~I2cCommand();
     int channel;
     std::string value;
+};
+
+class GpioCommand : public BaseCommand
+{
+private:
+public:
+    GpioCommand(std::string val);
+    ~GpioCommand();
+    int channel;
+    bool state;
 };
 
 #endif

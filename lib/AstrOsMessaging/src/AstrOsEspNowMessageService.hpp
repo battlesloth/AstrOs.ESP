@@ -38,6 +38,8 @@ namespace AstrOsENC
     constexpr const static char *FORMAT_SD = "FORMAT_SD";
     constexpr const static char *FORMAT_SD_ACK = "FORMAT_SD_ACK";
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
+    constexpr const static char *SERVO_TEST = "SERVO_TEST";
+    constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
 }
 
 enum class AstrOsPacketType
@@ -58,10 +60,15 @@ enum class AstrOsPacketType
     SCRIPT_RUN,
     SCRIPT_RUN_ACK,
     SCRIPT_RUN_NAK,
+    COMMAND_RUN,
+    COMMAND_RUN_ACK,
+    COMMAND_RUN_NAK,
     PANIC_STOP,
     FORMAT_SD,
     FORMAT_SD_ACK,
-    FORMAT_SD_NAK
+    FORMAT_SD_NAK,
+    SERVO_TEST,
+    SERVO_TEST_ACK
 };
 
 typedef struct

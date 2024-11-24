@@ -2,8 +2,8 @@
 #include <gmock/gmock.h>
 #include <AstrOsMessaging.hpp>
 
-using ::testing::MatchesRegex;
-using ::testing::StartsWith;
+//using ::testing::MatchesRegex;
+//using ::testing::StartsWith;
 
 TEST(EspNowMessages, InvalidPacket)
 {
@@ -239,6 +239,30 @@ TEST(EspNowMessages, PollAckMessage)
     std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
     std::stringstream expected;
     expected << "macaddress" << UNIT_SEPARATOR << "name" << UNIT_SEPARATOR << "fingerprint";
+
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+
+    free(value.data);
+}
+
+TEST(EspNowMessages, ServoTest)
+{
+    std::stringstream msg;
+    msg << "controller" << UNIT_SEPARATOR << "data";
+
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::SERVO_TEST, "macaddress", msg.str())[0];
+    auto parsed = msgService.parsePacket(value.data);
+
+    EXPECT_EQ(AstrOsPacketType::SERVO_TEST, parsed.packetType);
+    EXPECT_EQ(1, parsed.packetNumber);
+    EXPECT_EQ(1, parsed.totalPackets);
+    EXPECT_EQ(26, parsed.payloadSize);
+
+    std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "macaddress" << UNIT_SEPARATOR << "controller" << UNIT_SEPARATOR << "data";
 
     EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
 

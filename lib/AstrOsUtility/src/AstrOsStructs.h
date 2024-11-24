@@ -53,7 +53,6 @@ extern "C"
         int id;
         int minPos;
         int maxPos;
-        int moveFactor;
         int currentPos;
         int requestedPos;
         int speed;

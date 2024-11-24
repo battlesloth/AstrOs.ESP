@@ -20,6 +20,7 @@
 #include <SerialModule.hpp>
 #include <ServoModule.hpp>
 #include <I2cModule.hpp>
+#include <GpioModule.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
@@ -33,10 +34,23 @@ static const char *TAG = AstrOsConstants::ModuleName;
 /**********************************
  * States
  **********************************/
+static int displayTimeout = 0;
+static int defaultDisplayTimeout = 10;
 static bool discoveryMode = false;
 static bool isMasterNode = false;
-static uint8_t ASTRO_PORT = UART_NUM_0;
+static uart_port_t ASTRO_PORT = UART_NUM_0;
 static std::string rank = "Padawan";
+
+
+/**********************************
+ * Time trackers
+ **********************************/
+static uint64_t animation_loop_start = 0;
+static uint64_t animation_loop_end = 0;
+static uint64_t animation_loop_drift = 0;
+
+static uint64_t lastHeartBeat = 0;
+
 
 /**********************************
  * queues
@@ -48,6 +62,7 @@ static QueueHandle_t serviceQueue;
 static QueueHandle_t serialQueue;
 static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
+static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
 
 /**********************************
@@ -65,6 +80,9 @@ static bool polling = false;
 
 static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
+static esp_timer_handle_t servoMoveTimer;
+
+#define SERVO_MOVE_INTERVAL 500 // 500ms
 
 /**********************************
  * animation
@@ -74,7 +92,7 @@ static esp_timer_handle_t animationTimer;
 /**********************************
  * Reset Button
  **********************************/
-#define RESET_GPIO (GPIO_NUM_13)
+
 #define MEDIUM_PRESS_THRESHOLD_MS 3000 // 3 second
 #define LONG_PRESS_THRESHOLD_MS 10000  // 10 seconds
 
@@ -84,21 +102,12 @@ static esp_timer_handle_t animationTimer;
 #define ASTROS_INTEFACE_BAUD_RATE (115200)
 
 #define BAUD_RATE_1 (9600)
-#define TX_PIN_1 (GPIO_NUM_2)
-#define RX_PIN_1 (GPIO_NUM_15)
 #define BAUD_RATE_2 (9600)
-#define TX_PIN_2 (GPIO_NUM_32)
-#define RX_PIN_2 (GPIO_NUM_33)
 #define BAUD_RATE_3 (9600)
-#define TX_PIN_3 (GPIO_NUM_12)
-#define RX_PIN_3 (GPIO_NUM_13)
 
 /**********************************
  * I2C Settings
  **********************************/
-
-#define SDA_PIN (GPIO_NUM_21)
-#define SCL_PIN (GPIO_NUM_22)
 
 #define I2C_PORT I2C_NUM_0
 
@@ -116,10 +125,12 @@ void init(void);
 
 static void loadConfig();
 
+// timers
 static void initTimers(void);
 static void pollingTimerCallback(void *arg);
 static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
+static void servoMoveTimerCallback(void *arg);
 
 // espnow call backs
 bool cachePeer(espnow_peer_t peer);
@@ -137,6 +148,7 @@ void animationQueueTask(void *arg);
 void serialQueueTask(void *arg);
 void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
+void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 
 // handlers
@@ -145,8 +157,10 @@ static void handleRegistrationSync(astros_interface_response_t msg);
 static void handleSetConfig(astros_interface_response_t msg);
 static void handleSaveScript(astros_interface_response_t msg);
 static void handleRunSctipt(astros_interface_response_t msg);
+static void handleRunCommand(astros_interface_response_t msg);
 static void handlePanicStop(astros_interface_response_t msg);
 static void handleFormatSD(std::string id);
+static void handleServoTest(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
 
@@ -159,6 +173,7 @@ void app_main()
 {
     init();
 
+    // core 1
     xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
@@ -166,6 +181,9 @@ void app_main()
     xTaskCreatePinnedToCore(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 9, NULL, 1);
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+
+    // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
     xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
 
@@ -179,7 +197,7 @@ void init(void)
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = 1ULL << RESET_GPIO;
+    io_conf.pin_bit_mask = 1ULL << RESET_PIN;
     io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
@@ -190,6 +208,7 @@ void init(void)
     serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
@@ -201,18 +220,8 @@ void init(void)
     AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
-    i2c_config_t conf;
-
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = SDA_PIN;
-    conf.scl_io_num = SCL_PIN;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 100000;
-    conf.clk_flags = 0;
-
-    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
+    ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t) SDA_PIN, (gpio_num_t) SCL_PIN));
+    ESP_LOGI(TAG, "I2C Master initiated");
 
     serial_config_t serialConf;
 
@@ -237,11 +246,24 @@ void init(void)
     ESP_ERROR_CHECK(SerialMod.Init(serialConf));
     ESP_LOGI(TAG, "Serial Module initiated");
 
-    ESP_ERROR_CHECK(ServoMod.Init(SERVO_BOARD_0_ADDR, SERVO_BOARD_1_ADDR));
+    servo_module_config_t servoConfig = {
+        .board0Addr = SERVO_BOARD_0_ADDR,
+        .board0Freq = 50,
+        .board0Slop = 3,
+        .board1Addr = SERVO_BOARD_1_ADDR,
+        .board1Freq = 50,
+        .board1Slop = 4};
+
+    ESP_ERROR_CHECK(ServoMod.Init(i2cMaster, servoConfig));
     ESP_LOGI(TAG, "Servo Module initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
+
+    ESP_ERROR_CHECK(GpioMod.Init(
+        {GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2, GPIO_PIN_3, GPIO_PIN_4,
+         GPIO_PIN_5, GPIO_PIN_6, GPIO_PIN_7, GPIO_PIN_8, GPIO_PIN_9}));
+    ESP_LOGI(TAG, "GPIO Module initiated");
 
     svc_config_t svcConfig;
 
@@ -300,7 +322,6 @@ void init(void)
 
 static void initTimers(void)
 {
-
     const esp_timer_create_args_t pTimerArgs = {
         .callback = &pollingTimerCallback,
         .arg = NULL,
@@ -322,6 +343,14 @@ static void initTimers(void)
         .name = "maintenance",
         .skip_unhandled_events = true};
 
+    // May need to make this a GPT timer?
+    const esp_timer_create_args_t sTimerArgs = {
+        .callback = &servoMoveTimerCallback,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "servoMove",
+        .skip_unhandled_events = true};
+
     ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(pollingTimer, 2 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started polling timer");
@@ -333,11 +362,18 @@ static void initTimers(void)
     ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started maintenance timer");
+
+    ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoMoveTimer));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 500 * 1000));
+    ESP_LOGI("init_timer", "Started servo move timer");
 }
 
 static void pollingTimerCallback(void *arg)
 {
-    ESP_LOGI(TAG, "Heartbeat");
+    int now = esp_timer_get_time();
+    int seconds = (now - lastHeartBeat) / 1000;
+    lastHeartBeat = now;
+    ESP_LOGI(TAG, "Heartbeat, %d milliseconds since last", seconds);
 
     // only send register requests during discovery mode
     if (isMasterNode && !discoveryMode)
@@ -378,6 +414,16 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
+
+    if (!discoveryMode && displayTimeout > 0)
+    {
+        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout);
+        displayTimeout -= 2;
+        if (displayTimeout <= 0)
+        {
+            AstrOs_Display.displayClear();
+        }
+    }
 }
 
 static void maintenanceTimerCallback(void *arg)
@@ -407,7 +453,11 @@ static void animationTimerCallback(void *arg)
             memcpy(msg.data, val.c_str(), val.size());
             msg.data[val.size()] = '\0';
 
-            xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send serial queue fail");
+                free(msg.data);
+            }
             break;
         }
         case CommandType::PWM:
@@ -418,7 +468,11 @@ static void animationTimerCallback(void *arg)
             memcpy(servoMsg.data, val.c_str(), val.size());
             servoMsg.data[val.size()] = '\0';
 
-            xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send servo queue fail");
+                free(servoMsg.data);
+            }
             break;
         }
         case CommandType::I2C:
@@ -429,7 +483,26 @@ static void animationTimerCallback(void *arg)
             memcpy(i2cMsg.data, val.c_str(), val.size());
             i2cMsg.data[val.size()] = '\0';
 
-            xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000));
+            if (xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send i2c queue fail");
+                free(i2cMsg.data);
+            }
+            break;
+        }
+        case CommandType::Gpio:
+        {
+            ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
+            queue_msg_t gpioMsg;
+            gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(gpioMsg.data, val.c_str(), val.size());
+            gpioMsg.data[val.size()] = '\0';
+
+            if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send gpio queue fail");
+                free(gpioMsg.data);
+            }
             break;
         }
         default:
@@ -446,6 +519,23 @@ static void animationTimerCallback(void *arg)
     }
 }
 
+
+static void servoMoveTimerCallback(void *arg)
+{
+    // get time at start of loop
+    auto loopStart = esp_timer_get_time();
+
+    ServoMod.MoveServos();
+
+    // get time at end of loop
+    auto loopEnd = esp_timer_get_time();
+
+    // start loop  so it will trigger 500 ms from the start of the loop
+    int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
+    auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
+}
+
 /******************************************
  * tasks
  *****************************************/
@@ -457,7 +547,7 @@ void buttonListenerTask(void *arg)
 
     while (1)
     {
-        if (gpio_get_level(RESET_GPIO) == 0)
+        if (gpio_get_level(static_cast<gpio_num_t>(RESET_PIN)) == 0)
         {
             if (buttonStartTime == 0)
             {
@@ -501,6 +591,19 @@ void buttonListenerTask(void *arg)
                     }
 
                     ESP_LOGI(TAG, "Discovery Switch Sent");
+                }
+                else if (!discoveryMode)
+                {
+                    queue_svc_cmd_t cmd;
+                    cmd.cmd = SERVICE_COMMAND::SHOW_DISPLAY;
+                    cmd.data = nullptr;
+
+                    if (xQueueSend(serviceQueue, &cmd, pdMS_TO_TICKS(500)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send espnow queue fail");
+                    }
+
+                    ESP_LOGI(TAG, "Show Display Sent");
                 }
             }
 
@@ -574,6 +677,16 @@ void interfaceResponseQueueTask(void *arg)
                 AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SCRIPT_RUN, msg.peerMac, msg.originationMsgId, msg.message);
                 break;
             }
+            case AstrOsInterfaceResponseType::COMMAND:
+            {
+                handleRunCommand(msg);
+                break;
+            }
+            case AstrOsInterfaceResponseType::SEND_COMMAND:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::COMMAND_RUN, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
             case AstrOsInterfaceResponseType::PANIC_STOP:
             {
                 handlePanicStop(msg);
@@ -613,6 +726,14 @@ void interfaceResponseQueueTask(void *arg)
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
                 break;
             }
+            case AstrOsInterfaceResponseType::SERVO_TEST:{
+                handleServoTest(msg);
+            }
+            case AstrOsInterfaceResponseType::SEND_SERVO_TEST:
+            {
+                AstrOs_EspNow.sendBasicCommand(AstrOsPacketType::SERVO_TEST, msg.peerMac, msg.originationMsgId, msg.message);
+                break;
+            }
             case AstrOsInterfaceResponseType::SEND_CONFIG_NAK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK:
             case AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK:
@@ -620,6 +741,9 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SCRIPT_RUN_NAK:
             case AstrOsInterfaceResponseType::FORMAT_SD_ACK:
             case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
+            case AstrOsInterfaceResponseType::COMMAND_ACK:
+            case AstrOsInterfaceResponseType::COMMAND_NAK:
+            case AstrOsInterfaceResponseType::SERVO_TEST_ACK:
             {
                 auto responseType = getSerialMessageType(msg.type);
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
@@ -712,6 +836,12 @@ void serviceQueueTask(void *arg)
                 std::string data(reinterpret_cast<char *>(msg.data), msg.dataSize);
                 handleFormatSD(data);
             }
+            case SERVICE_COMMAND::SHOW_DISPLAY:
+            {
+                AstrOs_Display.displayDefault();
+                displayTimeout = defaultDisplayTimeout;
+                break;
+            }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
             {
                 discoveryMode = true;
@@ -723,6 +853,7 @@ void serviceQueueTask(void *arg)
             {
                 discoveryMode = false;
                 AstrOs_Display.displayDefault();
+                displayTimeout = defaultDisplayTimeout;
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -737,7 +868,7 @@ void serviceQueueTask(void *arg)
 
                 if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
                 {
-                    ESP_LOGW(TAG, "Seinding AstrOs Interface message to serial queue fail");
+                    ESP_LOGW(TAG, "Sending AstrOs Interface message to serial queue fail");
                     free(serialMsg.data);
                 }
 
@@ -913,8 +1044,6 @@ void servoQueueTask(void *arg)
             free(msg.data);
         }
 
-        ServoMod.MoveServos();
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -946,6 +1075,35 @@ void i2cQueueTask(void *arg)
             {
                 I2cMod.WriteDisplay(msg.data);
             }
+
+            free(msg.data);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void gpioQueueTask(void *arg)
+{
+    QueueHandle_t gpioQueue;
+
+    gpioQueue = (QueueHandle_t)arg;
+    queue_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(gpioQueue, &(msg), 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "GPIO Queue Stack HWM: %d", highWaterMark);
+            }
+
+            ESP_LOGD(TAG, "GPIO Command received on queue => %d, %s", msg.message_id, msg.data);
+
+            GpioMod.SendCommand(msg.data);
+
+            free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -962,6 +1120,7 @@ void espnowQueueTask(void *arg)
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.displayDefault();
+    displayTimeout = defaultDisplayTimeout;
 
     queue_espnow_msg_t msg;
 
@@ -1166,6 +1325,8 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
         return AstrOsSerialMessageType::FORMAT_SD_ACK;
     case AstrOsInterfaceResponseType::FORMAT_SD_NAK:
         return AstrOsSerialMessageType::FORMAT_SD_NAK;
+    case AstrOsInterfaceResponseType::SEND_SERVO_TEST_ACK:
+        return AstrOsSerialMessageType::SERVO_TEST_ACK;
 
     default:
         return AstrOsSerialMessageType::UNKNOWN;
@@ -1292,6 +1453,11 @@ static void handleRunSctipt(astros_interface_response_t msg)
     }
 }
 
+static void handleRunCommand(astros_interface_response_t msg)
+{
+    AnimationCtrl.queueCommand(msg.message);
+}
+
 static void handlePanicStop(astros_interface_response_t msg)
 {
     AnimationCtrl.panicStop();
@@ -1318,5 +1484,32 @@ static void handleFormatSD(std::string id)
     {
         auto ackNak = success ? AstrOsPacketType::FORMAT_SD_ACK : AstrOsPacketType::FORMAT_SD_NAK;
         AstrOs_EspNow.sendBasicAckNak(id, ackNak, "FORMAT");
+    }
+}
+
+static void handleServoTest(astros_interface_response_t msg)
+{
+    auto message = std::string(msg.message);
+    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+
+    if (parts.size() != 3)
+    {
+        ESP_LOGE(TAG, "Invalid servo test message: %s", message.c_str());
+    }
+    else
+    {
+        int board= std::stoi(parts[0]);
+        int servo = std::stoi(parts[1]);
+        int ms = std::stoi(parts[2]);
+        ServoMod.SetServoPosition(board, servo, ms);
+    }
+
+    if (isMasterNode)
+    {
+        AstrOs_SerialMsgHandler.sendBasicAckNakResponse(AstrOsSerialMessageType::SERVO_TEST_ACK, msg.originationMsgId, AstrOs_EspNow.getMac(), "master", "SERVO_TEST");
+    }
+    else
+    {
+        AstrOs_EspNow.sendBasicAckNak(msg.originationMsgId, AstrOsPacketType::SERVO_TEST_ACK, "SERVO_TEST");
     }
 }

@@ -8,6 +8,8 @@
 #include <cstring>
 #include <cstdint>
 
+static const char *TAG = "AstrOsSerialMessageService";
+
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
     this->msgTypeMap = {
@@ -31,6 +33,8 @@ AstrOsSerialMessageService::AstrOsSerialMessageService()
         {AstrOsSerialMessageType::FORMAT_SD_ACK, AstrOsSC::FORMAT_SD_ACK},
         {AstrOsSerialMessageType::FORMAT_SD_NAK, AstrOsSC::FORMAT_SD_NAK},
         {AstrOsSerialMessageType::PANIC_STOP, AstrOsSC::PANIC_STOP},
+        {AstrOsSerialMessageType::SERVO_TEST, AstrOsSC::SERVO_TEST},
+        {AstrOsSerialMessageType::SERVO_TEST_ACK, AstrOsSC::SERVO_TEST_ACK},
     };
 }
 
@@ -240,5 +244,39 @@ std::string AstrOsSerialMessageService::getRunCommand(std::string msgId, std::st
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::RUN_COMMAND, msgId);
     ss << GROUP_SEPARATOR << command;
+    return ss.str();
+}
+
+/// @brief FOR TESTING PURPOSES. generates a panic stop message
+/// @param msgId message id
+/// @return serial message
+std::string AstrOsSerialMessageService::getPanicStop(std::string msgId)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::PANIC_STOP, msgId);
+    return ss.str();
+}
+
+/// @brief FOR TESTING PURPOSES. generates a format sd message
+/// @param msgId message id
+/// @return serial message
+std::string AstrOsSerialMessageService::getFormatSD(std::string msgId)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FORMAT_SD, msgId);
+    return ss.str();
+}
+
+/// @brief FOR TESTING PURPOSES. generates a servo test message
+/// @param msgId message id
+/// @param macAddress mac address of the peer
+/// @param controller controller to run the command on
+/// @param data data to send
+/// @return serial message
+std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::string macAddress, std::string controller, std::string data)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::SERVO_TEST, msgId);
+    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << data;
     return ss.str();
 }

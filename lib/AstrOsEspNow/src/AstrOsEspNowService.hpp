@@ -47,10 +47,10 @@ private:
     AstrOsEspNowMessageService messageService;
 
     void getMasterMac(uint8_t *macAddress);
-    void updateMasterMac(u_int8_t *macAddress);
+    void updateMasterMac(uint8_t *macAddress);
 
     esp_err_t addPeer(uint8_t *macAddress);
-    bool cachePeer(u_int8_t *macAddress, std::string name);
+    bool cachePeer(uint8_t *macAddress, std::string name);
     bool findPeer(std::string peer);
     bool isValidPollPeer(std::string peer);
 
@@ -62,19 +62,21 @@ private:
     void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string peerMac,
                               std::string peerName, std::string msgId, std::string message);
 
-    bool handleRegistrationReq(u_int8_t *src);
-    bool sendRegistration(u_int8_t *macAddress, std::string name);
-    bool handleRegistration(u_int8_t *src, astros_packet_t packet);
+    bool handleRegistrationReq(uint8_t *src);
+    bool sendRegistration(uint8_t *macAddress, std::string name);
+    bool handleRegistration(uint8_t *src, astros_packet_t packet);
     bool sendRegistrationAck();
-    bool handleRegistrationAck(u_int8_t *src, astros_packet_t packet);
+    bool handleRegistrationAck(uint8_t *src, astros_packet_t packet);
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
     bool handleConfig(astros_packet_t packet);
     bool handleConfigAckNak(astros_packet_t packet);
     bool handleScriptDeploy(astros_packet_t packet);
     bool handleScriptRun(astros_packet_t packet);
+    bool handleCommandRun(astros_packet_t packet);
     bool handlePanicStop(astros_packet_t packet);
     bool handleFormatSD(astros_packet_t packet);
+    bool handleServoTest(astros_packet_t packet);
 
     bool handleBasicAckNak(astros_packet_t packet);
     AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);
@@ -89,7 +91,7 @@ public:
     esp_err_t init(astros_espnow_config_t config);
     std::vector<espnow_peer_t> getPeers();
     void sendRegistrationRequest();
-    bool handleMessage(u_int8_t *src, u_int8_t *data, size_t len);
+    bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();
     void pollRepsonseTimeExpired();
     void sendConfigAckNak(std::string msgId, bool success);

@@ -353,7 +353,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         err = nvs_get_u16(nvsHandle, maxPosConfig, &max);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
-            max = 4096;
+            max = 0;
         }
         err = nvs_get_u8(nvsHandle, setConfig, &set);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -375,8 +375,8 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.inverted = inverted > 0;
         channel.currentPos = channel.minPos;
         channel.requestedPos = channel.minPos;
-        channel.moveFactor = 1;
         channel.speed = 1;
+        channel.on = false;
 
         config[i] = channel;
     }

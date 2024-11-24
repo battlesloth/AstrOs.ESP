@@ -34,6 +34,8 @@ namespace AstrOsSC
     constexpr const static char *FORMAT_SD = "FORMAT_SD";
     constexpr const static char *FORMAT_SD_ACK = "FORMAT_SD_ACK";
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
+    constexpr const static char *SERVO_TEST = "SERVO_TEST";
+    constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
 }
 
 enum class AstrOsSerialMessageType
@@ -59,6 +61,8 @@ enum class AstrOsSerialMessageType
     FORMAT_SD, // from web server
     FORMAT_SD_ACK,
     FORMAT_SD_NAK,
+    SERVO_TEST,
+    SERVO_TEST_ACK
 };
 
 typedef struct
@@ -98,6 +102,10 @@ public:
     std::string getDeployScript(std::string msgId, std::string scriptId, std::vector<std::string> controllers, std::vector<std::string> scripts);
     std::string getRunScript(std::string msgId, std::string scriptId);
     std::string getRunCommand(std::string msgId, std::string controller, std::string command);
+    std::string getPanicStop(std::string msgId);
+    std::string getFormatSD(std::string msgId);
+    std::string getServoTest(std::string msgId, std::string macAddress, std::string controller, std::string data);
+    
 };
 
 #endif
