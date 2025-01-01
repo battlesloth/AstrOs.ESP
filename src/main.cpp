@@ -18,16 +18,18 @@
 #include <AnimationCommand.hpp>
 #include <AstrOsDisplay.hpp>
 #include <SerialModule.hpp>
-#include <ServoModule.hpp>
+#include <I2cMaster.hpp>
 #include <I2cModule.hpp>
 #include <GpioModule.hpp>
 #include <AstrOsUtility.h>
+
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <guid.h>
+#include <MaestroModule.hpp>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -102,8 +104,9 @@ static esp_timer_handle_t servoMoveTimer;
 #define ASTROS_INTEFACE_BAUD_RATE (115200)
 
 #define BAUD_RATE_1 (9600)
-#define BAUD_RATE_2 (9600)
-#define BAUD_RATE_3 (9600)
+
+#define MAESTRO_UART_PORT UART_NUM_2
+#define MAESTRO_BAUD_RATE (115200)
 
 /**********************************
  * I2C Settings
@@ -236,16 +239,11 @@ void init(void)
 
     serialConf.txPin1 = TX_PIN_1;
     serialConf.rxPin1 = RX_PIN_1;
-    serialConf.baudRate2 = BAUD_RATE_2;
-    serialConf.txPin2 = TX_PIN_2;
-    serialConf.rxPin2 = RX_PIN_2;
-    serialConf.baudRate3 = BAUD_RATE_3;
-    serialConf.txPin3 = TX_PIN_3;
-    serialConf.rxPin3 = RX_PIN_3;
 
     ESP_ERROR_CHECK(SerialMod.Init(serialConf));
     ESP_LOGI(TAG, "Serial Module initiated");
-
+    
+    /*
     servo_module_config_t servoConfig = {
         .board0Addr = SERVO_BOARD_0_ADDR,
         .board0Freq = 50,
@@ -256,7 +254,17 @@ void init(void)
 
     ESP_ERROR_CHECK(ServoMod.Init(i2cMaster, servoConfig));
     ESP_LOGI(TAG, "Servo Module initiated");
+    */
+    
+    maestro_config_t maestroConfig = {
+        .port = MAESTRO_UART_PORT,
+        .baudRate = MAESTRO_BAUD_RATE,
+        .rxPin = RX_PIN_2,
+        .txPin = TX_PIN_2};
 
+    ESP_ERROR_CHECK(MaestroMod.Init(maestroConfig));
+    ESP_LOGI(TAG, "Maestro Module initiated");
+    
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
 
@@ -364,7 +372,7 @@ static void initTimers(void)
     ESP_LOGI("init_timer", "Started maintenance timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoMoveTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 500 * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
     ESP_LOGI("init_timer", "Started servo move timer");
 }
 
@@ -523,17 +531,20 @@ static void animationTimerCallback(void *arg)
 static void servoMoveTimerCallback(void *arg)
 {
     // get time at start of loop
-    auto loopStart = esp_timer_get_time();
+    //auto loopStart = esp_timer_get_time();
 
-    ServoMod.MoveServos();
+    //ServoMod.MoveServos();
+
+    MaestroMod.CheckServos(300);
 
     // get time at end of loop
-    auto loopEnd = esp_timer_get_time();
+    //auto loopEnd = esp_timer_get_time();
 
     // start loop  so it will trigger 500 ms from the start of the loop
-    int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
-    auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
+    //int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
+    //auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
+    //ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
 }
 
 /******************************************
@@ -728,6 +739,7 @@ void interfaceResponseQueueTask(void *arg)
             }
             case AstrOsInterfaceResponseType::SERVO_TEST:{
                 handleServoTest(msg);
+                break;
             }
             case AstrOsInterfaceResponseType::SEND_SERVO_TEST:
             {
@@ -876,7 +888,8 @@ void serviceQueueTask(void *arg)
             }
             case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
             {
-                ServoMod.LoadServoConfig();
+                //ServoMod.LoadServoConfig();
+                MaestroMod.LoadConfig();
                 break;
             }
             default:
@@ -1039,7 +1052,8 @@ void servoQueueTask(void *arg)
             }
 
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
-            ServoMod.QueueCommand(msg.data);
+            //ServoMod.QueueCommand(msg.data);
+            MaestroMod.QueueCommand(msg.data);
 
             free(msg.data);
         }
@@ -1490,18 +1504,23 @@ static void handleFormatSD(std::string id)
 static void handleServoTest(astros_interface_response_t msg)
 {
     auto message = std::string(msg.message);
-    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+    auto parts = AstrOsStringUtils::splitString(message, ':');
 
-    if (parts.size() != 3)
+    if (parts.size() != 2)
     {
         ESP_LOGE(TAG, "Invalid servo test message: %s", message.c_str());
     }
     else
     {
+        /*
         int board= std::stoi(parts[0]);
         int servo = std::stoi(parts[1]);
         int ms = std::stoi(parts[2]);
         ServoMod.SetServoPosition(board, servo, ms);
+        */
+        int servo = std::stoi(parts[0]);
+        int ms = std::stoi(parts[1]);
+        MaestroMod.SetServoPosition(servo, ms);
     }
 
     if (isMasterNode)

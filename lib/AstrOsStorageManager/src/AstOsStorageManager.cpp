@@ -129,8 +129,10 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
                 i++;
             }
 
+            // id|set|min|max|home|inverted
+            // nn:n:nnnn:nnnn:nnnn:n
             // is between min and max servo config length?
-            if (i - start < 9 || i - start > 17)
+            if (i - start < 11 || i - start > 21)
             {
                 ESP_LOGE(TAG, "Failed to save servo config, invalid config length, config: %s", msg.substr(start, i - start).c_str());
                 return false;
@@ -146,8 +148,8 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
             servo_channel ch;
             auto parts = AstrOsStringUtils::splitString(msg.substr(start, i - start), ':');
 
-            // servo config must be 5 parts
-            if (parts.size() != 5)
+            // servo config must be 6 parts
+            if (parts.size() != 6)
             {
                 ESP_LOGE(TAG, "Failed to save servo config, invalid config parts: %d != 5", parts.size());
                 return false;
@@ -157,7 +159,8 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
             ch.set = std::stoi(parts[1]);
             ch.minPos = std::stoi(parts[2]);
             ch.maxPos = std::stoi(parts[3]);
-            ch.inverted = std::stoi(parts[4]);
+            ch.home = std::stoi(parts[4]);
+            ch.inverted = std::stoi(parts[5]);
 
             if (ch.id == -1 || ch.id > 31)
             {
@@ -165,6 +168,9 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
                 return false;
             }
 
+            success = nvsSaveServoConfig(0, ch);
+
+            /*
             if (ch.id < 16)
             {
                 success = nvsSaveServoConfig(0, ch);
@@ -174,6 +180,7 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
                 ch.id = ch.id - 16;
                 success = nvsSaveServoConfig(1, ch);
             }
+            */
 
             if (!success)
             {
@@ -186,10 +193,10 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
         }
     }
 
-    // there should be 32 servo configs
-    if (valueCounter != 32)
+    // there should be 24 servo configs
+    if (valueCounter != 24)
     {
-        ESP_LOGE(TAG, "Failed to save servo config, invalid servo count: %d != 32", valueCounter);
+        ESP_LOGE(TAG, "Failed to save servo config, invalid servo count: %d != 24", valueCounter);
         return false;
     }
 

@@ -53,9 +53,12 @@ extern "C"
         int id;
         int minPos;
         int maxPos;
+        int home;
         int currentPos;
         int requestedPos;
+        int lastPos;
         int speed;
+        int acceleration;
         bool set;
         bool inverted;
         bool on;

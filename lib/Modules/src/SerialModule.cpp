@@ -34,16 +34,16 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
     }
 
     rx[0] = cfig.rxPin1;
-    rx[1] = cfig.rxPin2;
-    rx[2] = cfig.rxPin3;
+    //rx[1] = cfig.rxPin2;
+    //rx[2] = cfig.rxPin3;
 
     tx[0] = cfig.txPin1;
-    tx[1] = cfig.txPin2;
-    tx[2] = cfig.txPin3;
+    //tx[1] = cfig.txPin2;
+    //tx[2] = cfig.txPin3;
 
     baud[0] = cfig.baudRate1;
-    baud[1] = cfig.baudRate2;
-    baud[2] = cfig.baudRate3;
+    //baud[1] = cfig.baudRate2;
+    //baud[2] = cfig.baudRate3;
 
     result = SerialModule::InstallSerial(UART_NUM_1, tx[0], rx[0], baud[0]);
 
@@ -52,7 +52,7 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
         return result;
     }
 
-    result = SerialModule::InstallSerial(UART_NUM_2, tx[1], rx[1], baud[1]);
+    //result = SerialModule::InstallSerial(UART_NUM_2, tx[1], rx[1], baud[1]);
 
     // softSerial = sw_new((gpio_num_t)tx[2], (gpio_num_t)rx[2], true, 512);
     // sw_open(softSerial, 9600);
@@ -116,8 +116,11 @@ void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
     {
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
-            uart_port_t port;
+            uart_port_t port = UART_NUM_1;
 
+            // Maestro is using UART 2
+            // SoftSerial isn't working
+            /*
             switch (ch)
             {
             case 1:
@@ -135,6 +138,7 @@ void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
                 port = UART_NUM_1;
                 break;
             }
+            */
 
             const int txBytes = uart_write_bytes(port, data, size);
             ESP_LOGD(TAG, "Wrote %d bytes", txBytes);

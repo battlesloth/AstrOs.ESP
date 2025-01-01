@@ -12,12 +12,14 @@ typedef struct
     int baudRate1;
     int rxPin1;
     int txPin1;
+    /*
     int baudRate2;
     int rxPin2;
     int txPin2;
     int baudRate3;
     int rxPin3;
     int txPin3;
+    */
 } serial_config_t;
 
 class SerialModule

@@ -5,10 +5,21 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
+#include <bitset>
+#include <sstream>
 
 class AstrOsStringUtils
 {
 public:
+
+    template<typename T>
+    static std::string toBinaryString(const T& x)
+    {
+        std::stringstream ss;
+        ss << std::bitset<sizeof(T) * 8>(x);
+        return ss.str();
+    }
+
     static std::string macToString(const uint8_t *mac)
     {
         char macStr[18] = {0};

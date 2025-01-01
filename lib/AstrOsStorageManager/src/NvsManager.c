@@ -258,16 +258,19 @@ bool nvsSaveServoConfig(int boardId, servo_channel config)
 
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
+    char homeConfig[] = "x-00-home";
     char setConfig[] = "x-00-set";
     char invertedConfig[] = "x-00-inv";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
+    homeConfig[0] = (boardId + '0');
     setConfig[0] = (boardId + '0');
     invertedConfig[0] = (boardId + '0');
 
     setKeyId(minPosConfig, config.id, 2);
     setKeyId(maxPosConfig, config.id, 2);
+    setKeyId(homeConfig, config.id, 2);
     setKeyId(setConfig, config.id, 2);
     setKeyId(invertedConfig, config.id, 2);
 
@@ -279,6 +282,13 @@ bool nvsSaveServoConfig(int boardId, servo_channel config)
     }
 
     err = nvs_set_u16(nvsHandle, maxPosConfig, config.maxPos);
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
+
+    err = nvs_set_u16(nvsHandle, homeConfig, config.home);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -325,16 +335,19 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     uint16_t min;
     uint16_t max;
+    uint16_t home;
     uint8_t set;
     uint8_t inverted;
 
     char minPosConfig[] = "x-00-minpos";
     char maxPosConfig[] = "x-00-maxpos";
+    char homeConfig[] = "x-00-home";
     char setConfig[] = "x-00-set";
     char invertedConfig[] = "x-00-inv";
 
     minPosConfig[0] = (boardId + '0');
     maxPosConfig[0] = (boardId + '0');
+    homeConfig[0] = (boardId + '0');
     setConfig[0] = (boardId + '0');
     invertedConfig[0] = (boardId + '0');
 
@@ -342,6 +355,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
     {
         setKeyId(minPosConfig, i, 2);
         setKeyId(maxPosConfig, i, 2);
+        setKeyId(homeConfig, i, 2);
         setKeyId(setConfig, i, 2);
         setKeyId(invertedConfig, i, 2);
 
@@ -354,6 +368,11 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         if (logError(TAG, __FUNCTION__, __LINE__, err))
         {
             max = 0;
+        }
+        err = nvs_get_u16(nvsHandle, homeConfig, &home);
+        if (logError(TAG, __FUNCTION__, __LINE__, err))
+        {
+            home = 0;
         }
         err = nvs_get_u8(nvsHandle, setConfig, &set);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -371,11 +390,14 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.id = i;
         channel.minPos = min;
         channel.maxPos = max;
-        channel.set = set > 0;
-        channel.inverted = inverted > 0;
+        channel.home = min > home ? min : home;
         channel.currentPos = channel.minPos;
         channel.requestedPos = channel.minPos;
+        channel.lastPos = channel.home;
         channel.speed = 1;
+        channel.acceleration = 0;
+        channel.set = set > 0;
+        channel.inverted = inverted > 0;
         channel.on = false;
 
         config[i] = channel;

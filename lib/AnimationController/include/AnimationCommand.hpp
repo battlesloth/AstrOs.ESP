@@ -81,6 +81,7 @@ public:
     int channel;
     int position;
     int speed;
+    int acceleration;
 };
 
 class I2cCommand : public BaseCommand

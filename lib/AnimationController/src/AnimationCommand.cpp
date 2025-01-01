@@ -172,18 +172,20 @@ ServoCommand::ServoCommand(std::string val)
 {
     str_vec_t parts = SplitTemplate(val);
 
-    if (parts.size() < 5)
+    if (parts.size() < 6)
     {
         ESP_LOGE("ServoCommand", "Invalid number of parts in command: %s", val.c_str());
         ServoCommand::channel = -1;
         ServoCommand::position = -1;
         ServoCommand::speed = -1;
+        ServoCommand::acceleration = -1;
         return;
     }
 
     ServoCommand::channel = std::stoi(parts.at(2));
     ServoCommand::position = std::stoi(parts.at(3));
     ServoCommand::speed = std::stoi(parts.at(4));
+    ServoCommand::acceleration = std::stoi(parts.at(5));
 }
 
 ServoCommand::~ServoCommand() {}
