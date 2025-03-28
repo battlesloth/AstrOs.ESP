@@ -716,10 +716,6 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
         {
             ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
 
-            queue_svc_cmd_t cmd;
-
-            cmd.cmd = SERVICE_COMMAND::ASTROS_INTERFACE_MESSAGE;
-
             auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
             this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK,

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <AnimationController.hpp>
+#include <AnimationCommon.hpp>
 #include <AnimationCommand.hpp>
 #include <AstrOsStorageManager.hpp>
 
@@ -162,7 +163,7 @@ CommandTemplate *AnimationController::getNextCommandPtr()
     if (scriptEvents.empty())
     {
         scriptLoaded = false;
-        return new CommandTemplate(CommandType::None, "");
+        return new CommandTemplate(AnimationCmdType::NONE, 0, "");
     }
     else if (scriptEvents.size() == 1)
     {

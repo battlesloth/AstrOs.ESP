@@ -1,5 +1,5 @@
 #include <I2cModule.hpp>
-#include <AnimationCommand.hpp>
+#include <AnimationCommands.hpp>
 #include <AstrOsDisplay.hpp>
 #include <AstrOsUtility.h>
 

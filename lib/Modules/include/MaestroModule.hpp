@@ -4,6 +4,10 @@
 #include <string>
 #include <esp_err.h>
 #include <hal/uart_types.h>
+// needed for QueueHandle_t, must be in this order
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
 
 #define BAUD_RATE_INDICATION 0xAA
 #define SET_SERVO_COMMAND 0x84
@@ -31,28 +35,23 @@
 // Acceleration 1 is ~28 degrees/second^2
 // Acceleration 255 is ~7175 degree/second^2
 
-typedef struct
-{
-    uart_port_t port;
-    int baudRate;
-    int rxPin;
-    int txPin;
-} maestro_config_t;
-
 class MaestroModule
 {
 private:
     bool loading;
-    maestro_config_t config;
-    esp_err_t InitSerial();
+    int idx;
+    int baudRate;
+    QueueHandle_t serialQueue;
+    void SendCommand(uint8_t *cmd);
     void setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
     void setServoOff(uint8_t channel);
     int getServoPosition(uint8_t channel);
     void getError();
+    void sendQueueMsg(uint8_t cmd[], size_t size);
 public:
-    MaestroModule();
+    MaestroModule(QueueHandle_t queue, int idx, int baud);
+    
     ~MaestroModule();
-    esp_err_t Init(maestro_config_t config);
     void LoadConfig();
     void HomeServos();
     void QueueCommand(uint8_t *cmd);
@@ -62,6 +61,5 @@ public:
     void CheckServos(int msSinceLastCheck);
 };
 
-extern MaestroModule MaestroMod;
 
 #endif

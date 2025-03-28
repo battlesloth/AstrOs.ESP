@@ -8,8 +8,6 @@
 #include <cstring>
 #include <cstdint>
 
-static const char *TAG = "AstrOsSerialMessageService";
-
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
     this->msgTypeMap = {

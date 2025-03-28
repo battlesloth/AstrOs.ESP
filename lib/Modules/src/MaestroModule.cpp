@@ -2,7 +2,7 @@
 
 #include <AstrOsUtility.h>
 #include <AstrOsStorageManager.hpp>
-#include <AnimationCommand.hpp>
+#include <AnimationCommands.hpp>
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -10,77 +10,24 @@
 #include <AstrOsUtility_ESP.h>
 #include <AstrOsServoUtils.hpp>
 #include <AstrOsUtility.h>
+#include <SerialModule.hpp>
+#include <string.h>
 
 static const char *TAG = "MaestroModule";
 static const int RX_BUF_SIZE = 1024;
 
-static SemaphoreHandle_t serialMutex;
-
-MaestroModule MaestroMod;
-
 servo_channel channels[24] = {};
 
-MaestroModule::MaestroModule()
+MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
 {
-    serialMutex = xSemaphoreCreateMutex();
+    this->idx = idx;
+    this->baudRate = baudRate;
+    this->serialQueue = serialQueue;
+    this->loading = false;
 }
 
 MaestroModule::~MaestroModule()
 {
-}
-
-esp_err_t MaestroModule::Init(maestro_config_t config)
-{
-    ESP_LOGI(TAG, "Initializing Maestro Module");
-
-    esp_err_t err = ESP_OK;
-
-    this->config = config;
-
-    err = this->InitSerial();
-
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    this->LoadConfig();
-
-    return err;
-}
-
-esp_err_t MaestroModule::InitSerial()
-{
-    esp_err_t err = ESP_OK;
-
-    const uart_config_t cfg = {
-        .baud_rate = config.baudRate,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .rx_flow_ctrl_thresh = 122,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-
-    err = uart_param_config(config.port, &cfg);
-
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    err = uart_set_pin(config.port, config.txPin, config.rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-
-    if (logError(TAG, __FUNCTION__, __LINE__, err))
-    {
-        return err;
-    }
-
-    uart_driver_install(config.port, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
-    logError(TAG, __FUNCTION__, __LINE__, err);
-
-    return err;
 }
 
 void MaestroModule::LoadConfig()
@@ -97,7 +44,7 @@ void MaestroModule::LoadConfig()
 void MaestroModule::QueueCommand(uint8_t *cmd)
 {
     ESP_LOGI(TAG, "Queueing servo command => %s", cmd);
-    ServoCommand servoCmd = ServoCommand(std::string(reinterpret_cast<char *>(cmd)));
+    MaestroCommand servoCmd = MaestroCommand(std::string(reinterpret_cast<char *>(cmd)));
 
     if (servoCmd.channel > 23)
     {
@@ -106,7 +53,7 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     }
 
     int ch = servoCmd.channel;
-    
+
     // set channel requested position to percentage of max - min taking into account inverted
     int requestPos = servoCmd.position;
     if (channels[ch].inverted)
@@ -114,7 +61,7 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         requestPos = 100 - requestPos;
     }
     channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, servoCmd.position);
-    
+
     ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, speed: %d, accel: %d", ch, channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.speed, servoCmd.acceleration);
 
     channels[ch].currentPos = 0;
@@ -149,21 +96,18 @@ void MaestroModule::Panic()
         cmd[2 + (i * 3)] = i;
     }
 
-    bool sent = false;
+    queue_serial_msg_t msg;
 
-    while (!sent)
+    msg.message_id = 1;
+    msg.baudrate = this->baudRate;
+    msg.data = (uint8_t *)malloc(74);
+    memcpy(msg.data, cmd, 74);
+    msg.dataSize = 74;
+
+    if (xQueueSend(this->serialQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
     {
-        if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
-        {
-            const int txBytes = uart_write_bytes(config.port, cmd, 74);
-
-            sent = true;
-            xSemaphoreGive(serialMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(msg.data);
     }
 }
 
@@ -209,7 +153,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
                 speed = channels[i].acceleration;
             }
 
-            channels[i].currentPos = channels[i].currentPos + (((.25 * speed) * (msSinceLastCheck/10))/ 4);
+            channels[i].currentPos = channels[i].currentPos + (((.25 * speed) * (msSinceLastCheck / 10)) / 4);
 
             if (channels[i].currentPos >= 3000)
             {
@@ -224,109 +168,80 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
 
 void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed, int acceleration)
 {
-    bool sent = false;
+    uint8_t cmd[4] = {};
 
-    while (!sent)
+    cmd[1] = channel;
+
+    // we need to send the last requested position
+    // before we send speed/accel commands if the servo
+    // was set to off as these commands will not work
+    // if they happen before the servo is turned on
+    if (lastpos != -1)
     {
-        if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
-        {
-            uint8_t cmd[4] = {};
-            
-            cmd[1] = channel;
+        cmd[0] = SET_SERVO_COMMAND;
+        cmd[2] = lastpos & 0x7F;
+        cmd[3] = (lastpos >> 7) & 0x7F;
 
-            int txBytes = 0;
-
-            // we need to send the last requested position
-            // before we send speed/accel commands if the servo
-            // was set to off as these commands will not work
-            // if they happen before the servo is turned on
-            if (lastpos != -1)
-            {
-                cmd[0] = SET_SERVO_COMMAND;
-                cmd[2] = lastpos & 0x7F;
-                cmd[3] = (lastpos >> 7) & 0x7F;
-
-                txBytes += uart_write_bytes(config.port, cmd, 4);
-            }
-            
-            cmd[0] = SET_SERVO_SPEED_COMMAND;
-            cmd[2] = speed & 0x7F;
-            cmd[3] = (speed >> 7) & 0x7F;
-
-            txBytes += uart_write_bytes(config.port, cmd, 4);
-
-            cmd[0] = SET_SERVO_ACCELERATION_COMMAND;
-            cmd[2] = acceleration & 0x7F;
-            cmd[3] = (acceleration >> 7) & 0x7F;
-
-            txBytes += uart_write_bytes(config.port, cmd, 4);
-
-            // .25us resolution
-            int target = ms * 4;
-
-            cmd[0] = SET_SERVO_COMMAND;
-            cmd[2] = target & 0x7F;
-            cmd[3] = (target >> 7) & 0x7F;
-
-            txBytes += uart_write_bytes(config.port, cmd, 4);
-
-            ESP_LOGD(TAG, "Wrote %d bytes to serial", txBytes);
-
-            sent = true;
-            xSemaphoreGive(serialMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        this->sendQueueMsg(cmd, 4);
     }
+
+    cmd[0] = SET_SERVO_SPEED_COMMAND;
+    cmd[2] = speed & 0x7F;
+    cmd[3] = (speed >> 7) & 0x7F;
+
+    this->sendQueueMsg(cmd, 4);
+    
+    cmd[0] = SET_SERVO_ACCELERATION_COMMAND;
+    cmd[2] = acceleration & 0x7F;
+    cmd[3] = (acceleration >> 7) & 0x7F;
+
+    this->sendQueueMsg(cmd, 4);
+    
+    // .25us resolution
+    int target = ms * 4;
+
+    cmd[0] = SET_SERVO_COMMAND;
+    cmd[2] = target & 0x7F;
+    cmd[3] = (target >> 7) & 0x7F;
+
+    this->sendQueueMsg(cmd, 4);
+    
+    ESP_LOGD(TAG, "command sent to channel: %d", channel);
 }
 
 void MaestroModule::setServoOff(uint8_t channel)
 {
-    bool sent = false;
+    uint8_t cmd[2] = {};
 
-    while (!sent)
-    {
-        if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
-        {
-            uint8_t cmd[4] = {};
+    cmd[0] = SET_SERVO_COMMAND;
+    cmd[1] = channel;
 
-            cmd[0] = SET_SERVO_COMMAND;
-            cmd[1] = channel;
-
-            const int txBytes = uart_write_bytes(config.port, cmd, 4);
-
-            sent = true;
-            xSemaphoreGive(serialMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
-    }
+    this->sendQueueMsg(cmd, 2);
 }
+
 
 void MaestroModule::getError()
 {
-    bool sent = false;
+    uint8_t cmd[1] = {};
 
-    while (!sent)
+    cmd[0] = GET_ERROR_COMMAND;
+
+    this->sendQueueMsg(cmd, 1);
+}
+
+void MaestroModule::sendQueueMsg(uint8_t cmd[], size_t size)
+{
+    queue_serial_msg_t msg;
+
+    msg.message_id = 1;
+    msg.baudrate = this->baudRate;
+    msg.data = (uint8_t *)malloc(size);
+    memcpy(msg.data, cmd, size);
+    msg.dataSize = size;
+
+    if (xQueueSend(this->serialQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
     {
-        if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
-        {
-            uint8_t cmd[1] = {};
-
-            cmd[0] = GET_ERROR_COMMAND;
-
-            const int txBytes = uart_write_bytes(config.port, cmd, 1);
-
-            sent = true;
-            xSemaphoreGive(serialMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "Send serial queue fail");
+        free(msg.data);
     }
 }

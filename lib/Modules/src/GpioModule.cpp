@@ -1,5 +1,5 @@
 #include <GpioModule.hpp>
-#include <AnimationCommand.hpp>
+#include <AnimationCommands.hpp>
 #include <AstrOsUtility_ESP.h>
 
 #include <esp_log.h>
