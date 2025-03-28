@@ -8,6 +8,10 @@
 #include <bitset>
 #include <sstream>
 
+#define UNIT_SEPARATOR (char)0x1F
+#define RECORD_SEPARATOR (char)0x1E
+#define GROUP_SEPARATOR (char)0x1D
+
 class AstrOsStringUtils
 {
 public:

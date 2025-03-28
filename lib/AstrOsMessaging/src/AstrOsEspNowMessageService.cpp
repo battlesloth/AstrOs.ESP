@@ -1,5 +1,5 @@
 #include "AstrOsEspNowMessageService.hpp"
-#include "AstrOsMessageUtil.hpp"
+#include <AstrOsStringUtils.hpp>
 
 #include <cmath>
 #include <string>

@@ -20,6 +20,14 @@ servo_channel channels[24] = {};
 
 MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
 {
+
+    this->mutex = xSemaphoreCreateMutex();
+    if (this->mutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return;
+    }
+
     this->idx = idx;
     this->baudRate = baudRate;
     this->serialQueue = serialQueue;
@@ -30,11 +38,33 @@ MaestroModule::~MaestroModule()
 {
 }
 
+void MaestroModule::UpdateConfig(QueueHandle_t serialQueue, int baudRate)
+{
+    bool configChanged = false;
+    
+    while (!configChanged)
+    {
+        // don't update config while we are sending commands to servos
+        if (xSemaphoreTake(this->mutex, 100 / portTICK_PERIOD_MS))
+        {
+            this->serialQueue = serialQueue;
+            this->baudRate = baudRate;
+
+            configChanged = true; 
+            xSemaphoreGive(this->mutex);
+        }
+        else
+        {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+}
+
 void MaestroModule::LoadConfig()
 {
     this->loading = true;
 
-    AstrOs_Storage.loadServoConfig(0, channels, 24);
+    AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
 
     this->HomeServos();
 
@@ -96,19 +126,7 @@ void MaestroModule::Panic()
         cmd[2 + (i * 3)] = i;
     }
 
-    queue_serial_msg_t msg;
-
-    msg.message_id = 1;
-    msg.baudrate = this->baudRate;
-    msg.data = (uint8_t *)malloc(74);
-    memcpy(msg.data, cmd, 74);
-    msg.dataSize = 74;
-
-    if (xQueueSend(this->serialQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
-    {
-        ESP_LOGW(TAG, "Send serial queue fail");
-        free(msg.data);
-    }
+    this->sendQueueMsg(cmd, 74);
 }
 
 void MaestroModule::HomeServos()
@@ -117,7 +135,7 @@ void MaestroModule::HomeServos()
 
     for (size_t i = 0; i < 24; i++)
     {
-        if (channels[i].set)
+        if (channels[i].enabled)
         {
             channels[i].requestedPos = channels[i].home;
             channels[i].currentPos = 0;
@@ -190,13 +208,13 @@ void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[3] = (speed >> 7) & 0x7F;
 
     this->sendQueueMsg(cmd, 4);
-    
+
     cmd[0] = SET_SERVO_ACCELERATION_COMMAND;
     cmd[2] = acceleration & 0x7F;
     cmd[3] = (acceleration >> 7) & 0x7F;
 
     this->sendQueueMsg(cmd, 4);
-    
+
     // .25us resolution
     int target = ms * 4;
 
@@ -205,7 +223,7 @@ void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[3] = (target >> 7) & 0x7F;
 
     this->sendQueueMsg(cmd, 4);
-    
+
     ESP_LOGD(TAG, "command sent to channel: %d", channel);
 }
 
@@ -218,7 +236,6 @@ void MaestroModule::setServoOff(uint8_t channel)
 
     this->sendQueueMsg(cmd, 2);
 }
-
 
 void MaestroModule::getError()
 {
@@ -239,9 +256,23 @@ void MaestroModule::sendQueueMsg(uint8_t cmd[], size_t size)
     memcpy(msg.data, cmd, size);
     msg.dataSize = size;
 
-    if (xQueueSend(this->serialQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
+    bool sent = false;
+
+    while (!sent)
     {
-        ESP_LOGW(TAG, "Send serial queue fail");
-        free(msg.data);
+        if (xSemaphoreTake(this->mutex, 100 / portTICK_PERIOD_MS))
+        {
+            if (xQueueSend(this->serialQueue, &msg, pdMS_TO_TICKS(500)) != pdTRUE)
+            {
+                ESP_LOGW(TAG, "Send serial queue fail");
+                free(msg.data);
+            }
+            sent = true;
+            xSemaphoreGive(this->mutex);
+        }
+        else
+        {
+            vTaskDelay(10 / portTICK_PERIOD_MS); // wait a bit before retrying
+        }
     }
 }

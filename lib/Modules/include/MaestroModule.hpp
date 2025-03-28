@@ -41,7 +41,9 @@ private:
     bool loading;
     int idx;
     int baudRate;
+    
     QueueHandle_t serialQueue;
+    SemaphoreHandle_t mutex;
     void SendCommand(uint8_t *cmd);
     void setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
     void setServoOff(uint8_t channel);
@@ -50,8 +52,9 @@ private:
     void sendQueueMsg(uint8_t cmd[], size_t size);
 public:
     MaestroModule(QueueHandle_t queue, int idx, int baud);
-    
     ~MaestroModule();
+
+    void UpdateConfig(QueueHandle_t queue, int baud);
     void LoadConfig();
     void HomeServos();
     void QueueCommand(uint8_t *cmd);

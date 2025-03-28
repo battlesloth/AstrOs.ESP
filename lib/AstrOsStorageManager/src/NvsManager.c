@@ -243,6 +243,7 @@ bool nvsGetControllerFingerprint(char *fingerprint)
     return true;
 }
 
+/*
 bool nvsSaveServoConfig(int boardId, servo_channel config)
 {
     esp_err_t err;
@@ -295,7 +296,7 @@ bool nvsSaveServoConfig(int boardId, servo_channel config)
         return false;
     }
 
-    err = nvs_set_u8(nvsHandle, setConfig, config.set);
+    err = nvs_set_u8(nvsHandle, setConfig, config.enabled);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         nvs_close(nvsHandle);
@@ -396,7 +397,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
         channel.lastPos = channel.home;
         channel.speed = 1;
         channel.acceleration = 0;
-        channel.set = set > 0;
+        channel.enabled = set > 0;
         channel.inverted = inverted > 0;
         channel.on = false;
 
@@ -406,7 +407,7 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
     nvs_close(nvsHandle);
     return true;
 }
-
+*/
 bool nvsSaveEspNowPeer(espnow_peer_t config)
 {
     esp_err_t err;

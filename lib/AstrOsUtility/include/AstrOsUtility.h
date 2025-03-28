@@ -5,5 +5,6 @@
 #include "AstrOsEnums.h"
 #include "AstrOsStructs.h"
 #include "AstrOsStringUtils.hpp"
+#include "AstrOsFileUtils.hpp"
 
 #endif

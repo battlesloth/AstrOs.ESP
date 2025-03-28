@@ -108,12 +108,110 @@ bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
     return nvsGetControllerFingerprint(fingerprint);
 }
 
-/// @brief This is a bit ugly, but is memeory efficient and works
+/// @brief
 /// @param msg
 /// @return
-bool AstrOsStorageManager::saveServoConfig(std::string msg)
+bool AstrOsStorageManager::saveMaestroConfigs(std::string msg)
 {
     bool success = true;
+
+    // idx:uart_ch:baudrate@servo_cfg|servo_cfg|...;idx:uart_ch:baudrate@servo_cfg|servo_cfg|...
+
+    std::vector<std::string> maestroConfigs;
+
+    auto modules = AstrOsStringUtils::splitString(msg, ';');
+
+    if (modules.empty())
+    {
+        ESP_LOGE(TAG, "Failed to save maestro configs, no modules found");
+        return false;
+    }
+
+    for (const auto &module : modules)
+    {
+        auto parts = AstrOsStringUtils::splitString(module, '@');
+
+        if (parts.size() != 2)
+        {
+            ESP_LOGE(TAG, "Failed to save maestro configs, invalid module format: %s", module.c_str());
+            continue;
+        }
+
+        auto maestroConfig = parts[0];
+        auto servoConfigs = parts[1];
+
+        maestro_config cfg;
+        auto maestroParts = AstrOsStringUtils::splitString(maestroConfig, ':');
+
+        if (maestroParts.size() != 3)
+        {
+            ESP_LOGE(TAG, "Failed to save maestro configs, invalid maestro config: %s", maestroConfig.c_str());
+            continue;
+        }
+
+        maestroConfigs.push_back(maestroConfig);
+        auto idx = std::stoi(maestroParts[0]);
+
+        this->saveFile("maestro/" + std::to_string(idx) + ".cfig", servoConfigs);
+    }
+
+    std::string maestroFileContent = "";
+    for (const auto &maestroConfig : maestroConfigs)
+    {
+        maestroFileContent += maestroConfig + "\n";
+    }
+
+    this->saveFile("maestro/modules.cfg", maestroFileContent);
+
+    return success;
+
+}
+
+std::vector<maestro_config> AstrOsStorageManager::loadMaestroConfigs()
+{
+    std::string maestroFile = this->readFile("maestro/modules.cfg");
+
+    if (maestroFile.empty() || maestroFile == "error")
+    {
+        ESP_LOGE(TAG, "Failed to load maestro configs, file not found or empty");
+        return std::vector<maestro_config>(); // return empty list if file is empty or not found
+    }
+
+    return AstrOsFileUtils::parseMaestroConfig(maestroFile);
+}
+
+bool AstrOsStorageManager::loadMaestroServos(int boardId, servo_channel *servos, int arraySize)
+{
+    
+    if (arraySize <= 0 || servos == nullptr)
+    {
+        ESP_LOGE(TAG, "Invalid array size or servos pointer");
+        return false;
+    }
+
+    std::string servoFile = this->readFile("maestro/" + std::to_string(boardId) + ".cfig");
+
+    if (servoFile.empty() || servoFile == "error")
+    {
+        ESP_LOGE(TAG, "Failed to load servo configs for boardId %d, file not found or empty", boardId);
+        return false;
+    }
+
+    std::vector<servo_channel> channels = AstrOsFileUtils::parseServoConfig(servoFile);
+
+    if (channels.size() > arraySize)
+    {
+        ESP_LOGE(TAG, "Not enough space in servos array, required: %zu, available: %d", channels.size(), arraySize);
+        return false;
+    }
+
+    std::copy(channels.begin(), channels.end(), servos);
+
+    return true;
+
+     /*
+    // =============== old way ===============
+    // == keeping if we need to performance ==
 
     int valueCounter = 0;
     int start = 0;
@@ -156,7 +254,7 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
             }
 
             ch.id = std::stoi(parts[0]);
-            ch.set = std::stoi(parts[1]);
+            ch.enabled = std::stoi(parts[1]);
             ch.minPos = std::stoi(parts[2]);
             ch.maxPos = std::stoi(parts[3]);
             ch.home = std::stoi(parts[4]);
@@ -169,18 +267,6 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
             }
 
             success = nvsSaveServoConfig(0, ch);
-
-            /*
-            if (ch.id < 16)
-            {
-                success = nvsSaveServoConfig(0, ch);
-            }
-            else
-            {
-                ch.id = ch.id - 16;
-                success = nvsSaveServoConfig(1, ch);
-            }
-            */
 
             if (!success)
             {
@@ -199,13 +285,7 @@ bool AstrOsStorageManager::saveServoConfig(std::string msg)
         ESP_LOGE(TAG, "Failed to save servo config, invalid servo count: %d != 24", valueCounter);
         return false;
     }
-
-    return success;
-}
-
-bool AstrOsStorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
-{
-    return nvsLoadServoConfig(boardId, servos, arraySize);
+    */
 }
 
 /*******************************
@@ -315,6 +395,7 @@ bool AstrOsStorageManager::formatSdCard()
     free(workbuf);
 
     mkdir("/sdcard/scripts", 0777);
+    mkdir("/sdcard/maestro", 0777);
 
     ESP_LOGI(TAG, "Successfully formatted the SD card");
 

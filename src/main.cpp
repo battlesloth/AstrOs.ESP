@@ -132,6 +132,7 @@ static std::map<int, MaestroModule *> maestroModules;
 void init(void);
 
 static void loadConfig();
+static void loadMaestroConfigs();
 
 // timers
 static void initTimers(void);
@@ -259,10 +260,9 @@ void init(void)
     ESP_ERROR_CHECK(SerialChannel2.Init(serialConf2));
     ESP_LOGI(TAG, "Serial Channel 2 initiated");
 
-    maestroModules[0] = new MaestroModule(serialCh1Queue, 0, 115200);
-    maestroModules.at(0)->LoadConfig();
+    loadMaestroConfigs();
 
-    ESP_LOGI(TAG, "Maestro Module initiated");
+    ESP_LOGI(TAG, "Maestro Modules initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
@@ -902,12 +902,7 @@ void serviceQueueTask(void *arg)
             }
             case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
             {
-                // ServoMod.LoadServoConfig();
-
-                for (auto maestroMod : maestroModules)
-                {
-                    maestroMod.second->LoadConfig();
-                }
+                loadMaestroConfigs();
                 break;
             }
             default:
@@ -1308,6 +1303,83 @@ static void loadConfig()
     }
 }
 
+
+static void loadMaestroConfigs()
+{
+    // get list of current maestro modules
+    std::vector<int> currentModules;
+    for (auto maestroMod : maestroModules)
+    {
+        currentModules.push_back(maestroMod.first);
+    }
+
+    // load maestro configurations from storage
+    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
+
+    for (auto &cfg : maestroConfigs)
+    {
+        // if the module is already loaded, update it and remove from the list
+        if (maestroModules.find(cfg.idx) != maestroModules.end())
+        {
+            // only allow modules to use uart 1 if this is not a master node
+            if (cfg.uartChannel == 1 && isMasterNode)
+            {
+                ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
+                continue; // skip invalid configurations
+            }
+            else if (cfg.uartChannel == 1)
+            {
+                maestroModules[cfg.idx]->UpdateConfig(serialCh1Queue, cfg.baudrate);
+            }
+            else if (cfg.uartChannel == 2)
+            {
+                maestroModules[cfg.idx]->UpdateConfig(serialCh2Queue, cfg.baudrate);
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid UART channel %d for Maestro module %d", cfg.uartChannel, cfg.idx);
+                continue; // skip invalid configurations
+            }
+            currentModules.erase(std::remove(currentModules.begin(), currentModules.end(), cfg.idx), currentModules.end());
+        }
+        else
+        {
+            // if the module is not loaded, create a new one
+            if (cfg.uartChannel == 1 && isMasterNode)
+            {
+                ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
+                continue; // skip invalid configurations
+            }
+            if (cfg.uartChannel == 1)
+            {
+                MaestroModule *maestroMod = new MaestroModule(serialCh1Queue, cfg.idx, cfg.baudrate);
+                maestroModules[cfg.idx] = maestroMod;
+            }
+            else if (cfg.uartChannel == 2)
+            {
+                MaestroModule *maestroMod = new MaestroModule(serialCh2Queue, cfg.idx, cfg.baudrate);
+                maestroModules[cfg.idx] = maestroMod;
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid UART channel %d for Maestro module %d", cfg.uartChannel, cfg.idx);
+                continue; // skip invalid configurations
+            }
+        }
+    }
+
+    // remove any modules that are no longer in the configuration
+    for (int idx : currentModules)
+    {
+        ESP_LOGI(TAG, "Removing Maestro module: %d", idx);
+        if (maestroModules.find(idx) != maestroModules.end())
+        {
+            delete maestroModules[idx];
+            maestroModules.erase(idx);
+        }
+    }
+}
+
 /**********************************
  * callbacks
  *********************************/
@@ -1426,7 +1498,8 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 
 static void handleSetConfig(astros_interface_response_t msg)
 {
-    auto success = AstrOs_Storage.saveServoConfig(msg.message);
+    // TODO: make this more generic so we can support other configs
+    auto success = AstrOs_Storage.saveMaestroConfigs(msg.message);
 
     std::string fingerprint;
 
@@ -1574,7 +1647,7 @@ static void handleServoTest(astros_interface_response_t msg)
         int idx = std::stoi(parts[0]);
         int servo = std::stoi(parts[1]);
         int ms = std::stoi(parts[2]);
-     
+
         if (maestroModules.find(idx) == maestroModules.end())
         {
             ESP_LOGE(TAG, "Maestro module %d not found", idx);

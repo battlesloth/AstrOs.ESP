@@ -36,8 +36,9 @@ public:
     bool setControllerFingerprint(const char *fingerprint);
     bool getControllerFingerprint(char *fingerprint);
 
-    bool saveServoConfig(std::string msg);
-    bool loadServoConfig(int boardId, servo_channel *servos, int arraySize);
+    bool saveMaestroConfigs(std::string msg);
+    std::vector<maestro_config> loadMaestroConfigs();
+    bool loadMaestroServos(int idx, servo_channel *servos, int arraySize);
 
     bool saveEspNowPeer(espnow_peer_t config);
     bool saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize);

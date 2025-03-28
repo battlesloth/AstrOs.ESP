@@ -57,10 +57,18 @@ extern "C"
         size_t dataSize;
     } queue_serial_msg_t;
 
-
+    typedef struct 
+    {
+        int idx;
+        int uartChannel;
+        int baudrate;
+    } maestro_config;
+    
     typedef struct
     {
         int id;
+        bool enabled;
+        bool isServo;
         int minPos;
         int maxPos;
         int home;
@@ -69,7 +77,6 @@ extern "C"
         int lastPos;
         int speed;
         int acceleration;
-        bool set;
         bool inverted;
         bool on;
     } servo_channel;
