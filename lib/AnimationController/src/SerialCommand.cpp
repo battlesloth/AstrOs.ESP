@@ -10,7 +10,7 @@ SerialCommand::SerialCommand(std::string val)
     if (parts.size() < 4)
     {
         ESP_LOGE("SerialCommand", "Invalid number of parts in command: %s", val.c_str());
-        this->type = AnimationCmdType::NONE;
+        this->type = MODULE_TYPE::NONE;
         this->serialChannel = -1;
         this->baudRate = -1;
         this->ch = -1;
@@ -21,12 +21,12 @@ SerialCommand::SerialCommand(std::string val)
         return;
     }
 
-    this->type = static_cast<AnimationCmdType>(std::stoi(parts.at(0)));
+    this->type = static_cast<MODULE_TYPE>(std::stoi(parts.at(0)));
 
     this->serialChannel = std::stoi(parts.at(2));
     this->baudRate = std::stoi(parts.at(3));
 
-    if (this->type == AnimationCmdType::KANGAROO)
+    if (this->type == MODULE_TYPE::KANGAROO)
     {
         this->ch = std::stoi(parts.at(4));
         this->cmd = std::stoi(parts.at(5));
@@ -45,7 +45,7 @@ SerialCommand::~SerialCommand() {}
 
 std::string SerialCommand::GetValue()
 {
-    if (this->type == AnimationCmdType::KANGAROO)
+    if (this->type == MODULE_TYPE::KANGAROO)
     {
         return ToKangarooCommand();
     }

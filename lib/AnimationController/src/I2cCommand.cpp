@@ -8,13 +8,13 @@ I2cCommand::I2cCommand(std::string val)
     if (parts.size() < 4)
     {
         ESP_LOGE("I2cCommand", "Invalid number of parts in command: %s", val.c_str());
-        I2cCommand::channel = -1;
-        I2cCommand::value = "";
+        this->channel = -1;
+        this->value = "";
         return;
     }
 
-    I2cCommand::channel = std::stoi(parts.at(2));
-    I2cCommand::value = parts.at(3);
+    this->channel = std::stoi(parts.at(2));
+    this->value = parts.at(3);
 }
 
 I2cCommand::~I2cCommand() {}

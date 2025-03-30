@@ -2,13 +2,14 @@
 #define ANIMATIONCOMMAND_HPP
 
 #include <AnimationCommon.hpp>
+#include <AstrOsEnums.h>
 
 class CommandTemplate
 {
 public:
-    CommandTemplate(AnimationCmdType type, int module, std::string val);
+    CommandTemplate(MODULE_TYPE type, int module, std::string val);
     ~CommandTemplate();
-    AnimationCmdType type;
+    MODULE_TYPE type;
     std::string val;
     int module;
 };
@@ -23,7 +24,7 @@ public:
     AnimationCommand(std::string val);
     ~AnimationCommand();
 
-    AnimationCmdType commandType;
+    MODULE_TYPE commandType;
     std::string commandTemplate;
     int duration;
     // for most serial events, this will be the channel

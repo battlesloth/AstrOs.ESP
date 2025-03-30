@@ -11,6 +11,9 @@
 class AstrOsStorageManager
 {
 private:
+    bool saveMaestroServos(std::vector<std::string> config);
+    bool saveMaestroModules(std::vector<std::string> config);
+    bool saveGpioConfig(std::string config);
     esp_err_t mountSdCard();
     std::string setFilePath(std::string filename);
     bool saveFileSd(std::string filename, std::string data);
@@ -36,9 +39,12 @@ public:
     bool setControllerFingerprint(const char *fingerprint);
     bool getControllerFingerprint(char *fingerprint);
 
-    bool saveMaestroConfigs(std::string msg);
+    bool saveModuleConfigs(std::string msg);
+
     std::vector<maestro_config> loadMaestroConfigs();
     bool loadMaestroServos(int idx, servo_channel *servos, int arraySize);
+
+    std::vector<bool> loadGpioConfigs();
 
     bool saveEspNowPeer(espnow_peer_t config);
     bool saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize);

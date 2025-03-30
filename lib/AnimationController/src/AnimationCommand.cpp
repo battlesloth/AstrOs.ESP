@@ -1,10 +1,11 @@
+#include <AstrOsEnums.h>
 #include <AnimationCommand.hpp>
 #include <AnimationCommon.hpp>
 #include <string>
 #include <vector>
 #include <esp_log.h>
 
-CommandTemplate::CommandTemplate(AnimationCmdType type, int module, std::string val) : val(std::move(val))
+CommandTemplate::CommandTemplate(MODULE_TYPE type, int module, std::string val) : val(std::move(val))
 {
     this->type = type;
     this->module = module;
@@ -14,7 +15,7 @@ CommandTemplate::~CommandTemplate() {}
 
 AnimationCommand::AnimationCommand(std::string val) : commandTemplate(std::move(val))
 {
-    AnimationCommand::parseCommandType();
+    this->parseCommandType();
 }
 
 AnimationCommand::~AnimationCommand()
@@ -30,9 +31,9 @@ CommandTemplate *AnimationCommand::GetCommandTemplatePtr()
 void AnimationCommand::parseCommandType()
 {
     str_vec_t script = AnimationCommand::splitTemplate();
-    AnimationCommand::commandType = static_cast<AnimationCmdType>(std::stoi(script.at(0)));
-    AnimationCommand::duration = std::stoi(script.at(1));
-    AnimationCommand::module = std::stoi(script.at(2));
+    this->commandType = static_cast<MODULE_TYPE>(std::stoi(script.at(0)));
+    this->duration = std::stoi(script.at(1));
+    this->module = std::stoi(script.at(2));
 }
 
 str_vec_t AnimationCommand::splitTemplate()

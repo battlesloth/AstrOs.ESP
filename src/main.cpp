@@ -133,6 +133,7 @@ void init(void);
 
 static void loadConfig();
 static void loadMaestroConfigs();
+static void loadGpioConfig();
 
 // timers
 static void initTimers(void);
@@ -446,14 +447,20 @@ static void animationTimerCallback(void *arg)
     {
         CommandTemplate *cmd = AnimationCtrl.getNextCommandPtr();
 
-        AnimationCmdType ct = cmd->type;
+        if (cmd == nullptr)
+        {
+            ESP_LOGE(TAG, "Annimation Command pointer is null");
+            return;
+        }
+
+        MODULE_TYPE ct = cmd->type;
         std::string val = cmd->val;
         int module = cmd->module;
 
         switch (ct)
         {
-        case AnimationCmdType::KANGAROO:
-        case AnimationCmdType::GENERIC_SERIAL:
+        case MODULE_TYPE::KANGAROO:
+        case MODULE_TYPE::GENERIC_SERIAL:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
             queue_msg_t msg;
@@ -478,7 +485,7 @@ static void animationTimerCallback(void *arg)
                 }
             }
         }
-        case AnimationCmdType::MAESTRO:
+        case MODULE_TYPE::MAESTRO:
         {
             ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
             queue_msg_t servoMsg;
@@ -493,7 +500,7 @@ static void animationTimerCallback(void *arg)
             }
             break;
         }
-        case AnimationCmdType::I2C:
+        case MODULE_TYPE::I2C:
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
             queue_msg_t i2cMsg;
@@ -508,7 +515,7 @@ static void animationTimerCallback(void *arg)
             }
             break;
         }
-        case AnimationCmdType::GPIO:
+        case MODULE_TYPE::GPIO:
         {
             ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
             queue_msg_t gpioMsg;
@@ -900,9 +907,10 @@ void serviceQueueTask(void *arg)
 
                 break;
             }
-            case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
+            case SERVICE_COMMAND::RELOAD_CONFIG:
             {
                 loadMaestroConfigs();
+                loadGpioConfig();
                 break;
             }
             default:
@@ -1380,6 +1388,13 @@ static void loadMaestroConfigs()
     }
 }
 
+
+void loadGpioConfig(){
+    auto config = AstrOs_Storage.loadGpioConfigs();
+    GpioMod.UpdateConfig(config);
+}
+
+
 /**********************************
  * callbacks
  *********************************/
@@ -1498,9 +1513,8 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 
 static void handleSetConfig(astros_interface_response_t msg)
 {
-    // TODO: make this more generic so we can support other configs
-    auto success = AstrOs_Storage.saveMaestroConfigs(msg.message);
-
+    auto success = AstrOs_Storage.saveModuleConfigs(msg.message);
+    
     std::string fingerprint;
 
     if (success)
@@ -1519,7 +1533,7 @@ static void handleSetConfig(astros_interface_response_t msg)
 
         // send servo reload message
         queue_svc_cmd_t reloadMsg;
-        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
+        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_CONFIG;
         reloadMsg.data = nullptr;
 
         if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500)) != pdTRUE)

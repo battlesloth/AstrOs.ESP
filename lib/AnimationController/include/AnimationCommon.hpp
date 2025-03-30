@@ -6,15 +6,7 @@
 
 typedef std::vector<std::string> str_vec_t;
 
-typedef enum 
-{
-    NONE,
-    MAESTRO,
-    I2C,
-    GENERIC_SERIAL,
-    KANGAROO,
-    GPIO
-} AnimationCmdType;
+
 
 typedef enum
 {

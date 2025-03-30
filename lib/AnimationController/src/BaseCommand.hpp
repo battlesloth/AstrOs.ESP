@@ -1,6 +1,7 @@
 #ifndef BASECOMMAND_HPP
 #define BASECOMMAND_HPP
 
+#include <AstrOsEnums.h>
 #include <AnimationCommon.hpp>
 #include <string>
 #include <vector>
@@ -13,7 +14,7 @@ public:
     BaseCommand();
     virtual ~BaseCommand();
     str_vec_t SplitTemplate(std::string val);
-    AnimationCmdType type;
+    MODULE_TYPE type;
 };
 
 #endif
