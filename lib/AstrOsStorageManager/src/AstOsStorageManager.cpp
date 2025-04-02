@@ -30,6 +30,11 @@
 #define PIN_NUM_CS 4    // 13
 #define SPI_DMA_CHAN 1
 
+#define GPIO_FILE "gpio/onboard.cfig"
+#define MAESTRO_FOLDER "maestro/"
+#define MAESTRO_MODULES_FILE "maestro/modules.cfg"
+#define CFIG_SUFFIX ".cfig"
+
 static const char *TAG = "StorageManager";
 
 static sdmmc_card_t *card;
@@ -162,6 +167,12 @@ bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
         }
     }
 
+    if (!this->saveMaestroModules(maestroConfigs))
+    {
+        ESP_LOGE(TAG, "Failed to save maestro modules");
+        success = false;
+    }
+
     return success;
 }
 
@@ -190,7 +201,7 @@ bool AstrOsStorageManager::saveMaestroServos(std::vector<std::string> config)
 
     auto idx = std::stoi(maestroParts[0]);
 
-    return this->saveFile("maestro/" + std::to_string(idx) + ".cfig", servoConfigs);
+    return this->saveFile(MAESTRO_FOLDER + std::to_string(idx) + CFIG_SUFFIX, servoConfigs);
 }
 
 bool AstrOsStorageManager::saveMaestroModules(std::vector<std::string> config)
@@ -201,12 +212,12 @@ bool AstrOsStorageManager::saveMaestroModules(std::vector<std::string> config)
         maestroFileContent += maestroConfig + "\n";
     }
 
-    return this->saveFile("maestro/modules.cfg", maestroFileContent);
+    return this->saveFile(MAESTRO_MODULES_FILE, maestroFileContent);
 }
 
 std::vector<maestro_config> AstrOsStorageManager::loadMaestroConfigs()
 {
-    std::string maestroFile = this->readFile("maestro/modules.cfg");
+    std::string maestroFile = this->readFile(MAESTRO_MODULES_FILE);
 
     if (maestroFile.empty() || maestroFile == "error")
     {
@@ -226,7 +237,7 @@ bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int
         return false;
     }
 
-    std::string servoFile = this->readFile("maestro/" + std::to_string(idx) + ".cfig");
+    std::string servoFile = this->readFile(MAESTRO_FOLDER + std::to_string(idx) + CFIG_SUFFIX);
 
     if (servoFile.empty() || servoFile == "error")
     {
@@ -330,14 +341,14 @@ bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int
 
 bool AstrOsStorageManager::saveGpioConfig(std::string config)
 {
-    return this->saveFile("gpio/onboard.cfig", config);
+    return this->saveFile(GPIO_FILE, config);
 }
 
 std::vector<bool> AstrOsStorageManager::loadGpioConfigs()
 {
     std::vector<bool> results;
 
-    std::string gpioFile = this->readFile("gpio/onboard.cfig");
+    std::string gpioFile = this->readFile(GPIO_FILE);
 
     if (gpioFile.empty() || gpioFile == "error")
     {
@@ -536,7 +547,7 @@ esp_err_t AstrOsStorageManager::mountSdCard()
         return err;
     }
 
-    ESP_LOGI(TAG, "FIle system mounted");
+    ESP_LOGI(TAG, "File system mounted");
 
     sdmmc_card_print_info(stdout, card);
 
@@ -580,7 +591,7 @@ bool AstrOsStorageManager::deleteFileSd(std::string filename)
 
     if (access(path.c_str(), F_OK) == 0)
     {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        ESP_LOGI(TAG, "File %s exists. Deleting...", path.c_str());
         unlink(path.c_str());
     }
 
