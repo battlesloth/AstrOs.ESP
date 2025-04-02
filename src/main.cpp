@@ -459,6 +459,9 @@ static void animationTimerCallback(void *arg)
 
         switch (ct)
         {
+        case MODULE_TYPE::NONE:
+            ESP_LOGI(TAG, "NONE command queued, assume buffer?");
+            break;
         case MODULE_TYPE::KANGAROO:
         case MODULE_TYPE::GENERIC_SERIAL:
         {
@@ -487,7 +490,7 @@ static void animationTimerCallback(void *arg)
         }
         case MODULE_TYPE::MAESTRO:
         {
-            ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
+            ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
             queue_msg_t servoMsg;
             servoMsg.data = (uint8_t *)malloc(val.size() + 1);
             memcpy(servoMsg.data, val.c_str(), val.size());

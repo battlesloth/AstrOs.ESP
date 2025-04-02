@@ -115,7 +115,7 @@ bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
 bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
 {
     auto success = true;
-    // GPIO@|bool|bool|...;MAESTRO@idx:uart_ch:baudrate@|servo_cfg|servo_cfg|...
+    // GPIO@bool|bool|...;MAESTRO@idx:uart_ch:baudrate@servo_cfg|servo_cfg|...
 
     std::vector<std::string> maestroConfigs;
 
