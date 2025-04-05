@@ -48,6 +48,7 @@ void AnimationController::panicStop()
             this->scriptEvents.clear();
             this->scriptLoaded = false;
             cleared = true;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {
@@ -79,6 +80,7 @@ bool AnimationController::queueScript(std::string scriptId)
 
             this->queueSize++;
             this->queueing = false;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {
@@ -98,6 +100,8 @@ bool AnimationController::queueCommand(std::string command)
         {
             AnimationCommand cmd = AnimationCommand(command);
             this->scriptEvents.push_back(cmd);
+            queued = true;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {
@@ -143,6 +147,7 @@ void AnimationController::loadNextScript()
             this->queueSize--;
 
             retrieved = true;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {
@@ -225,7 +230,7 @@ CommandTemplate *AnimationController::getNextCommandPtr()
             if (this->scriptEvents.empty())
             {
                 this->scriptLoaded = false;
-                return new CommandTemplate(MODULE_TYPE::NONE, 0, "");
+                cmd = new CommandTemplate(MODULE_TYPE::NONE, 0, "");
             }
             else if (this->scriptEvents.size() == 1)
             {
@@ -234,7 +239,7 @@ CommandTemplate *AnimationController::getNextCommandPtr()
                 this->scriptEvents.pop_back();
 
                 this->scriptLoaded = false;
-                return lastCmd;
+                cmd = lastCmd;
             }
             else
             {
@@ -250,6 +255,7 @@ CommandTemplate *AnimationController::getNextCommandPtr()
                 this->scriptEvents.pop_back();
             }
             retrieved = true;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {
@@ -290,6 +296,7 @@ void AnimationController::parseScript(std::string script)
             ESP_LOGI(TAG, "Loaded: %s", script.c_str());
             ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
             parsed = true;
+            xSemaphoreGive(this->animationMutex);
         }
         else
         {

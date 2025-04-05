@@ -64,6 +64,8 @@ void MaestroModule::LoadConfig()
 {
     this->loading = true;
 
+    ESP_LOGI(TAG, "Loading Maestro servos for module %d", this->idx);
+
     AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
 
     this->HomeServos();

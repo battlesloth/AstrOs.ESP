@@ -84,7 +84,7 @@ void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string m
     for (auto controller : controllers)
     {
         auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
-        if (msgParts.size() != 4)
+        if (msgParts.size() != 3)
         {
             ESP_LOGE(TAG, "Invalid config: %s", controller.c_str());
             continue;
@@ -93,12 +93,12 @@ void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string m
         if (msgParts[0] == "00:00:00:00:00:00")
         {
             auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, true);
-            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[3]);
+            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[2]);
         }
         else
         {
             auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, false);
-            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[3]);
+            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[2]);
         }
     }
 }

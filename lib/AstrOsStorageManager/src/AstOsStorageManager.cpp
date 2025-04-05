@@ -30,10 +30,15 @@
 #define PIN_NUM_CS 4    // 13
 #define SPI_DMA_CHAN 1
 
-#define GPIO_FILE "gpio/onboard.cfig"
-#define MAESTRO_FOLDER "maestro/"
+#define SCRIPTS_FOLDER "/sdcard/scripts"
+
+#define GPIO_FOLDER "/sdcard/gpio"
+#define GPIO_FILE "gpio/onboard.cfg"
+
+#define MAESTRO_FOLDER "/sdcard/maestro"
+#define MAESTRO_FOLDER_PATH "maestro/"
 #define MAESTRO_MODULES_FILE "maestro/modules.cfg"
-#define CFIG_SUFFIX ".cfig"
+#define CFIG_SUFFIX ".cfg"
 
 static const char *TAG = "StorageManager";
 
@@ -158,7 +163,7 @@ bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
             }
             else
             {
-                maestroConfigs.push_back(parts[0]);
+                maestroConfigs.push_back(parts[1]);
             }
             break;
         }
@@ -166,6 +171,9 @@ bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
             break;
         }
     }
+
+
+    ESP_LOGI(TAG, "Saving maestro modules, count: %d", maestroConfigs.size());
 
     if (!this->saveMaestroModules(maestroConfigs))
     {
@@ -201,7 +209,7 @@ bool AstrOsStorageManager::saveMaestroServos(std::vector<std::string> config)
 
     auto idx = std::stoi(maestroParts[0]);
 
-    return this->saveFile(MAESTRO_FOLDER + std::to_string(idx) + CFIG_SUFFIX, servoConfigs);
+    return this->saveFile(MAESTRO_FOLDER_PATH + std::to_string(idx) + CFIG_SUFFIX, servoConfigs);
 }
 
 bool AstrOsStorageManager::saveMaestroModules(std::vector<std::string> config)
@@ -211,6 +219,14 @@ bool AstrOsStorageManager::saveMaestroModules(std::vector<std::string> config)
     {
         maestroFileContent += maestroConfig + "\n";
     }
+
+    // remove last \n
+    if (!maestroFileContent.empty())
+    {
+        maestroFileContent.pop_back();
+    }
+
+    ESP_LOGI(TAG, "Saving maestro modules, content: %s", maestroFileContent.c_str());
 
     return this->saveFile(MAESTRO_MODULES_FILE, maestroFileContent);
 }
@@ -237,7 +253,7 @@ bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int
         return false;
     }
 
-    std::string servoFile = this->readFile(MAESTRO_FOLDER + std::to_string(idx) + CFIG_SUFFIX);
+    std::string servoFile = this->readFile(MAESTRO_FOLDER_PATH + std::to_string(idx) + CFIG_SUFFIX);
 
     if (servoFile.empty() || servoFile == "error")
     {
@@ -477,8 +493,9 @@ bool AstrOsStorageManager::formatSdCard()
 
     free(workbuf);
 
-    mkdir("/sdcard/scripts", 0777);
-    mkdir("/sdcard/maestro", 0777);
+    mkdir(SCRIPTS_FOLDER, 0777);
+    mkdir(MAESTRO_FOLDER, 0777);
+    mkdir(GPIO_FOLDER, 0777);
 
     ESP_LOGI(TAG, "Successfully formatted the SD card");
 

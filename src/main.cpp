@@ -175,6 +175,8 @@ static void handleServoTest(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
 
+#pragma region Main()
+
 extern "C"
 {
     void app_main(void);
@@ -201,6 +203,9 @@ void app_main()
 
     initTimers();
 }
+
+#pragma endregion
+#pragma region Init()
 
 void init(void)
 {
@@ -247,6 +252,7 @@ void init(void)
         serialConf1.defaultBaudRate = 9600;
     }
 
+    serialConf1.port = UART_NUM_1;
     serialConf1.txPin = TX_PIN_1;
     serialConf1.rxPin = RX_PIN_1;
 
@@ -255,6 +261,7 @@ void init(void)
 
     serial_config_t serialConf2;
     serialConf2.defaultBaudRate = 9600;
+    serialConf2.port = UART_NUM_2;
     serialConf2.txPin = TX_PIN_2;
     serialConf2.rxPin = RX_PIN_2;
 
@@ -324,9 +331,8 @@ void init(void)
     AstrOs_Display.setDefault(rank, "", name);
 }
 
-/******************************************
- * timers
- *****************************************/
+#pragma endregion
+#pragma region Timers
 
 static void initTimers(void)
 {
@@ -487,11 +493,13 @@ static void animationTimerCallback(void *arg)
                     free(msg.data);
                 }
             }
+            break;
         }
         case MODULE_TYPE::MAESTRO:
         {
             ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
             queue_msg_t servoMsg;
+            servoMsg.message_id = module;
             servoMsg.data = (uint8_t *)malloc(val.size() + 1);
             memcpy(servoMsg.data, val.c_str(), val.size());
             servoMsg.data[val.size()] = '\0';
@@ -569,9 +577,8 @@ static void servoMoveTimerCallback(void *arg)
     ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
 }
 
-/******************************************
- * tasks
- *****************************************/
+#pragma endregion
+#pragma region Tasks
 
 void buttonListenerTask(void *arg)
 {
@@ -912,6 +919,7 @@ void serviceQueueTask(void *arg)
             }
             case SERVICE_COMMAND::RELOAD_CONFIG:
             {
+                ESP_LOGI(TAG, "Reloading config");
                 loadMaestroConfigs();
                 loadGpioConfig();
                 break;
@@ -1279,9 +1287,8 @@ void espnowQueueTask(void *arg)
     }
 }
 
-/**********************************
- * Configuration Methods
- *********************************/
+#pragma endregion
+#pragma region Config Methods
 
 static void loadConfig()
 {
@@ -1291,7 +1298,7 @@ static void loadConfig()
     {
         ESP_LOGI(TAG, "Service config file: %s", cfig.c_str());
 
-        auto lines = AstrOsStringUtils::splitString(cfig, '\n');
+        auto lines = AstrOsStringUtils::splitStringOnLineEnd(cfig);
 
         for (auto line : lines)
         {
@@ -1301,9 +1308,23 @@ static void loadConfig()
             {
                 if (parts[0] == "isMasterNode")
                 {
-                    isMasterNode = parts[1] == "true";
-                    ASTRO_PORT = isMasterNode ? UART_NUM_1 : UART_NUM_0;
-                    rank = isMasterNode ? "Master" : "Padawan";
+                    
+                    if (parts[1].find("true") != std::string::npos)
+                    {
+                        ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
+                        isMasterNode = true;
+                        ASTRO_PORT = UART_NUM_1;
+                        rank = "Master";
+                        ESP_LOGI(TAG, "%s node using UART channel 1", rank.c_str());
+                    }
+                    else
+                    {
+                        ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
+                        isMasterNode = false;
+                        ASTRO_PORT = UART_NUM_0;
+                        rank = "Padawan";
+                        ESP_LOGI(TAG, "%s node using UART channel 0", rank.c_str());
+                    }
                 }
             }
         }
@@ -1317,6 +1338,9 @@ static void loadConfig()
 
 static void loadMaestroConfigs()
 {
+
+    ESP_LOGI(TAG, "Loading Maestro configurations");
+
     // get list of current maestro modules
     std::vector<int> currentModules;
     for (auto maestroMod : maestroModules)
@@ -1324,8 +1348,12 @@ static void loadMaestroConfigs()
         currentModules.push_back(maestroMod.first);
     }
 
+    ESP_LOGI(TAG, "Current Maestro module count: %d",currentModules.size());
+
     // load maestro configurations from storage
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
+
+    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
 
     for (auto &cfg : maestroConfigs)
     {
@@ -1389,18 +1417,28 @@ static void loadMaestroConfigs()
             maestroModules.erase(idx);
         }
     }
+
+    ESP_LOGI(TAG, "Maestro module count: %d", maestroModules.size());
+
+    // load servo configurations from storage
+    for (auto maestroMod : maestroModules)
+    {
+        maestroMod.second->LoadConfig();
+    }
 }
 
 
 void loadGpioConfig(){
+
+    ESP_LOGI(TAG, "Loading GPIO configurations");
+
     auto config = AstrOs_Storage.loadGpioConfigs();
     GpioMod.UpdateConfig(config);
 }
 
 
-/**********************************
- * callbacks
- *********************************/
+#pragma endregion
+#pragma region Callbacks
 
 bool cachePeer(espnow_peer_t peer)
 {
@@ -1465,9 +1503,9 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     }
 }
 
-/**********************************
- * Interface Response Methods
- *********************************/
+#pragma endregion
+#pragma region Interface Methods
+
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type)
 {
     switch (type)
@@ -1495,6 +1533,8 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
         return AstrOsSerialMessageType::UNKNOWN;
     }
 }
+
+
 
 static void handleRegistrationSync(astros_interface_response_t msg)
 {
@@ -1543,6 +1583,8 @@ static void handleSetConfig(astros_interface_response_t msg)
         {
             ESP_LOGW(TAG, "Send servo reload fail");
         }
+    } else {
+        ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
     if (isMasterNode)

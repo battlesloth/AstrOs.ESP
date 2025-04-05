@@ -14,18 +14,21 @@ public:
     {
         std::vector<maestro_config> configs;
 
-        auto lines = AstrOsStringUtils::splitString(maestroFile, '\n');
+        auto lines = AstrOsStringUtils::splitStringOnLineEnd(maestroFile);
 
         for (const auto &line : lines)
         {
             auto trimmedLine = line;
-            trimmedLine.erase(std::remove(trimmedLine.begin(), trimmedLine.end(), ' '), trimmedLine.end()); // remove spaces
-            if (trimmedLine.empty() || trimmedLine[0] == '#')                                               // skip empty lines and comments
+            // remove spaces
+            trimmedLine.erase(std::remove(trimmedLine.begin(), trimmedLine.end(), ' '), trimmedLine.end()); 
+            
+            // skip empty lines and comments
+            if (trimmedLine.empty() || trimmedLine[0] == '#')                                               
             {
                 continue;
             }
 
-            auto parts = AstrOsStringUtils::splitString(trimmedLine, '|');
+            auto parts = AstrOsStringUtils::splitString(trimmedLine, ':');
             if (parts.size() != 3) // must have 3 parts
             {
                 continue;
@@ -44,10 +47,34 @@ public:
 
     static std::vector<servo_channel> parseServoConfig(const std::string servoFile)
     {
-        std::vector<servo_channel> channels;
-
         auto cfigs = AstrOsStringUtils::splitString(servoFile, '|');
 
+        // remove empty strings from the end of the vector
+        if (cfigs.back().empty())
+        {
+            cfigs.pop_back();
+        }
+     
+        //  get the max id from the configs
+        int maxId = 0;
+        for (const auto &cfig : cfigs)
+        {
+            auto parts = AstrOsStringUtils::splitString(cfig, ':');
+            if (parts.size() != 7) // must have 7 parts
+            {
+                continue;
+            }
+
+            int id = std::stoi(parts[0]);
+
+            if (id > maxId)
+            {
+                maxId = id;
+            }
+        }
+        
+        std::vector<servo_channel> channels = std::vector<servo_channel>();
+     
         for (const auto &cfig : cfigs)
         {
             auto parts = AstrOsStringUtils::splitString(cfig, ':');
@@ -67,14 +94,14 @@ public:
             ch.home = ch.minPos > home ? ch.minPos : home;
 
             ch.currentPos = ch.minPos;
-            ch.requestedPos = ch.minPos;
-            ch.lastPos = ch.home;
-            ch.speed = 1;
+            ch.requestedPos = ch.home;
+            ch.lastPos = ch.minPos;
+            ch.speed = 0;
             ch.acceleration = 0;
             ch.inverted = std::stoi(parts[6]);
             ch.on = false;
 
-            channels.emplace(channels.begin() + ch.id, ch);
+            channels.insert(channels.begin() + ch.id, ch);
         }
 
         return channels;

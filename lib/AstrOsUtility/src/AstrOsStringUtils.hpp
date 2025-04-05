@@ -15,9 +15,8 @@
 class AstrOsStringUtils
 {
 public:
-
-    template<typename T>
-    static std::string toBinaryString(const T& x)
+    template <typename T>
+    static std::string toBinaryString(const T &x)
     {
         std::stringstream ss;
         ss << std::bitset<sizeof(T) * 8>(x);
@@ -55,6 +54,13 @@ public:
         std::vector<std::string> parts;
         auto start = 0U;
         auto end = str.find(delimiter);
+
+        if (end == std::string::npos)
+        {
+            parts.push_back(str);
+            return parts;
+        }
+
         while (end != std::string::npos)
         {
             parts.push_back(str.substr(start, end - start));
@@ -63,6 +69,55 @@ public:
         }
 
         parts.push_back(str.substr(start, end));
+
+        if (parts.back().empty())
+        {
+            parts.pop_back();
+        }
+
+        return parts;
+    }
+
+    /// @brief Files on Windows and Linux use different line endings, this function will split a string on both \n and \r\n
+    /// @param str
+    /// @return
+    static std::vector<std::string> splitStringOnLineEnd(std::string str)
+    {
+
+        std::string search = "\r\n";
+        std::string delimiter = "\n";
+
+        size_t pos = str.find(search);
+        while (pos != std::string::npos)
+        {
+            str.replace(pos, search.length(), delimiter);
+            pos = str.find(search, pos + delimiter.length());
+        }
+
+        std::vector<std::string> parts;
+        auto start = 0U;
+        auto end = str.find(delimiter);
+
+        if (end == std::string::npos)
+        {
+            parts.push_back(str);
+            return parts;
+        }
+
+        while (end != std::string::npos)
+        {
+            parts.push_back(str.substr(start, end - start));
+            start = end + delimiter.length();
+            end = str.find(delimiter, start);
+        }
+
+        parts.push_back(str.substr(start, end));
+
+        // if the last part is empty, remove it
+        if (parts.back().empty())
+        {
+            parts.pop_back();
+        }
 
         return parts;
     }
