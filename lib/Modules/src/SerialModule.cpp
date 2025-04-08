@@ -36,7 +36,7 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
     this->tx = cfig.txPin;
     this->defaultBaudrate = cfig.defaultBaudRate;
     this->isMaster = cfig.isMaster;
-    
+
     result = SerialModule::InstallSerial(port, tx, rx, defaultBaudrate);
 
     if (result != ESP_OK)
@@ -106,9 +106,25 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
             // don't change the baud rate if this is the master node
             if (!this->isMaster)
             {
-                uart_set_baudrate(port, baud);
+
+                uint32_t currentBaud = 0;
+
+                auto err = uart_get_baudrate(port, &currentBaud);
+
+                if (logError(TAG, __FUNCTION__, __LINE__, err))
+                {
+                    ESP_LOGE(TAG, "Failed to get baudrate!");
+                }
+                else if (currentBaud != baud)
+                {
+                    err = uart_set_baudrate(port, baud);
+                    if (logError(TAG, __FUNCTION__, __LINE__, err))
+                    {
+                        ESP_LOGE(TAG, "Failed to set baudrate %d!", baud);
+                    }
+                }
             }
-            
+
             const int txBytes = uart_write_bytes(port, data, size);
             ESP_LOGD(TAG, "Wrote %d bytes", txBytes);
             sent = true;
@@ -120,4 +136,3 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
         }
     }
 }
-

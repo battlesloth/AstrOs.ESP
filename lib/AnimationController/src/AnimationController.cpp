@@ -281,7 +281,9 @@ void AnimationController::parseScript(std::string script)
         {
             this->scriptEvents.clear();
 
-            auto start = 0U;
+            auto parts = AstrOsStringUtils::splitString(script, ';');
+
+           /* auto start = 0U;
             auto end = script.find(";");
             while (end != std::string::npos)
             {
@@ -290,7 +292,18 @@ void AnimationController::parseScript(std::string script)
                 start = end + 1;
                 end = script.find(";", start);
             }
+            */
 
+            for (auto part : parts)
+            {
+                if (part.empty())
+                {
+                    continue;
+                }
+                AnimationCommand cmd = AnimationCommand(part);
+                this->scriptEvents.push_back(cmd);
+            }
+            
             std::reverse(this->scriptEvents.begin(), this->scriptEvents.end());
 
             ESP_LOGI(TAG, "Loaded: %s", script.c_str());

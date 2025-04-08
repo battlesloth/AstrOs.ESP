@@ -41,16 +41,19 @@ MaestroModule::~MaestroModule()
 void MaestroModule::UpdateConfig(QueueHandle_t serialQueue, int baudRate)
 {
     bool configChanged = false;
-    
+
     while (!configChanged)
     {
         // don't update config while we are sending commands to servos
         if (xSemaphoreTake(this->mutex, 100 / portTICK_PERIOD_MS))
         {
+
+            ESP_LOGI(TAG, "Updating Maestro module %d config, old buad: %d, new baud %d", this->idx, this->baudRate, baudRate);
+
             this->serialQueue = serialQueue;
             this->baudRate = baudRate;
 
-            configChanged = true; 
+            configChanged = true;
             xSemaphoreGive(this->mutex);
         }
         else
@@ -78,7 +81,7 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     ESP_LOGI(TAG, "Queueing servo command => %s", cmd);
     MaestroCommand servoCmd = MaestroCommand(std::string(reinterpret_cast<char *>(cmd)));
 
-    if (servoCmd.channel > 23)
+    if (servoCmd.channel > 23 || servoCmd.channel < 0)
     {
         ESP_LOGE(TAG, "Invalid channel %d", servoCmd.channel);
         return;
@@ -88,11 +91,19 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     // set channel requested position to percentage of max - min taking into account inverted
     int requestPos = servoCmd.position;
-    if (channels[ch].inverted)
+
+    if (requestPos < 0)
     {
-        requestPos = 100 - requestPos;
+        channels[ch].requestedPos = channels[ch].home;
     }
-    channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, servoCmd.position);
+    else
+    {
+        if (channels[ch].inverted)
+        {
+            requestPos = 100 - requestPos;
+        }
+        channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, servoCmd.position);
+    }
 
     ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, speed: %d, accel: %d", ch, channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.speed, servoCmd.acceleration);
 
@@ -167,13 +178,15 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
             // to give us some buffer, we will calculate 0 to 3000 us
             // if accel is less than speed, we will use accel to account for
             // slower start and stop
+            // UPDATE: increase the timeout to accomidate linear acuators Doug is using
+            // being slow as fuck to react to changes
             double speed = channels[i].speed == 0 ? 255 : channels[i].speed;
             if (channels[i].acceleration < speed && channels[i].acceleration != 0)
             {
                 speed = channels[i].acceleration;
             }
 
-            channels[i].currentPos = channels[i].currentPos + (((.25 * speed) * (msSinceLastCheck / 10)) / 4);
+            channels[i].currentPos = channels[i].currentPos + (((.25 * speed) * (msSinceLastCheck / 100)) / 4);
 
             if (channels[i].currentPos >= 3000)
             {

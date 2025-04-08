@@ -202,6 +202,9 @@ void app_main()
     xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
 
     initTimers();
+
+    loadMaestroConfigs();
+    ESP_LOGI(TAG, "Maestro Modules initiated");
 }
 
 #pragma endregion
@@ -245,6 +248,7 @@ void init(void)
 
     if (isMasterNode)
     {
+        serialConf1.isMaster = true;
         serialConf1.defaultBaudRate = ASTROS_INTEFACE_BAUD_RATE;
     }
     else
@@ -261,16 +265,13 @@ void init(void)
 
     serial_config_t serialConf2;
     serialConf2.defaultBaudRate = 9600;
+    serialConf2.isMaster = false;
     serialConf2.port = UART_NUM_2;
     serialConf2.txPin = TX_PIN_2;
     serialConf2.rxPin = RX_PIN_2;
 
     ESP_ERROR_CHECK(SerialChannel2.Init(serialConf2));
     ESP_LOGI(TAG, "Serial Channel 2 initiated");
-
-    loadMaestroConfigs();
-
-    ESP_LOGI(TAG, "Maestro Modules initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
@@ -1697,15 +1698,16 @@ static void handleServoTest(astros_interface_response_t msg)
     auto message = std::string(msg.message);
     auto parts = AstrOsStringUtils::splitString(message, ':');
 
-    if (parts.size() != 3)
+    if (parts.size() != 4)
     {
         ESP_LOGE(TAG, "Invalid servo test message: %s", message.c_str());
     }
     else
     {
-        int idx = std::stoi(parts[0]);
-        int servo = std::stoi(parts[1]);
-        int ms = std::stoi(parts[2]);
+        // parts[0] reserverd for module type
+        int idx = std::stoi(parts[1]);
+        int servo = std::stoi(parts[2]);
+        int ms = std::stoi(parts[3]);
 
         if (maestroModules.find(idx) == maestroModules.end())
         {
