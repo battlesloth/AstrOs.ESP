@@ -95,7 +95,7 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     // if it's not a servo it's an on/off GPIO
     if (!channels[ch].isServo)
     {
-        requestPos = requestPos >= 1500 ? 2500 : 500;
+        channels[ch].requestedPos = requestPos >= 1500 ? 2500 : 500;
     }
     else if (requestPos < 0)
     {
@@ -110,7 +110,7 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, requestPos);
     }
 
-    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, speed: %d. CMD: pos: %d, accel: %d, inverted: %d", ch, channels[ch].minPos,
+    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d", ch, channels[ch].minPos,
              channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position, servoCmd.speed, servoCmd.acceleration, channels[ch].inverted);
 
     channels[ch].currentPos = 0;
