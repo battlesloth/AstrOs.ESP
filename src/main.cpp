@@ -191,8 +191,8 @@ void app_main()
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
     xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL, 1);
-    xTaskCreatePinnedToCore(&serialCh1QueueTask, "serial_ch1_queue_task", 3072, (void *)serialCh1Queue, 9, NULL, 1);
-    xTaskCreatePinnedToCore(&serialCh2QueueTask, "serial_ch1_queue_task", 3072, (void *)serialCh2Queue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&serialCh1QueueTask, "serial_ch1_queue_task", 4096, (void *)serialCh1Queue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&serialCh2QueueTask, "serial_ch2_queue_task", 4096, (void *)serialCh2Queue, 9, NULL, 1);
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
@@ -467,32 +467,40 @@ static void animationTimerCallback(void *arg)
         switch (ct)
         {
         case MODULE_TYPE::NONE:
+        {
             ESP_LOGI(TAG, "NONE command queued, assume buffer?");
             break;
+        }
         case MODULE_TYPE::KANGAROO:
         case MODULE_TYPE::GENERIC_SERIAL:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
-            queue_msg_t msg;
-            msg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(msg.data, val.c_str(), val.size());
-            msg.data[val.size()] = '\0';
+            queue_serial_msg_t serialMsg;
+            serialMsg.message_id = 0;
+            serialMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(serialMsg.data, val.c_str(), val.size());
+            serialMsg.data[val.size()] = '\0';
 
             if (module == 1)
             {
-                if (xQueueSend(serialCh1Queue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                 {
                     ESP_LOGW(TAG, "Send serial queue fail");
-                    free(msg.data);
+                    free(serialMsg.data);
                 }
             }
             else if (module == 2)
             {
-                if (xQueueSend(serialCh2Queue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                if (xQueueSend(serialCh2Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                 {
                     ESP_LOGW(TAG, "Send serial queue fail");
-                    free(msg.data);
+                    free(serialMsg.data);
                 }
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid serial module %d", module);
+                free(serialMsg.data);
             }
             break;
         }
