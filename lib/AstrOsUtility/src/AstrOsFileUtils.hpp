@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <algorithm>
 #include <AstrOsStringUtils.hpp>
 #include <AstrOsStructs.h>
 
@@ -20,10 +21,10 @@ public:
         {
             auto trimmedLine = line;
             // remove spaces
-            trimmedLine.erase(std::remove(trimmedLine.begin(), trimmedLine.end(), ' '), trimmedLine.end()); 
-            
+            trimmedLine.erase(std::remove(trimmedLine.begin(), trimmedLine.end(), ' '), trimmedLine.end());
+
             // skip empty lines and comments
-            if (trimmedLine.empty() || trimmedLine[0] == '#')                                               
+            if (trimmedLine.empty() || trimmedLine[0] == '#')
             {
                 continue;
             }
@@ -54,7 +55,7 @@ public:
         {
             cfigs.pop_back();
         }
-     
+
         //  get the max id from the configs
         int maxId = 0;
         for (const auto &cfig : cfigs)
@@ -72,9 +73,9 @@ public:
                 maxId = id;
             }
         }
-        
+
         std::vector<servo_channel> channels = std::vector<servo_channel>();
-     
+
         for (const auto &cfig : cfigs)
         {
             auto parts = AstrOsStringUtils::splitString(cfig, ':');
@@ -89,16 +90,24 @@ public:
             ch.isServo = std::stoi(parts[2]);
             ch.minPos = std::stoi(parts[3]);
             ch.maxPos = std::stoi(parts[4]);
-
             auto home = std::stoi(parts[5]);
-            ch.home = ch.minPos > home ? ch.minPos : home;
+            ch.inverted = std::stoi(parts[6]);
+
+            // make sure home is between min and max
+            if (ch.inverted)
+            {
+                ch.home = ch.maxPos < home ? ch.maxPos : std::clamp(home, ch.minPos, ch.maxPos);
+            }
+            else
+            {
+                ch.home = ch.minPos > home ? ch.minPos : std::clamp(home, ch.minPos, ch.maxPos);
+            }
 
             ch.currentPos = ch.minPos;
             ch.requestedPos = ch.home;
             ch.lastPos = ch.minPos;
             ch.speed = 0;
             ch.acceleration = 0;
-            ch.inverted = std::stoi(parts[6]);
             ch.on = false;
 
             channels.insert(channels.begin() + ch.id, ch);

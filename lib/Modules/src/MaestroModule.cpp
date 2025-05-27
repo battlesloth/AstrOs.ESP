@@ -92,7 +92,12 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     // set channel requested position to percentage of max - min taking into account inverted
     int requestPos = servoCmd.position;
 
-    if (requestPos < 0)
+    // if it's not a servo it's an on/off GPIO
+    if (!channels[ch].isServo)
+    {
+        requestPos = requestPos >= 1500 ? 2500 : 500;
+    }
+    else if (requestPos < 0)
     {
         channels[ch].requestedPos = channels[ch].home;
     }
@@ -102,10 +107,11 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         {
             requestPos = 100 - requestPos;
         }
-        channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, servoCmd.position);
+        channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, requestPos);
     }
 
-    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, speed: %d, accel: %d", ch, channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.speed, servoCmd.acceleration);
+    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, speed: %d. CMD: pos: %d, accel: %d, inverted: %d", ch, channels[ch].minPos,
+             channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position, servoCmd.speed, servoCmd.acceleration, channels[ch].inverted);
 
     channels[ch].currentPos = 0;
     channels[ch].speed = servoCmd.speed;
@@ -150,13 +156,26 @@ void MaestroModule::HomeServos()
     {
         if (channels[i].enabled)
         {
-            channels[i].requestedPos = channels[i].home;
-            channels[i].currentPos = 0;
-            channels[i].on = true;
-            channels[i].speed = 0;
-            channels[i].acceleration = 0;
-            this->setServoPosition(i, channels[i].home, 0, 0, 0);
-            channels[i].lastPos = channels[i].home;
+            if (!channels[i].isServo)
+            {
+                if (channels[i].inverted){
+                    this->setServoPosition(i, 2500, 0, 0, 0);
+                }
+                else {
+                    this->setServoPosition(i, 500, 0, 0, 0);
+                }
+            }
+            else
+            {
+
+                channels[i].requestedPos = channels[i].home;
+                channels[i].currentPos = 0;
+                channels[i].on = true;
+                channels[i].speed = 0;
+                channels[i].acceleration = 0;
+                this->setServoPosition(i, channels[i].home, 0, 0, 0);
+                channels[i].lastPos = channels[i].home;
+            }
         }
     }
 }
@@ -170,6 +189,10 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
 {
     for (size_t i = 0; i < 24; i++)
     {
+        if (!channels[i].isServo)
+        {
+            continue;
+        }
         if (channels[i].on)
         {
             // speed is (.25us/10ms) * n, where n is 0-255

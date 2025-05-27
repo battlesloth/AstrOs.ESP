@@ -516,6 +516,7 @@ static void animationTimerCallback(void *arg)
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
             queue_msg_t i2cMsg;
+            i2cMsg.message_id = 0;
             i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
             memcpy(i2cMsg.data, val.c_str(), val.size());
             i2cMsg.data[val.size()] = '\0';
@@ -1153,7 +1154,7 @@ void i2cQueueTask(void *arg)
                 ESP_LOGW(TAG, "I2C Queue Stack HWM: %d", highWaterMark);
             }
 
-            ESP_LOGD(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+            ESP_LOGI(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
 
             if (msg.message_id == 0)
             {
