@@ -84,7 +84,7 @@ void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string m
     for (auto controller : controllers)
     {
         auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
-        if (msgParts.size() != 4)
+        if (msgParts.size() != 3)
         {
             ESP_LOGE(TAG, "Invalid config: %s", controller.c_str());
             continue;
@@ -93,12 +93,12 @@ void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string m
         if (msgParts[0] == "00:00:00:00:00:00")
         {
             auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, true);
-            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[3]);
+            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[2]);
         }
         else
         {
             auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, false);
-            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[3]);
+            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[2]);
         }
     }
 }
@@ -282,8 +282,9 @@ void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<a
 
     ESP_LOGD(TAG, "Sending registraion ack: %s", response.c_str());
 
-    queue_msg_t serialMsg;
+    queue_serial_msg_t serialMsg;
 
+    serialMsg.baudrate = 115200;
     serialMsg.message_id = 1;
     serialMsg.data = (uint8_t *)malloc(response.size() + 1);
     memcpy(serialMsg.data, response.c_str(), response.size());
@@ -310,8 +311,9 @@ void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, s
         response = this->msgService.getPollNak(mac, name);
     }
 
-    queue_msg_t serialMsg;
+    queue_serial_msg_t serialMsg;
 
+    serialMsg.baudrate = 115200;
     serialMsg.message_id = 1;
     serialMsg.data = (uint8_t *)malloc(response.size() + 1);
     memcpy(serialMsg.data, response.c_str(), response.size());
@@ -331,8 +333,9 @@ void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType typ
 
     ESP_LOGD(TAG, "Sending response: %s", response.c_str());
 
-    queue_msg_t serialMsg;
+    queue_serial_msg_t serialMsg;
 
+    serialMsg.baudrate = 115200;
     serialMsg.message_id = 1;
     serialMsg.data = (uint8_t *)malloc(response.size() + 1);
     memcpy(serialMsg.data, response.c_str(), response.size());

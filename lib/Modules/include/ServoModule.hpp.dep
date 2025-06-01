@@ -35,7 +35,7 @@ private:
     uint16_t board0StepMap[SERVO_STEPS];
     uint16_t board1StepMap[SERVO_STEPS];
     void setChannelConfig(int boardId, servo_channel *channel, int minStep, int maxStep, double freqMs);
-    void zeroServo(servo_channel *servo); 
+    void homeServo(servo_channel *servo); 
     void setCommandByBoard(servo_channel *servos, ServoCommand *cmd);
     void moveServoByBoard(Pca9685 *board, servo_channel *servo, int idx, uint16_t *stepMap);
     void setServoToPosition(Pca9685 *board, servo_channel *channel, uint16_t *stepMap, int ms);
@@ -45,7 +45,7 @@ public:
     esp_err_t Init(I2cMaster i2cMaster, servo_module_config_t config);
     void LoadServoConfig();
     void QueueCommand(uint8_t *cmd);
-    void ZeroServos();
+    void HomeServos();
     void MoveServos();
     void Panic();
     bool UpdateBoard(uint8_t board, long frequency, int slop);

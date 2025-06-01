@@ -1,15 +1,21 @@
 #ifndef ANIMATIONCOMMON_H
 #define ANIMATIONCOMMON_H
 
+#include <string>
+#include <vector>
+
+typedef std::vector<std::string> str_vec_t;
+
+
+
 typedef enum
 {
-    NONE,
     START,
     HOME,
     SPEED,
     POSITION,
     SPEED_INCREMENTAL,
     POSITION_INCREMENTAL
-} KANGAROO_ACTION;
+} KangarooAction;
 
 #endif

@@ -116,7 +116,7 @@ void ServoModule::LoadServoConfig()
         }
     }
 
-    ServoModule::ZeroServos();
+    ServoModule::HomeServos();
 
     this->loading = false;
 }
@@ -188,7 +188,7 @@ void ServoModule::Panic()
     }
 }
 
-void ServoModule::ZeroServos()
+void ServoModule::HomeServos()
 {
 
     bool zeroSet = false;
@@ -199,8 +199,8 @@ void ServoModule::ZeroServos()
         {
             for (size_t i = 0; i < 16; i++)
             {
-                this->zeroServo(&channels0[i]);
-                this->zeroServo(&channels1[i]);
+                this->homeServo(&channels0[i]);
+                this->homeServo(&channels1[i]);
             }
             zeroSet = true;
             xSemaphoreGive(channelsMutex);
@@ -294,10 +294,9 @@ void ServoModule::setChannelConfig(int boardId, servo_channel *channel, int minS
              boardId, channel->id, channel->minPos, channel->maxPos, channel->set, channel->inverted);
 }
 
-void ServoModule::zeroServo(servo_channel *servo)
+void ServoModule::homeServo(servo_channel *servo)
 {
-    // if servo is inverted, it's 0 position is the max position
-    servo->requestedPos = servo->inverted ? servo->maxPos : servo->minPos;
+    servo->requestedPos = servo->home;
     servo->currentPos = GetRelativeRequestedPosition(servo->minPos, servo->maxPos, 20);
     servo->speed = SERVO_ZERO_SPEED;
     // only zero if the servo is set

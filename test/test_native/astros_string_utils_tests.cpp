@@ -28,3 +28,41 @@ TEST(StringUtils, GetMessageAt)
 
     EXPECT_STREQ("test", message.c_str());
 }
+
+TEST(StringUtils, splitStringOnLineEnd)
+{
+    std::string testString = "PART1\nPART2\r\nPART3\n";
+
+    auto parts = AstrOsStringUtils::splitStringOnLineEnd(testString);
+
+    EXPECT_EQ(3, parts.size());
+    EXPECT_STREQ("PART1", parts[0].c_str());
+    EXPECT_STREQ("PART2", parts[1].c_str());
+    EXPECT_STREQ("PART3", parts[2].c_str());
+}
+
+TEST(StringUtils, splitStringOnLineEndWithEmptyLines)
+{
+    std::string testString = "PART1\n\nPART2\r\n\r\nPART3\n";
+
+    auto parts = AstrOsStringUtils::splitStringOnLineEnd(testString);
+
+    EXPECT_EQ(5, parts.size());
+    EXPECT_STREQ("PART1", parts[0].c_str());
+    EXPECT_STREQ("", parts[1].c_str());
+    EXPECT_STREQ("PART2", parts[2].c_str());
+    EXPECT_STREQ("", parts[3].c_str());
+    EXPECT_STREQ("PART3", parts[4].c_str());
+}
+
+TEST(StringUtils, splitStringWithWindowsLineEndings)
+{
+    std::string testString = "PART1\r\nPART2\r\nPART3\r\n";
+
+    auto parts = AstrOsStringUtils::splitStringOnLineEnd(testString);
+
+    EXPECT_EQ(3, parts.size());
+    EXPECT_STREQ("PART1", parts[0].c_str());
+    EXPECT_STREQ("PART2", parts[1].c_str());
+    EXPECT_STREQ("PART3", parts[2].c_str());
+}

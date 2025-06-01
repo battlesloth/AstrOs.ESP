@@ -18,10 +18,6 @@
 #include "sdmmc_cmd.h"
 #include "esp_spiffs.h"
 
-/**********************************
- * SD Card
- **********************************/
-
 #ifdef USE_SPIFFS
 #define MOUNT_POINT "/spiffs"
 #else
@@ -33,6 +29,16 @@
 #define PIN_NUM_CLK 18  // 14
 #define PIN_NUM_CS 4    // 13
 #define SPI_DMA_CHAN 1
+
+#define SCRIPTS_FOLDER "/sdcard/scripts"
+
+#define GPIO_FOLDER "/sdcard/gpio"
+#define GPIO_FILE "gpio/onboard.cfg"
+
+#define MAESTRO_FOLDER "/sdcard/maestro"
+#define MAESTRO_FOLDER_PATH "maestro/"
+#define MAESTRO_MODULES_FILE "maestro/modules.cfg"
+#define CFIG_SUFFIX ".cfg"
 
 static const char *TAG = "StorageManager";
 
@@ -83,6 +89,8 @@ esp_err_t AstrOsStorageManager::Init()
     return AstrOsStorageManager::mountSdCard();
 }
 
+#pragma region Service Config
+
 bool AstrOsStorageManager::saveServiceConfig(svc_config_t config)
 {
     return nvsSaveServiceConfig(config);
@@ -98,6 +106,9 @@ bool AstrOsStorageManager::clearServiceConfig()
     return nvsClearServiceConfig();
 }
 
+#pragma endregion Service Config
+#pragma region Fingerprint
+
 bool AstrOsStorageManager::setControllerFingerprint(const char *fingerprint)
 {
     return nvsSetControllerFingerprint(fingerprint);
@@ -108,102 +119,278 @@ bool AstrOsStorageManager::getControllerFingerprint(char *fingerprint)
     return nvsGetControllerFingerprint(fingerprint);
 }
 
-/// @brief This is a bit ugly, but is memeory efficient and works
-/// @param msg
-/// @return
-bool AstrOsStorageManager::saveServoConfig(std::string msg)
+#pragma endregion Fingerprint
+#pragma region Module Configs
+
+bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
 {
-    bool success = true;
+    auto success = true;
+    // GPIO@bool|bool|...;MAESTRO@idx:uart_ch:baudrate@servo_cfg|servo_cfg|...
 
-    int valueCounter = 0;
-    int start = 0;
+    std::vector<std::string> maestroConfigs;
 
-    for (int i = 0; i < msg.size(); i++)
+    auto modules = AstrOsStringUtils::splitString(msg, ';');
+
+    // there should always at least be onboard GPIO configs
+    if (modules.empty())
     {
-        // if at separator or end of string, convert val to int and reset val
-        if (msg[i] == '|' || i == msg.size() - 1)
+        ESP_LOGW(TAG, "Failed to save config, no modules found");
+        return false;
+    }
+
+    for (const auto &module : modules)
+    {
+        auto parts = AstrOsStringUtils::splitString(module, '@');
+
+        if (parts.size() < 2)
         {
-            // if we are at the end of the string, we need to increment i so we can get the last value
-            if (i == msg.size() - 1)
+            ESP_LOGE(TAG, "Invalid module format: %s", module.c_str());
+            continue;
+        }
+
+        auto type = static_cast<MODULE_TYPE>(std::stoi(parts[0]));
+
+        switch (type)
+        {
+        case MODULE_TYPE::GPIO:
+            success = this->saveGpioConfig(parts[1]);
+            break;
+        case MODULE_TYPE::MAESTRO:
+        {
+            if (!this->saveMaestroServos(parts))
             {
-                i++;
-            }
-
-            // is between min and max servo config length?
-            if (i - start < 9 || i - start > 17)
-            {
-                ESP_LOGE(TAG, "Failed to save servo config, invalid config length, config: %s", msg.substr(start, i - start).c_str());
-                return false;
-            }
-
-            // config must end with a digit
-            if (!isdigit(msg[i - 1]))
-            {
-                ESP_LOGE(TAG, "Failed to save servo config, config must end with a digit");
-                return false;
-            }
-
-            servo_channel ch;
-            auto parts = AstrOsStringUtils::splitString(msg.substr(start, i - start), ':');
-
-            // servo config must be 5 parts
-            if (parts.size() != 5)
-            {
-                ESP_LOGE(TAG, "Failed to save servo config, invalid config parts: %d != 5", parts.size());
-                return false;
-            }
-
-            ch.id = std::stoi(parts[0]);
-            ch.set = std::stoi(parts[1]);
-            ch.minPos = std::stoi(parts[2]);
-            ch.maxPos = std::stoi(parts[3]);
-            ch.inverted = std::stoi(parts[4]);
-
-            if (ch.id == -1 || ch.id > 31)
-            {
-                ESP_LOGE(TAG, "Failed to save servo config, invalid servo id: %d", ch.id);
-                return false;
-            }
-
-            if (ch.id < 16)
-            {
-                success = nvsSaveServoConfig(0, ch);
+                success = false;
             }
             else
             {
-                ch.id = ch.id - 16;
-                success = nvsSaveServoConfig(1, ch);
+                maestroConfigs.push_back(parts[1]);
             }
-
-            if (!success)
-            {
-                ESP_LOGE(TAG, "Failed to save servo config");
-                return false;
-            }
-
-            start = i + 1;
-            valueCounter++;
+            break;
+        }
+        default:
+            break;
         }
     }
 
-    // there should be 32 servo configs
-    if (valueCounter != 32)
+
+    ESP_LOGI(TAG, "Saving maestro modules, count: %d", maestroConfigs.size());
+
+    if (!this->saveMaestroModules(maestroConfigs))
     {
-        ESP_LOGE(TAG, "Failed to save servo config, invalid servo count: %d != 32", valueCounter);
-        return false;
+        ESP_LOGE(TAG, "Failed to save maestro modules");
+        success = false;
     }
 
     return success;
 }
 
-bool AstrOsStorageManager::loadServoConfig(int boardId, servo_channel *servos, int arraySize)
+#pragma endregion Module Configs
+#pragma region Maestro Configs
+
+bool AstrOsStorageManager::saveMaestroServos(std::vector<std::string> config)
 {
-    return nvsLoadServoConfig(boardId, servos, arraySize);
+    if (config.size() != 3)
+    {
+        ESP_LOGE(TAG, "Failed to save maestro configs, invalid module format: %d parts != 3", config.size());
+        return false;
+    }
+
+    auto maestroConfig = config[1];
+    auto servoConfigs = config[2];
+
+    maestro_config cfg;
+    auto maestroParts = AstrOsStringUtils::splitString(maestroConfig, ':');
+
+    if (maestroParts.size() != 3)
+    {
+        ESP_LOGE(TAG, "Failed to save maestro configs, invalid maestro config: %s", maestroConfig.c_str());
+        return false;
+    }
+
+    auto idx = std::stoi(maestroParts[0]);
+
+    return this->saveFile(MAESTRO_FOLDER_PATH + std::to_string(idx) + CFIG_SUFFIX, servoConfigs);
 }
 
-/*******************************
- * ESP-NOW configs
- ********************************/
+bool AstrOsStorageManager::saveMaestroModules(std::vector<std::string> config)
+{
+    std::string maestroFileContent = "";
+    for (const auto &maestroConfig : config)
+    {
+        maestroFileContent += maestroConfig + "\n";
+    }
+
+    // remove last \n
+    if (!maestroFileContent.empty())
+    {
+        maestroFileContent.pop_back();
+    }
+
+    ESP_LOGI(TAG, "Saving maestro modules, content: %s", maestroFileContent.c_str());
+
+    return this->saveFile(MAESTRO_MODULES_FILE, maestroFileContent);
+}
+
+std::vector<maestro_config> AstrOsStorageManager::loadMaestroConfigs()
+{
+    std::string maestroFile = this->readFile(MAESTRO_MODULES_FILE);
+
+    if (maestroFile.empty() || maestroFile == "error")
+    {
+        ESP_LOGW(TAG, "Failed to load maestro configs, file not found or empty");
+        return std::vector<maestro_config>(); // return empty list if file is empty or not found
+    }
+
+    return AstrOsFileUtils::parseMaestroConfig(maestroFile);
+}
+
+bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int arraySize)
+{
+
+    if (arraySize <= 0 || servos == nullptr)
+    {
+        ESP_LOGE(TAG, "Invalid array size or servos pointer");
+        return false;
+    }
+
+    std::string servoFile = this->readFile(MAESTRO_FOLDER_PATH + std::to_string(idx) + CFIG_SUFFIX);
+
+    if (servoFile.empty() || servoFile == "error")
+    {
+        ESP_LOGE(TAG, "Failed to load servo configs for module %d, file not found or empty", idx);
+        return false;
+    }
+
+    std::vector<servo_channel> channels = AstrOsFileUtils::parseServoConfig(servoFile);
+
+    if (channels.size() > arraySize)
+    {
+        ESP_LOGE(TAG, "Not enough space in servos array, required: %zu, available: %d", channels.size(), arraySize);
+        return false;
+    }
+
+    std::copy(channels.begin(), channels.end(), servos);
+
+    return true;
+
+    /*
+   // =============== old way ===============
+   // == keeping if we need to performance ==
+
+   int valueCounter = 0;
+   int start = 0;
+
+   for (int i = 0; i < msg.size(); i++)
+   {
+       // if at separator or end of string, convert val to int and reset val
+       if (msg[i] == '|' || i == msg.size() - 1)
+       {
+           // if we are at the end of the string, we need to increment i so we can get the last value
+           if (i == msg.size() - 1)
+           {
+               i++;
+           }
+
+           // id|set|min|max|home|inverted
+           // nn:n:nnnn:nnnn:nnnn:n
+           // is between min and max servo config length?
+           if (i - start < 11 || i - start > 21)
+           {
+               ESP_LOGE(TAG, "Failed to save servo config, invalid config length, config: %s", msg.substr(start, i - start).c_str());
+               return false;
+           }
+
+           // config must end with a digit
+           if (!isdigit(msg[i - 1]))
+           {
+               ESP_LOGE(TAG, "Failed to save servo config, config must end with a digit");
+               return false;
+           }
+
+           servo_channel ch;
+           auto parts = AstrOsStringUtils::splitString(msg.substr(start, i - start), ':');
+
+           // servo config must be 6 parts
+           if (parts.size() != 6)
+           {
+               ESP_LOGE(TAG, "Failed to save servo config, invalid config parts: %d != 5", parts.size());
+               return false;
+           }
+
+           ch.id = std::stoi(parts[0]);
+           ch.enabled = std::stoi(parts[1]);
+           ch.minPos = std::stoi(parts[2]);
+           ch.maxPos = std::stoi(parts[3]);
+           ch.home = std::stoi(parts[4]);
+           ch.inverted = std::stoi(parts[5]);
+
+           if (ch.id == -1 || ch.id > 31)
+           {
+               ESP_LOGE(TAG, "Failed to save servo config, invalid servo id: %d", ch.id);
+               return false;
+           }
+
+           success = nvsSaveServoConfig(0, ch);
+
+           if (!success)
+           {
+               ESP_LOGE(TAG, "Failed to save servo config");
+               return false;
+           }
+
+           start = i + 1;
+           valueCounter++;
+       }
+   }
+
+   // there should be 24 servo configs
+   if (valueCounter != 24)
+   {
+       ESP_LOGE(TAG, "Failed to save servo config, invalid servo count: %d != 24", valueCounter);
+       return false;
+   }
+   */
+}
+
+#pragma endregion Maestro Configs
+#pragma region GPIO Configs
+
+bool AstrOsStorageManager::saveGpioConfig(std::string config)
+{
+    return this->saveFile(GPIO_FILE, config);
+}
+
+std::vector<bool> AstrOsStorageManager::loadGpioConfigs()
+{
+    std::vector<bool> results;
+
+    std::string gpioFile = this->readFile(GPIO_FILE);
+
+    if (gpioFile.empty() || gpioFile == "error")
+    {
+        ESP_LOGW(TAG, "Failed to load gpio configs, file not found or empty");
+
+        // default to all false
+        for (int i = 0; i < 10; i++)
+        {
+            results.push_back(false);
+        }
+        return results;
+    }
+
+    auto parts = AstrOsStringUtils::splitString(gpioFile, '|');
+
+    for (const auto &part : parts)
+    {
+        // 1 is default high, 0 is default low
+        results.push_back(part == "1");
+    }
+
+    return results;
+}
+
+#pragma endregion GPIO Configs
+#pragma region ESP-NOW
 
 bool AstrOsStorageManager::saveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
 {
@@ -269,9 +456,8 @@ std::vector<std::string> AstrOsStorageManager::listFiles(std::string folder)
 #endif
 }
 
-/**************************************************************
- * SD Card methods
- ***************************************************************/
+#pragma endregion ESP - NOW
+#pragma region SD CARD
 
 bool AstrOsStorageManager::formatSdCard()
 {
@@ -307,7 +493,9 @@ bool AstrOsStorageManager::formatSdCard()
 
     free(workbuf);
 
-    mkdir("/sdcard/scripts", 0777);
+    mkdir(SCRIPTS_FOLDER, 0777);
+    mkdir(MAESTRO_FOLDER, 0777);
+    mkdir(GPIO_FOLDER, 0777);
 
     ESP_LOGI(TAG, "Successfully formatted the SD card");
 
@@ -376,7 +564,7 @@ esp_err_t AstrOsStorageManager::mountSdCard()
         return err;
     }
 
-    ESP_LOGI(TAG, "FIle system mounted");
+    ESP_LOGI(TAG, "File system mounted");
 
     sdmmc_card_print_info(stdout, card);
 
@@ -420,7 +608,7 @@ bool AstrOsStorageManager::deleteFileSd(std::string filename)
 
     if (access(path.c_str(), F_OK) == 0)
     {
-        ESP_LOGI(TAG, "File %s exists already. Deleting...", path.c_str());
+        ESP_LOGI(TAG, "File %s exists. Deleting...", path.c_str());
         unlink(path.c_str());
     }
 
@@ -503,9 +691,8 @@ std::vector<std::string> AstrOsStorageManager::listFilesSd(std::string folder)
     return result;
 }
 
-/**************************************************************
- * SPIFFS methods
- ***************************************************************/
+#pragma endregion SD CARD
+#pragma region SPIFFS
 
 bool AstrOsStorageManager::saveFileSpiffs(std::string filename, std::string data)
 {
@@ -682,9 +869,8 @@ std::vector<std::string> AstrOsStorageManager::listFilesSpiffs(std::string folde
     return result;
 }
 
-/**************************************************************
- * Utility methods
- ***************************************************************/
+#pragma endregion SPIFFS
+#pragma region Utility
 
 std::string AstrOsStorageManager::setFilePath(std::string filename)
 {
@@ -693,3 +879,5 @@ std::string AstrOsStorageManager::setFilePath(std::string filename)
 
     return out;
 }
+
+#pragma endregion Utility

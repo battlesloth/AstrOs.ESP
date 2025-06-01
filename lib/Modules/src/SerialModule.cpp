@@ -1,8 +1,7 @@
 #include <SerialModule.hpp>
-#include <AnimationCommand.hpp>
+#include <AnimationCommands.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_Esp.h>
-// #include <SoftwareSerial.h>
 
 #include <esp_system.h>
 #include <driver/uart.h>
@@ -17,8 +16,6 @@ static const int RX_BUF_SIZE = 1024;
 
 SerialModule SerialMod;
 
-// SwSerial *softSerial;
-
 SerialModule::SerialModule() {}
 
 SerialModule::~SerialModule() {}
@@ -30,32 +27,22 @@ esp_err_t SerialModule::Init(serial_config_t cfig)
     serialMutex = xSemaphoreCreateMutex();
     if (serialMutex == NULL)
     {
-        ESP_LOGE(TAG, "Failed to initialize the serial mutex");
+        ESP_LOGE(TAG, "Failed to initialize the serial mutex for port %d", cfig.port);
+        return ESP_FAIL;
     }
 
-    rx[0] = cfig.rxPin1;
-    rx[1] = cfig.rxPin2;
-    rx[2] = cfig.rxPin3;
+    this->port = cfig.port;
+    this->rx = cfig.rxPin;
+    this->tx = cfig.txPin;
+    this->defaultBaudrate = cfig.defaultBaudRate;
+    this->isMaster = cfig.isMaster;
 
-    tx[0] = cfig.txPin1;
-    tx[1] = cfig.txPin2;
-    tx[2] = cfig.txPin3;
-
-    baud[0] = cfig.baudRate1;
-    baud[1] = cfig.baudRate2;
-    baud[2] = cfig.baudRate3;
-
-    result = SerialModule::InstallSerial(UART_NUM_1, tx[0], rx[0], baud[0]);
+    result = SerialModule::InstallSerial(port, tx, rx, defaultBaudrate);
 
     if (result != ESP_OK)
     {
         return result;
     }
-
-    result = SerialModule::InstallSerial(UART_NUM_2, tx[1], rx[1], baud[1]);
-
-    // softSerial = sw_new((gpio_num_t)tx[2], (gpio_num_t)rx[2], true, 512);
-    // sw_open(softSerial, 9600);
 
     return result;
 }
@@ -100,15 +87,15 @@ void SerialModule::SendCommand(uint8_t *cmd)
 
     auto command = SerialCommand(std::string(reinterpret_cast<char *>(cmd)));
 
-    SerialModule::SendData(command.serialChannel, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()), command.GetValue().size());
+    SerialModule::SendData(command.baudRate, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()), command.GetValue().size());
 }
 
-void SerialModule::SendBytes(int ch, uint8_t *data, size_t size)
+void SerialModule::SendBytes(int baud, uint8_t *data, size_t size)
 {
-    SerialModule::SendData(ch, reinterpret_cast<const uint8_t *>(data), size);
+    SerialModule::SendData(baud, reinterpret_cast<const uint8_t *>(data), size);
 }
 
-void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
+void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
 {
     bool sent = false;
 
@@ -116,24 +103,26 @@ void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
     {
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
-            uart_port_t port;
-
-            switch (ch)
+            // don't change the baud rate if this is the master node
+            if (!this->isMaster)
             {
-            case 1:
-                port = UART_NUM_1;
-                break;
-            case 2:
-                port = UART_NUM_2;
-                break;
-            case 3:
-                // SerialModule::SoftSerialWrite(msg.c_str());
-                sent = true;
-                xSemaphoreGive(serialMutex);
-                return;
-            default:
-                port = UART_NUM_1;
-                break;
+
+                uint32_t currentBaud = 0;
+
+                auto err = uart_get_baudrate(port, &currentBaud);
+
+                if (logError(TAG, __FUNCTION__, __LINE__, err))
+                {
+                    ESP_LOGE(TAG, "Failed to get baudrate!");
+                }
+                else if (currentBaud != baud)
+                {
+                    err = uart_set_baudrate(port, baud);
+                    if (logError(TAG, __FUNCTION__, __LINE__, err))
+                    {
+                        ESP_LOGE(TAG, "Failed to set baudrate %d!", baud);
+                    }
+                }
             }
 
             const int txBytes = uart_write_bytes(port, data, size);
@@ -147,15 +136,3 @@ void SerialModule::SendData(int ch, const uint8_t *data, size_t size)
         }
     }
 }
-
-/*void SerialModule::SoftSerialWrite(const char *msg)
-{
-    int len = 0;
-    while (msg[len] != '\0')
-    {
-        sw_write(softSerial, msg[len]);
-        len++;
-    }
-    sw_write(softSerial, '\0');
-    ESP_LOGI(TAG, "Soft Serial Wrote %d characters", len);
-}*/

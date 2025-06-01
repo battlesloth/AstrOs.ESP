@@ -5,10 +5,24 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
+#include <bitset>
+#include <sstream>
+
+#define UNIT_SEPARATOR (char)0x1F
+#define RECORD_SEPARATOR (char)0x1E
+#define GROUP_SEPARATOR (char)0x1D
 
 class AstrOsStringUtils
 {
 public:
+    template <typename T>
+    static std::string toBinaryString(const T &x)
+    {
+        std::stringstream ss;
+        ss << std::bitset<sizeof(T) * 8>(x);
+        return ss.str();
+    }
+
     static std::string macToString(const uint8_t *mac)
     {
         char macStr[18] = {0};
@@ -40,6 +54,13 @@ public:
         std::vector<std::string> parts;
         auto start = 0U;
         auto end = str.find(delimiter);
+
+        if (end == std::string::npos)
+        {
+            parts.push_back(str);
+            return parts;
+        }
+
         while (end != std::string::npos)
         {
             parts.push_back(str.substr(start, end - start));
@@ -48,6 +69,55 @@ public:
         }
 
         parts.push_back(str.substr(start, end));
+
+        if (parts.back().empty())
+        {
+            parts.pop_back();
+        }
+
+        return parts;
+    }
+
+    /// @brief Files on Windows and Linux use different line endings, this function will split a string on both \n and \r\n
+    /// @param str
+    /// @return
+    static std::vector<std::string> splitStringOnLineEnd(std::string str)
+    {
+
+        std::string search = "\r\n";
+        std::string delimiter = "\n";
+
+        size_t pos = str.find(search);
+        while (pos != std::string::npos)
+        {
+            str.replace(pos, search.length(), delimiter);
+            pos = str.find(search, pos + delimiter.length());
+        }
+
+        std::vector<std::string> parts;
+        auto start = 0U;
+        auto end = str.find(delimiter);
+
+        if (end == std::string::npos)
+        {
+            parts.push_back(str);
+            return parts;
+        }
+
+        while (end != std::string::npos)
+        {
+            parts.push_back(str.substr(start, end - start));
+            start = end + delimiter.length();
+            end = str.find(delimiter, start);
+        }
+
+        parts.push_back(str.substr(start, end));
+
+        // if the last part is empty, remove it
+        if (parts.back().empty())
+        {
+            parts.pop_back();
+        }
 
         return parts;
     }
@@ -73,6 +143,15 @@ public:
         }
 
         return n;
+    }
+
+    template <typename... Args>
+    static std::string stringFormat(const std::string &format, Args &&...args)
+    {
+        auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
+        std::string output(size + 1, '\0');
+        std::sprintf(&output[0], format.c_str(), std::forward<Args>(args)...);
+        return output;
     }
 };
 

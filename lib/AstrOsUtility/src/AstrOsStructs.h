@@ -50,13 +50,33 @@ extern "C"
 
     typedef struct
     {
+        // 0 = send command, 1 = send bytes
+        int message_id;
+        int baudrate;
+        uint8_t *data;
+        size_t dataSize;
+    } queue_serial_msg_t;
+
+    typedef struct 
+    {
+        int idx;
+        int uartChannel;
+        int baudrate;
+    } maestro_config;
+    
+    typedef struct
+    {
         int id;
+        bool enabled;
+        bool isServo;
         int minPos;
         int maxPos;
+        int home;
         int currentPos;
         int requestedPos;
+        int lastPos;
         int speed;
-        bool set;
+        int acceleration;
         bool inverted;
         bool on;
     } servo_channel;

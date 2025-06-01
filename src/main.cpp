@@ -12,22 +12,25 @@
 #include <esp_event.h>
 #include <esp_random.h>
 #include <string.h>
+#include <map>
 
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AnimationController.hpp>
 #include <AnimationCommand.hpp>
 #include <AstrOsDisplay.hpp>
 #include <SerialModule.hpp>
-#include <ServoModule.hpp>
+#include <I2cMaster.hpp>
 #include <I2cModule.hpp>
 #include <GpioModule.hpp>
 #include <AstrOsUtility.h>
+
 #include <AstrOsUtility_Esp.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <guid.h>
+#include <MaestroModule.hpp>
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -41,16 +44,14 @@ static bool isMasterNode = false;
 static uart_port_t ASTRO_PORT = UART_NUM_0;
 static std::string rank = "Padawan";
 
-
 /**********************************
  * Time trackers
  **********************************/
-static uint64_t animation_loop_start = 0;
-static uint64_t animation_loop_end = 0;
-static uint64_t animation_loop_drift = 0;
+// static uint64_t animation_loop_start = 0;
+// static uint64_t animation_loop_end = 0;
+// static uint64_t animation_loop_drift = 0;
 
 static uint64_t lastHeartBeat = 0;
-
 
 /**********************************
  * queues
@@ -59,7 +60,8 @@ static uint64_t lastHeartBeat = 0;
 static QueueHandle_t animationQueue;
 static QueueHandle_t interfaceResponseQueue;
 static QueueHandle_t serviceQueue;
-static QueueHandle_t serialQueue;
+static QueueHandle_t serialCh1Queue;
+static QueueHandle_t serialCh2Queue;
 static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
 static QueueHandle_t gpioQueue;
@@ -101,9 +103,15 @@ static esp_timer_handle_t servoMoveTimer;
  **********************************/
 #define ASTROS_INTEFACE_BAUD_RATE (115200)
 
-#define BAUD_RATE_1 (9600)
-#define BAUD_RATE_2 (9600)
-#define BAUD_RATE_3 (9600)
+static SerialModule SerialChannel1;
+static SerialModule SerialChannel2;
+
+static std::map<int, MaestroModule *> maestroModules;
+
+// #define BAUD_RATE_1 (9600)
+
+// #define MAESTRO_UART_PORT UART_NUM_2
+// #define MAESTRO_BAUD_RATE (115200)
 
 /**********************************
  * I2C Settings
@@ -124,6 +132,8 @@ static esp_timer_handle_t servoMoveTimer;
 void init(void);
 
 static void loadConfig();
+static void loadMaestroConfigs();
+static void loadGpioConfig();
 
 // timers
 static void initTimers(void);
@@ -145,7 +155,8 @@ void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void interfaceResponseQueueTask(void *arg);
 void animationQueueTask(void *arg);
-void serialQueueTask(void *arg);
+void serialCh1QueueTask(void *arg);
+void serialCh2QueueTask(void *arg);
 void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void gpioQueueTask(void *arg);
@@ -164,6 +175,8 @@ static void handleServoTest(astros_interface_response_t msg);
 
 esp_err_t mountSdCard(void);
 
+#pragma region Main()
+
 extern "C"
 {
     void app_main(void);
@@ -178,7 +191,8 @@ void app_main()
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
     xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue, 10, NULL, 1);
-    xTaskCreatePinnedToCore(&serialQueueTask, "serial_queue_task", 3072, (void *)serialQueue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&serialCh1QueueTask, "serial_ch1_queue_task", 4096, (void *)serialCh1Queue, 9, NULL, 1);
+    xTaskCreatePinnedToCore(&serialCh2QueueTask, "serial_ch2_queue_task", 4096, (void *)serialCh2Queue, 9, NULL, 1);
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
@@ -188,7 +202,13 @@ void app_main()
     xTaskCreatePinnedToCore(&espnowQueueTask, "espnow_queue_task", 4096, (void *)espnowQueue, 10, NULL, 0);
 
     initTimers();
+
+    loadMaestroConfigs();
+    ESP_LOGI(TAG, "Maestro Modules initiated");
 }
+
+#pragma endregion
+#pragma region Init()
 
 void init(void)
 {
@@ -205,7 +225,8 @@ void init(void)
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
     interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
-    serialQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    serialCh1Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
+    serialCh2Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
     servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
@@ -217,45 +238,40 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialQueue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
-    ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t) SDA_PIN, (gpio_num_t) SCL_PIN));
+    ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
     ESP_LOGI(TAG, "I2C Master initiated");
 
-    serial_config_t serialConf;
+    serial_config_t serialConf1;
 
     if (isMasterNode)
     {
-        serialConf.baudRate1 = ASTROS_INTEFACE_BAUD_RATE;
+        serialConf1.isMaster = true;
+        serialConf1.defaultBaudRate = ASTROS_INTEFACE_BAUD_RATE;
     }
     else
     {
-        serialConf.baudRate1 = 9600;
+        serialConf1.defaultBaudRate = 9600;
     }
 
-    serialConf.txPin1 = TX_PIN_1;
-    serialConf.rxPin1 = RX_PIN_1;
-    serialConf.baudRate2 = BAUD_RATE_2;
-    serialConf.txPin2 = TX_PIN_2;
-    serialConf.rxPin2 = RX_PIN_2;
-    serialConf.baudRate3 = BAUD_RATE_3;
-    serialConf.txPin3 = TX_PIN_3;
-    serialConf.rxPin3 = RX_PIN_3;
+    serialConf1.port = UART_NUM_1;
+    serialConf1.txPin = TX_PIN_1;
+    serialConf1.rxPin = RX_PIN_1;
 
-    ESP_ERROR_CHECK(SerialMod.Init(serialConf));
-    ESP_LOGI(TAG, "Serial Module initiated");
+    ESP_ERROR_CHECK(SerialChannel1.Init(serialConf1));
+    ESP_LOGI(TAG, "Serial Channel 1 initiated");
 
-    servo_module_config_t servoConfig = {
-        .board0Addr = SERVO_BOARD_0_ADDR,
-        .board0Freq = 50,
-        .board0Slop = 3,
-        .board1Addr = SERVO_BOARD_1_ADDR,
-        .board1Freq = 50,
-        .board1Slop = 4};
+    serial_config_t serialConf2;
+    serialConf2.defaultBaudRate = 9600;
+    serialConf2.isMaster = false;
+    serialConf2.port = UART_NUM_2;
+    serialConf2.txPin = TX_PIN_2;
+    serialConf2.rxPin = RX_PIN_2;
 
-    ESP_ERROR_CHECK(ServoMod.Init(i2cMaster, servoConfig));
-    ESP_LOGI(TAG, "Servo Module initiated");
+    ESP_ERROR_CHECK(SerialChannel2.Init(serialConf2));
+    ESP_LOGI(TAG, "Serial Channel 2 initiated");
 
     ESP_ERROR_CHECK(I2cMod.Init());
     ESP_LOGI(TAG, "I2C Module initiated");
@@ -316,9 +332,8 @@ void init(void)
     AstrOs_Display.setDefault(rank, "", name);
 }
 
-/******************************************
- * timers
- *****************************************/
+#pragma endregion
+#pragma region Timers
 
 static void initTimers(void)
 {
@@ -364,7 +379,7 @@ static void initTimers(void)
     ESP_LOGI("init_timer", "Started maintenance timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoMoveTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 500 * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
     ESP_LOGI("init_timer", "Started servo move timer");
 }
 
@@ -439,31 +454,61 @@ static void animationTimerCallback(void *arg)
     {
         CommandTemplate *cmd = AnimationCtrl.getNextCommandPtr();
 
-        CommandType ct = cmd->type;
+        if (cmd == nullptr)
+        {
+            ESP_LOGE(TAG, "Annimation Command pointer is null");
+            return;
+        }
+
+        MODULE_TYPE ct = cmd->type;
         std::string val = cmd->val;
+        int module = cmd->module;
 
         switch (ct)
         {
-        case CommandType::Kangaroo:
-        case CommandType::GenericSerial:
+        case MODULE_TYPE::NONE:
+        {
+            ESP_LOGI(TAG, "NONE command queued, assume buffer?");
+            break;
+        }
+        case MODULE_TYPE::KANGAROO:
+        case MODULE_TYPE::GENERIC_SERIAL:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
-            queue_msg_t msg;
-            msg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(msg.data, val.c_str(), val.size());
-            msg.data[val.size()] = '\0';
+            queue_serial_msg_t serialMsg;
+            serialMsg.message_id = 0;
+            serialMsg.data = (uint8_t *)malloc(val.size() + 1);
+            memcpy(serialMsg.data, val.c_str(), val.size());
+            serialMsg.data[val.size()] = '\0';
 
-            if (xQueueSend(serialQueue, &msg, pdMS_TO_TICKS(2000)) != pdTRUE)
+            if (module == 1)
             {
-                ESP_LOGW(TAG, "Send serial queue fail");
-                free(msg.data);
+                if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send serial queue fail");
+                    free(serialMsg.data);
+                }
+            }
+            else if (module == 2)
+            {
+                if (xQueueSend(serialCh2Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                {
+                    ESP_LOGW(TAG, "Send serial queue fail");
+                    free(serialMsg.data);
+                }
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid serial module %d", module);
+                free(serialMsg.data);
             }
             break;
         }
-        case CommandType::PWM:
+        case MODULE_TYPE::MAESTRO:
         {
-            ESP_LOGI(TAG, "PWM command val: %s", val.c_str());
+            ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
             queue_msg_t servoMsg;
+            servoMsg.message_id = module;
             servoMsg.data = (uint8_t *)malloc(val.size() + 1);
             memcpy(servoMsg.data, val.c_str(), val.size());
             servoMsg.data[val.size()] = '\0';
@@ -475,10 +520,11 @@ static void animationTimerCallback(void *arg)
             }
             break;
         }
-        case CommandType::I2C:
+        case MODULE_TYPE::I2C:
         {
             ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
             queue_msg_t i2cMsg;
+            i2cMsg.message_id = 0;
             i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
             memcpy(i2cMsg.data, val.c_str(), val.size());
             i2cMsg.data[val.size()] = '\0';
@@ -490,7 +536,7 @@ static void animationTimerCallback(void *arg)
             }
             break;
         }
-        case CommandType::Gpio:
+        case MODULE_TYPE::GPIO:
         {
             ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
             queue_msg_t gpioMsg;
@@ -519,26 +565,30 @@ static void animationTimerCallback(void *arg)
     }
 }
 
-
 static void servoMoveTimerCallback(void *arg)
 {
     // get time at start of loop
-    auto loopStart = esp_timer_get_time();
+    // auto loopStart = esp_timer_get_time();
 
-    ServoMod.MoveServos();
+    // ServoMod.MoveServos();
+
+    for (auto maestroMod : maestroModules)
+    {
+        maestroMod.second->CheckServos(300);
+    }
 
     // get time at end of loop
-    auto loopEnd = esp_timer_get_time();
+    // auto loopEnd = esp_timer_get_time();
 
     // start loop  so it will trigger 500 ms from the start of the loop
-    int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
-    auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
+    // int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
+    // auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
+    // ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
 }
 
-/******************************************
- * tasks
- *****************************************/
+#pragma endregion
+#pragma region Tasks
 
 void buttonListenerTask(void *arg)
 {
@@ -726,8 +776,10 @@ void interfaceResponseQueueTask(void *arg)
                 AstrOs_SerialMsgHandler.sendBasicAckNakResponse(responseType, msg.originationMsgId, msg.peerMac, msg.peerName, msg.message);
                 break;
             }
-            case AstrOsInterfaceResponseType::SERVO_TEST:{
+            case AstrOsInterfaceResponseType::SERVO_TEST:
+            {
                 handleServoTest(msg);
+                break;
             }
             case AstrOsInterfaceResponseType::SEND_SERVO_TEST:
             {
@@ -835,6 +887,7 @@ void serviceQueueTask(void *arg)
                 ESP_LOGI(TAG, "Formatting SD card");
                 std::string data(reinterpret_cast<char *>(msg.data), msg.dataSize);
                 handleFormatSD(data);
+                break;
             }
             case SERVICE_COMMAND::SHOW_DISPLAY:
             {
@@ -866,7 +919,7 @@ void serviceQueueTask(void *arg)
                 serialMsg.data[msg.dataSize] = '\n';
                 serialMsg.dataSize = msg.dataSize + 1;
 
-                if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+                if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
                 {
                     ESP_LOGW(TAG, "Sending AstrOs Interface message to serial queue fail");
                     free(serialMsg.data);
@@ -874,9 +927,11 @@ void serviceQueueTask(void *arg)
 
                 break;
             }
-            case SERVICE_COMMAND::RELOAD_SERVO_CONFIG:
+            case SERVICE_COMMAND::RELOAD_CONFIG:
             {
-                ServoMod.LoadServoConfig();
+                ESP_LOGI(TAG, "Reloading config");
+                loadMaestroConfigs();
+                loadGpioConfig();
                 break;
             }
             default:
@@ -986,33 +1041,68 @@ void animationQueueTask(void *arg)
 }
 */
 
-void serialQueueTask(void *arg)
+void serialCh1QueueTask(void *arg)
 {
-    QueueHandle_t serialQueue;
+    QueueHandle_t serialCh1Queue;
 
-    serialQueue = (QueueHandle_t)arg;
-    queue_msg_t msg;
+    serialCh1Queue = (QueueHandle_t)arg;
+    queue_serial_msg_t msg;
 
     while (1)
     {
-        if (xQueueReceive(serialQueue, &(msg), 0))
+        if (xQueueReceive(serialCh1Queue, &(msg), 0))
         {
             auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
             if (highWaterMark < 500)
             {
-                ESP_LOGW(TAG, "Serial Queue Stack HWM: %d", highWaterMark);
+                ESP_LOGW(TAG, "Serial CH1 Queue Stack HWM: %d", highWaterMark);
             }
 
             if (msg.message_id == 0)
             {
-                SerialMod.SendCommand(msg.data);
+                SerialChannel1.SendCommand(msg.data);
             }
             else if (msg.message_id == 1)
             {
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
-                SerialMod.SendBytes(1, msg.data, msg.dataSize);
+                SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
+            }
+
+            free(msg.data);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void serialCh2QueueTask(void *arg)
+{
+    QueueHandle_t serialCh2Queue;
+
+    serialCh2Queue = (QueueHandle_t)arg;
+    queue_serial_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(serialCh2Queue, &(msg), 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Serial CH2 Queue Stack HWM: %d", highWaterMark);
+            }
+
+            if (msg.message_id == 0)
+            {
+                SerialChannel2.SendCommand(msg.data);
+            }
+            else if (msg.message_id == 1)
+            {
+                std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
+
+                ESP_LOGD(TAG, "Serial message: %s", str.c_str());
+                SerialChannel2.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
             free(msg.data);
@@ -1039,8 +1129,15 @@ void servoQueueTask(void *arg)
             }
 
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
-            ServoMod.QueueCommand(msg.data);
 
+            if (maestroModules.find(msg.message_id) == maestroModules.end())
+            {
+                ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
+            }
+            else
+            {
+                maestroModules.at(msg.message_id)->QueueCommand(msg.data);
+            }
             free(msg.data);
         }
 
@@ -1065,7 +1162,7 @@ void i2cQueueTask(void *arg)
                 ESP_LOGW(TAG, "I2C Queue Stack HWM: %d", highWaterMark);
             }
 
-            ESP_LOGD(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+            ESP_LOGI(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
 
             if (msg.message_id == 0)
             {
@@ -1200,9 +1297,8 @@ void espnowQueueTask(void *arg)
     }
 }
 
-/**********************************
- * Configuration Methods
- *********************************/
+#pragma endregion
+#pragma region Config Methods
 
 static void loadConfig()
 {
@@ -1212,7 +1308,7 @@ static void loadConfig()
     {
         ESP_LOGI(TAG, "Service config file: %s", cfig.c_str());
 
-        auto lines = AstrOsStringUtils::splitString(cfig, '\n');
+        auto lines = AstrOsStringUtils::splitStringOnLineEnd(cfig);
 
         for (auto line : lines)
         {
@@ -1222,9 +1318,23 @@ static void loadConfig()
             {
                 if (parts[0] == "isMasterNode")
                 {
-                    isMasterNode = parts[1] == "true";
-                    ASTRO_PORT = isMasterNode ? UART_NUM_1 : UART_NUM_0;
-                    rank = isMasterNode ? "Master" : "Padawan";
+                    
+                    if (parts[1].find("true") != std::string::npos)
+                    {
+                        ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
+                        isMasterNode = true;
+                        ASTRO_PORT = UART_NUM_1;
+                        rank = "Master";
+                        ESP_LOGI(TAG, "%s node using UART channel 1", rank.c_str());
+                    }
+                    else
+                    {
+                        ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
+                        isMasterNode = false;
+                        ASTRO_PORT = UART_NUM_0;
+                        rank = "Padawan";
+                        ESP_LOGI(TAG, "%s node using UART channel 0", rank.c_str());
+                    }
                 }
             }
         }
@@ -1235,9 +1345,110 @@ static void loadConfig()
     }
 }
 
-/**********************************
- * callbacks
- *********************************/
+
+static void loadMaestroConfigs()
+{
+
+    ESP_LOGI(TAG, "Loading Maestro configurations");
+
+    // get list of current maestro modules
+    std::vector<int> currentModules;
+    for (auto maestroMod : maestroModules)
+    {
+        currentModules.push_back(maestroMod.first);
+    }
+
+    ESP_LOGI(TAG, "Current Maestro module count: %d",currentModules.size());
+
+    // load maestro configurations from storage
+    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
+
+    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
+
+    for (auto &cfg : maestroConfigs)
+    {
+        // if the module is already loaded, update it and remove from the list
+        if (maestroModules.find(cfg.idx) != maestroModules.end())
+        {
+            // only allow modules to use uart 1 if this is not a master node
+            if (cfg.uartChannel == 1 && isMasterNode)
+            {
+                ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
+                continue; // skip invalid configurations
+            }
+            else if (cfg.uartChannel == 1)
+            {
+                maestroModules[cfg.idx]->UpdateConfig(serialCh1Queue, cfg.baudrate);
+            }
+            else if (cfg.uartChannel == 2)
+            {
+                maestroModules[cfg.idx]->UpdateConfig(serialCh2Queue, cfg.baudrate);
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid UART channel %d for Maestro module %d", cfg.uartChannel, cfg.idx);
+                continue; // skip invalid configurations
+            }
+            currentModules.erase(std::remove(currentModules.begin(), currentModules.end(), cfg.idx), currentModules.end());
+        }
+        else
+        {
+            // if the module is not loaded, create a new one
+            if (cfg.uartChannel == 1 && isMasterNode)
+            {
+                ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
+                continue; // skip invalid configurations
+            }
+            if (cfg.uartChannel == 1)
+            {
+                MaestroModule *maestroMod = new MaestroModule(serialCh1Queue, cfg.idx, cfg.baudrate);
+                maestroModules[cfg.idx] = maestroMod;
+            }
+            else if (cfg.uartChannel == 2)
+            {
+                MaestroModule *maestroMod = new MaestroModule(serialCh2Queue, cfg.idx, cfg.baudrate);
+                maestroModules[cfg.idx] = maestroMod;
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Invalid UART channel %d for Maestro module %d", cfg.uartChannel, cfg.idx);
+                continue; // skip invalid configurations
+            }
+        }
+    }
+
+    // remove any modules that are no longer in the configuration
+    for (int idx : currentModules)
+    {
+        ESP_LOGI(TAG, "Removing Maestro module: %d", idx);
+        if (maestroModules.find(idx) != maestroModules.end())
+        {
+            delete maestroModules[idx];
+            maestroModules.erase(idx);
+        }
+    }
+
+    ESP_LOGI(TAG, "Maestro module count: %d", maestroModules.size());
+
+    // load servo configurations from storage
+    for (auto maestroMod : maestroModules)
+    {
+        maestroMod.second->LoadConfig();
+    }
+}
+
+
+void loadGpioConfig(){
+
+    ESP_LOGI(TAG, "Loading GPIO configurations");
+
+    auto config = AstrOs_Storage.loadGpioConfigs();
+    GpioMod.UpdateConfig(config);
+}
+
+
+#pragma endregion
+#pragma region Callbacks
 
 bool cachePeer(espnow_peer_t peer)
 {
@@ -1302,9 +1513,9 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     }
 }
 
-/**********************************
- * Interface Response Methods
- *********************************/
+#pragma endregion
+#pragma region Interface Methods
+
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type)
 {
     switch (type)
@@ -1333,6 +1544,8 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
     }
 }
 
+
+
 static void handleRegistrationSync(astros_interface_response_t msg)
 {
     std::vector<astros_peer_data_t> data = {};
@@ -1353,8 +1566,8 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 
 static void handleSetConfig(astros_interface_response_t msg)
 {
-    auto success = AstrOs_Storage.saveServoConfig(msg.message);
-
+    auto success = AstrOs_Storage.saveModuleConfigs(msg.message);
+    
     std::string fingerprint;
 
     if (success)
@@ -1373,13 +1586,15 @@ static void handleSetConfig(astros_interface_response_t msg)
 
         // send servo reload message
         queue_svc_cmd_t reloadMsg;
-        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_SERVO_CONFIG;
+        reloadMsg.cmd = SERVICE_COMMAND::RELOAD_CONFIG;
         reloadMsg.data = nullptr;
 
         if (xQueueSend(serviceQueue, &reloadMsg, pdMS_TO_TICKS(500)) != pdTRUE)
         {
             ESP_LOGW(TAG, "Send servo reload fail");
         }
+    } else {
+        ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
     if (isMasterNode)
@@ -1490,18 +1705,27 @@ static void handleFormatSD(std::string id)
 static void handleServoTest(astros_interface_response_t msg)
 {
     auto message = std::string(msg.message);
-    auto parts = AstrOsStringUtils::splitString(message, UNIT_SEPARATOR);
+    auto parts = AstrOsStringUtils::splitString(message, ':');
 
-    if (parts.size() != 3)
+    if (parts.size() != 4)
     {
         ESP_LOGE(TAG, "Invalid servo test message: %s", message.c_str());
     }
     else
     {
-        int board= std::stoi(parts[0]);
-        int servo = std::stoi(parts[1]);
-        int ms = std::stoi(parts[2]);
-        ServoMod.SetServoPosition(board, servo, ms);
+        // parts[0] reserverd for module type
+        int idx = std::stoi(parts[1]);
+        int servo = std::stoi(parts[2]);
+        int ms = std::stoi(parts[3]);
+
+        if (maestroModules.find(idx) == maestroModules.end())
+        {
+            ESP_LOGE(TAG, "Maestro module %d not found", idx);
+        }
+        else
+        {
+            maestroModules.at(idx)->SetServoPosition(servo, ms);
+        }
     }
 
     if (isMasterNode)

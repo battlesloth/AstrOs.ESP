@@ -1,5 +1,5 @@
 #include <GpioModule.hpp>
-#include <AnimationCommand.hpp>
+#include <AnimationCommands.hpp>
 #include <AstrOsUtility_ESP.h>
 
 #include <esp_log.h>
@@ -44,6 +44,38 @@ esp_err_t GpioModule::Init(std::vector<int> channels)
     }
 
     return result;
+}
+
+void GpioModule::UpdateConfig(std::vector<bool> config)
+{
+
+    this->defaults.clear();
+
+    for (size_t i = 0; i < config.size(); i++)
+    {
+        this->defaults.push_back(config.at(i));
+    }
+
+    this->DefaultGpios();
+}
+
+void GpioModule::DefaultGpios()
+{
+    for (size_t i = 0; i < this->gpioChannels.size(); i++)
+    {
+        if (
+            this->defaults.at(i) != -1 &&
+            this->gpioChannels.at(i) != -1)
+        {
+            gpio_set_level(
+                static_cast<gpio_num_t>(this->gpioChannels.at(i)),
+                this->defaults.at(i));
+        } else if (this->gpioChannels.at(i) != -1){
+            gpio_set_level(
+                static_cast<gpio_num_t>(this->gpioChannels.at(i)),
+                false);
+        }
+    }
 }
 
 void GpioModule::SendCommand(uint8_t *cmd)

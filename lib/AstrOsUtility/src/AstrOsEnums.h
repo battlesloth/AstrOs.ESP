@@ -7,11 +7,21 @@ extern "C"
 
     typedef enum
     {
+        NONE,
+        MAESTRO,
+        I2C,
+        GENERIC_SERIAL,
+        KANGAROO,
+        GPIO
+    } MODULE_TYPE;
+
+    typedef enum
+    {
         SHOW_DISPLAY,
         ESPNOW_DISCOVERY_MODE_ON,
         ESPNOW_DISCOVERY_MODE_OFF,
         ASTROS_INTERFACE_MESSAGE,
-        RELOAD_SERVO_CONFIG,
+        RELOAD_CONFIG,
         FORMAT_SD
     } SERVICE_COMMAND;
 

@@ -1,5 +1,4 @@
 #include "AstrOsSerialMessageService.hpp"
-#include "AstrOsMessageUtil.hpp"
 #include <AstrOsStringUtils.hpp>
 
 #include <cmath>
@@ -7,8 +6,6 @@
 #include <sstream>
 #include <cstring>
 #include <cstdint>
-
-static const char *TAG = "AstrOsSerialMessageService";
 
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
