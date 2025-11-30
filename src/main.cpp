@@ -31,6 +31,7 @@
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <guid.h>
 #include <MaestroModule.hpp>
+#include "TimerCallbacks/TimerCallbacks.hpp"
 
 static const char *TAG = AstrOsConstants::ModuleName;
 
@@ -390,6 +391,15 @@ static void pollingTimerCallback(void *arg)
     lastHeartBeat = now;
     ESP_LOGI(TAG, "Heartbeat, %d milliseconds since last", seconds);
 
+    pollingCallback(
+        isMasterNode,
+        discoveryMode,
+        espnowQueue,
+        polling,
+        displayTimeout);
+
+    /*
+
     // only send register requests during discovery mode
     if (isMasterNode && !discoveryMode)
     {
@@ -439,6 +449,7 @@ static void pollingTimerCallback(void *arg)
             AstrOs_Display.displayClear();
         }
     }
+    */
 }
 
 static void maintenanceTimerCallback(void *arg)
@@ -454,6 +465,14 @@ static void animationTimerCallback(void *arg)
     {
         CommandTemplate *cmd = AnimationCtrl.getNextCommandPtr();
 
+        animationCallback(
+            cmd,
+            serialCh1Queue,
+            serialCh2Queue,
+            servoQueue,
+            i2cQueue,
+            gpioQueue);
+        /*
         if (cmd == nullptr)
         {
             ESP_LOGE(TAG, "Annimation Command pointer is null");
@@ -555,6 +574,7 @@ static void animationTimerCallback(void *arg)
             break;
         }
 
+        */
         delete (cmd);
 
         ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
@@ -754,7 +774,7 @@ void interfaceResponseQueueTask(void *arg)
                 queue_svc_cmd_t cmd;
                 cmd.cmd = SERVICE_COMMAND::FORMAT_SD;
                 cmd.data = (uint8_t *)malloc(id.size() + 1); // dummy data
-                memccpy(cmd.data, id.c_str(), 0, id.size());
+                memcpy(cmd.data, id.c_str(), id.size());
                 cmd.data[id.size()] = '\0';
                 cmd.dataSize = id.size() + 1;
 
@@ -1318,7 +1338,7 @@ static void loadConfig()
             {
                 if (parts[0] == "isMasterNode")
                 {
-                    
+
                     if (parts[1].find("true") != std::string::npos)
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
@@ -1345,7 +1365,6 @@ static void loadConfig()
     }
 }
 
-
 static void loadMaestroConfigs()
 {
 
@@ -1358,7 +1377,7 @@ static void loadMaestroConfigs()
         currentModules.push_back(maestroMod.first);
     }
 
-    ESP_LOGI(TAG, "Current Maestro module count: %d",currentModules.size());
+    ESP_LOGI(TAG, "Current Maestro module count: %d", currentModules.size());
 
     // load maestro configurations from storage
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
@@ -1437,15 +1456,14 @@ static void loadMaestroConfigs()
     }
 }
 
-
-void loadGpioConfig(){
+void loadGpioConfig()
+{
 
     ESP_LOGI(TAG, "Loading GPIO configurations");
 
     auto config = AstrOs_Storage.loadGpioConfigs();
     GpioMod.UpdateConfig(config);
 }
-
 
 #pragma endregion
 #pragma region Callbacks
@@ -1544,8 +1562,6 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
     }
 }
 
-
-
 static void handleRegistrationSync(astros_interface_response_t msg)
 {
     std::vector<astros_peer_data_t> data = {};
@@ -1567,7 +1583,7 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 static void handleSetConfig(astros_interface_response_t msg)
 {
     auto success = AstrOs_Storage.saveModuleConfigs(msg.message);
-    
+
     std::string fingerprint;
 
     if (success)
@@ -1593,7 +1609,9 @@ static void handleSetConfig(astros_interface_response_t msg)
         {
             ESP_LOGW(TAG, "Send servo reload fail");
         }
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
