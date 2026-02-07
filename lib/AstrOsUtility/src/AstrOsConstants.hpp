@@ -7,7 +7,7 @@ namespace AstrOsConstants
     /***********************************
      *  Module
      ***********************************/
-    constexpr const char *Version = "v1.0.0";
+    constexpr const char *Version = "v1.0.0-dev2";
 
     constexpr const char *ModuleName = "AstrOs-esp32";
     constexpr const char *SerialNumber = "0001";

@@ -475,11 +475,32 @@ static void animationTimerCallback(void *arg)
         case MODULE_TYPE::GENERIC_SERIAL:
         {
             ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
+
+            // replace any occurances of \n with actual new line character
+            std::string formatted;
+            for (size_t i = 0; i < val.size(); i++)
+            {
+                if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'n')
+                {
+                    formatted += '\n';
+                    i++; // skip the 'n'
+                }
+                else if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'r')
+                {
+                    formatted += '\r';
+                    i++; // skip the 'r'
+                }
+                else
+                {
+                    formatted += val[i];
+                }
+            }
+
             queue_serial_msg_t serialMsg;
             serialMsg.message_id = 0;
-            serialMsg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(serialMsg.data, val.c_str(), val.size());
-            serialMsg.data[val.size()] = '\0';
+            serialMsg.data = (uint8_t *)malloc(formatted.size() + 1);
+            memcpy(serialMsg.data, formatted.c_str(), formatted.size());
+            serialMsg.data[formatted.size()] = '\0';
 
             if (module == 1)
             {
@@ -1318,7 +1339,7 @@ static void loadConfig()
             {
                 if (parts[0] == "isMasterNode")
                 {
-                    
+
                     if (parts[1].find("true") != std::string::npos)
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
@@ -1345,7 +1366,6 @@ static void loadConfig()
     }
 }
 
-
 static void loadMaestroConfigs()
 {
 
@@ -1358,7 +1378,7 @@ static void loadMaestroConfigs()
         currentModules.push_back(maestroMod.first);
     }
 
-    ESP_LOGI(TAG, "Current Maestro module count: %d",currentModules.size());
+    ESP_LOGI(TAG, "Current Maestro module count: %d", currentModules.size());
 
     // load maestro configurations from storage
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
@@ -1437,15 +1457,14 @@ static void loadMaestroConfigs()
     }
 }
 
-
-void loadGpioConfig(){
+void loadGpioConfig()
+{
 
     ESP_LOGI(TAG, "Loading GPIO configurations");
 
     auto config = AstrOs_Storage.loadGpioConfigs();
     GpioMod.UpdateConfig(config);
 }
-
 
 #pragma endregion
 #pragma region Callbacks
@@ -1544,8 +1563,6 @@ static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType 
     }
 }
 
-
-
 static void handleRegistrationSync(astros_interface_response_t msg)
 {
     std::vector<astros_peer_data_t> data = {};
@@ -1567,7 +1584,7 @@ static void handleRegistrationSync(astros_interface_response_t msg)
 static void handleSetConfig(astros_interface_response_t msg)
 {
     auto success = AstrOs_Storage.saveModuleConfigs(msg.message);
-    
+
     std::string fingerprint;
 
     if (success)
@@ -1593,7 +1610,9 @@ static void handleSetConfig(astros_interface_response_t msg)
         {
             ESP_LOGW(TAG, "Send servo reload fail");
         }
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
