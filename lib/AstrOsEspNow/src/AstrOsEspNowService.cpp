@@ -9,6 +9,7 @@
 #include <string.h>
 #include <string>
 #include <sstream>
+#include <algorithm>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -462,22 +463,32 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
     std::string padewanName;
     auto s = this->peers.size();
 
-    switch (s)
+    // if the mac is already in the peer cache, then use the existing name, otherwise assign a new name based on the number of peers
+    auto it = std::find_if(this->peers.begin(), this->peers.end(), [&](const espnow_peer_t &p)
+                           { return AstrOsStringUtils::macToString(p.mac_addr) == macStr; });
+    if (it != this->peers.end())
     {
-    case 0:
-        padewanName = "Ashoka";
-        break;
-    case 1:
-        padewanName = "Grogu";
-        break;
-    case 2:
-        padewanName = "Anakin";
-        break;
-    case 3:
-        padewanName = "Obi-Wan";
-        break;
-    default:
-        break;
+        padewanName = it->name;
+    }
+    else
+    {
+        switch (s)
+        {
+        case 0:
+            padewanName = "Ashoka";
+            break;
+        case 1:
+            padewanName = "Grogu";
+            break;
+        case 2:
+            padewanName = "Anakin";
+            break;
+        case 3:
+            padewanName = "Obi-Wan";
+            break;
+        default:
+            break;
+        }
     }
 
     astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
@@ -511,7 +522,6 @@ bool AstrOsEspNow::handleRegistration(uint8_t *src, astros_packet_t packet)
 
     mac = parts[0];
     name = parts[1];
-    
 
     if (name.empty() || mac.empty())
     {
@@ -597,7 +607,6 @@ bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
 
     mac = parts[0];
     name = parts[1];
-
 
     if (name.empty() || mac.empty())
     {
@@ -986,7 +995,6 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
 
     return true;
 }
-
 
 bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
 {

@@ -158,10 +158,12 @@ void MaestroModule::HomeServos()
         {
             if (!channels[i].isServo)
             {
-                if (channels[i].inverted){
+                if (channels[i].inverted)
+                {
                     this->setServoPosition(i, 2500, 0, 0, 0);
                 }
-                else {
+                else
+                {
                     this->setServoPosition(i, 500, 0, 0, 0);
                 }
             }
@@ -267,12 +269,14 @@ void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
 
 void MaestroModule::setServoOff(uint8_t channel)
 {
-    uint8_t cmd[2] = {};
+    uint8_t cmd[4] = {};
 
     cmd[0] = SET_SERVO_COMMAND;
     cmd[1] = channel;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
 
-    this->sendQueueMsg(cmd, 2);
+    this->sendQueueMsg(cmd, 4);
 }
 
 void MaestroModule::getError()

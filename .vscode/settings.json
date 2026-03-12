@@ -70,5 +70,6 @@
     "C_Cpp.errorSquiggles": "enabled",
     "cmake.configureOnOpen": false,
     "idf.adapterTargetName": "esp32",
-    "idf.portWin": "COM15"
+    "idf.portWin": "COM15",
+    "idf.currentSetup": "C:\\Users\\recto\\esp\\v5.2.2\\esp-idf"
 }
