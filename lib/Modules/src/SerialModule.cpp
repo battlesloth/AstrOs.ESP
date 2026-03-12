@@ -1,7 +1,7 @@
 #include <SerialModule.hpp>
 #include <AnimationCommands.hpp>
 #include <AstrOsUtility.h>
-#include <AstrOsUtility_Esp.h>
+#include <AstrOsUtility_ESP.h>
 
 #include <esp_system.h>
 #include <driver/uart.h>

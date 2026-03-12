@@ -1,5 +1,5 @@
 #include <AstrOsEspNowService.hpp>
-#include <AstrOsUtility_Esp.h>
+#include <AstrOsUtility_ESP.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 
@@ -29,7 +29,7 @@ SemaphoreHandle_t valueMutex;
 
 AstrOsEspNow AstrOs_EspNow;
 
-static void (*espnowSendCallback)(const uint8_t *mac_addr, esp_now_send_status_t status);
+static void (*espnowSendCallback)(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 static void (*espnowRecvCallback)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
 AstrOsEspNow::AstrOsEspNow()

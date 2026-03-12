@@ -24,7 +24,7 @@
 #include <GpioModule.hpp>
 #include <AstrOsUtility.h>
 
-#include <AstrOsUtility_Esp.h>
+#include <AstrOsUtility_ESP.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsNames.h>
 #include <AstrOsStorageManager.hpp>
@@ -146,7 +146,7 @@ static void servoMoveTimerCallback(void *arg);
 bool cachePeer(espnow_peer_t peer);
 void updateSeviceConfig(std::string name, uint8_t *mac);
 void displaySetDefault(std::string line1, std::string line2, std::string line3);
-static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status);
+static void espnowSendCallback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
 // tasks
@@ -1488,15 +1488,15 @@ void displaySetDefault(std::string line1, std::string line2, std::string line3)
     return AstrOs_Display.setDefault(line1, line2, line3);
 }
 
-static void espnowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status)
+static void espnowSendCallback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
-    if (mac_addr == NULL)
+    if (tx_info == NULL)
     {
         ESP_LOGE(TAG, "Send cb arg error");
         return;
     }
 
-    ESP_LOGD(TAG, "Sending data to " MACSTR " status: %d", MAC2STR(mac_addr), status);
+    ESP_LOGD(TAG, "Sending data to " MACSTR " status: %d", MAC2STR(tx_info->des_addr), status);
 }
 
 static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)

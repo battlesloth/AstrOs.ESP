@@ -23,7 +23,7 @@ typedef struct
     int peerCount;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
-    void (*espnowSend_cb)(const uint8_t *mac_addr, esp_now_send_status_t status);
+    void (*espnowSend_cb)(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
     void (*espnowRecv_cb)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
     bool (*cachePeer_cb)(espnow_peer_t);
     void (*updateSeviceConfig_cb)(std::string, uint8_t *);
