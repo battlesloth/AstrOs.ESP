@@ -495,3 +495,6 @@ external_libs/esp-idf-lib/components/wiegand/component.mk
 external_libs/esp-idf-lib/components/wiegand/LICENSE
 external_libs/esp-idf-lib/components/wiegand/wiegand.c
 external_libs/esp-idf-lib/components/wiegand/wiegand.h
+
+# Git worktrees (isolated feature branches)
+.worktrees/
