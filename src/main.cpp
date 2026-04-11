@@ -213,6 +213,7 @@ void app_main()
 void init(void)
 {
     ESP_LOGI(TAG, "init called");
+    ESP_LOGI(TAG, "AstrOs.ESP version %s (sha: %s)", AstrOsConstants::Version, AstrOsConstants::GitSha);
 
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
