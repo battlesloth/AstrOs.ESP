@@ -94,6 +94,12 @@ def resolve_version() -> tuple[str, str]:
     if not base_tag:
         return f"{base_version}-dev.0", short_sha
 
+    # WARNING: on a shallow clone (e.g. CI with `actions/checkout` at the default
+    # fetch-depth=1), `git rev-list TAG..HEAD --count` can silently return 0 even
+    # when HEAD is many commits past TAG, because the tag's commits may have been
+    # truncated from the shallow history. That would make this function think we
+    # are exactly ON the tag and return the clean release string for a non-release
+    # build. CI workflows MUST check out with `fetch-depth: 0` to avoid this.
     count_str = _run(["git", "rev-list", f"{base_tag}..HEAD", "--count"], default="0")
     try:
         count = int(count_str)

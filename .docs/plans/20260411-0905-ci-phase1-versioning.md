@@ -880,3 +880,17 @@ During Task 5, `pio test -e test` surfaced that `Path(__file__).resolve()` crash
 **Fixed** in commit `e60e144`: switched REPO_ROOT resolution to try `Import("env")` + `env.subst("$PROJECT_DIR")` under PlatformIO, falling back to `Path(__file__)` in standalone mode. Both paths verified working.
 
 **Lesson for the plan author (me)**: standalone testing of a PlatformIO extra_script is necessary but not sufficient — the script MUST also be exercised via a real `pio` invocation before being declared correct. This verification is now explicitly part of Task 5 Step 2.
+
+### 4. Shallow-clone false positive in `git rev-list --count` — Phase 2 CI prerequisite
+
+Final review flagged a real footgun that isn't a Phase 1 bug today but WILL bite Phase 2 CI if not handled.
+
+On a shallow clone (e.g. `actions/checkout@v4` with its default `fetch-depth: 1`), `git rev-list <tag>..HEAD --count` can silently return 0 even when HEAD is many commits past the tag, because the tag's ancestor commits have been truncated from the shallow history. `version_gen.py` would then hit the `count == 0` branch and return the clean release string (`1.0.0-RC.3`) for a non-release build, producing an ELF whose version string pretends it's a tagged release.
+
+**Fixed in Phase 1**: added a warning comment near the `rev-list` call in `scripts/version_gen.py` flagging this explicitly.
+
+**Required in Phase 2**: every `actions/checkout@v4` step in every CI workflow MUST set `fetch-depth: 0` so the full history is available. This is non-negotiable for the versioning math to be correct. Phase 2 should:
+
+1. Use `fetch-depth: 0` on every checkout step (PR validation, RC build, release build).
+2. Add a sanity-check step after checkout that runs `git describe --tags --abbrev=0 && git rev-list HEAD --count` and fails loudly if either returns unexpected output.
+3. Consider adding a unit-test-like script that simulates a shallow clone and asserts `version_gen.py` behaves sanely (e.g., by returning `-dev.?` rather than a clean release string) — belt and suspenders.
