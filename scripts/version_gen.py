@@ -33,34 +33,50 @@ VERSION_FILE = REPO_ROOT / "VERSION"
 OUTPUT_FILE = REPO_ROOT / "lib" / "AstrOsUtility" / "src" / "version_generated.hpp"
 
 
-def _run(cmd: str, default: str = "") -> str:
-    """Run a shell command in REPO_ROOT. Return stripped stdout or default on failure."""
+def _run(cmd: list[str], default: str = "") -> str:
+    """Run a git (or other) command in REPO_ROOT. Return stripped stdout or default on any failure.
+
+    Takes cmd as a list of argv (NOT a shell string) — this avoids shell injection
+    if any downstream git output (e.g. a crafted tag name on CI) is interpolated.
+    Also catches FileNotFoundError so the script fails gracefully if git is absent
+    (fresh Docker images, minimal CI runners), honoring the "never raises" contract
+    the docstring on resolve_version() makes to its callers.
+    """
     try:
-        return subprocess.check_output(
+        return subprocess.run(
             cmd,
-            shell=True,
+            capture_output=True,
             cwd=str(REPO_ROOT),
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except subprocess.CalledProcessError:
+            check=True,
+        ).stdout.decode("utf-8").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return default
 
 
 def resolve_version() -> tuple[str, str]:
-    """Return (version_string, short_sha). Never raises — falls back to placeholders."""
+    """Return (version_string, short_sha). Never raises — falls back to placeholders.
+
+    Note on the off-tag case: BASE_VERSION_clean is derived from the VERSION file,
+    NOT from the last git tag. This is deliberate: VERSION holds the *next* version
+    under development, so dev builds reflect where the tree is heading (e.g. after
+    bumping VERSION from 1.0.0 to 1.1.0 on main, dev builds become 1.1.0-dev.N
+    immediately, before the first v1.1.0-RC.1 tag exists). Deriving from the tag
+    would freeze dev builds at the last shipped RC until CI created the next tag,
+    which breaks the "number go up" UX for local builders.
+    """
     if VERSION_FILE.exists():
         base_version = VERSION_FILE.read_text().strip()
     else:
         base_version = "0.0.0"
 
-    base_tag = _run("git describe --tags --abbrev=0")
-    short_sha = _run("git rev-parse --short HEAD", default="unknown")
+    base_tag = _run(["git", "describe", "--tags", "--abbrev=0"])
+    short_sha = _run(["git", "rev-parse", "--short", "HEAD"], default="unknown")
 
     # No tags in the repo yet — first-ever local build or CI on a fresh clone with shallow depth
     if not base_tag:
         return f"{base_version}-dev.0", short_sha
 
-    count_str = _run(f"git rev-list {base_tag}..HEAD --count", default="0")
+    count_str = _run(["git", "rev-list", f"{base_tag}..HEAD", "--count"], default="0")
     try:
         count = int(count_str)
     except ValueError:
@@ -70,7 +86,9 @@ def resolve_version() -> tuple[str, str]:
         # Exact tag — strip leading 'v' if present: v1.0.0-RC.3 -> 1.0.0-RC.3
         return base_tag.lstrip("v"), short_sha
 
-    # Off-tag dev build — strip any -RC.N / -rc.N suffix from the base
+    # Off-tag dev build — strip any -RC.N / -rc.N suffix from BASE_VERSION (defensive;
+    # the file normally holds just the numeric base like "1.0.0", but if someone
+    # accidentally includes a prerelease suffix we want to strip it here).
     clean_base = re.sub(r"-RC\.\d+$", "", base_version, flags=re.IGNORECASE)
     return f"{clean_base}-dev.{count}", short_sha
 
