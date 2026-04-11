@@ -11,13 +11,10 @@
 #include <cctype>
 #include <AstrOsStringUtils.hpp>
 #include <AstrOsStructs.h>
-#include <esp_log.h>
 
 class AstrOsFileUtils
 {
 private:
-    static constexpr const char *TAG = "AstrOsFileUtils";
-
     // Safe integer parsing without exceptions (ESP32-friendly)
     static bool safeStoi(const std::string &str, int &result, int defaultValue = 0)
     {
@@ -39,7 +36,6 @@ private:
         if (endptr == cstr)
         {
             // No digits were found
-            ESP_LOGE(TAG, "Invalid integer format: '%s', using default: %d", str.c_str(), defaultValue);
             result = defaultValue;
             return false;
         }
@@ -47,21 +43,16 @@ private:
         if (errno == ERANGE || val > INT_MAX || val < INT_MIN)
         {
             // Out of range for int
-            ESP_LOGE(TAG, "Integer out of range: '%s', using default: %d", str.c_str(), defaultValue);
             result = defaultValue;
             return false;
         }
 
-        // Check if there are trailing non-whitespace characters
+        // Skip any trailing whitespace. Trailing non-whitespace is tolerated
+        // (callers inspect the bool return; they do not need a partial-parse warning).
         if (*endptr != '\0')
         {
-            // Find first non-whitespace trailing character
             while (*endptr && isspace(*endptr))
                 endptr++;
-            if (*endptr != '\0')
-            {
-                ESP_LOGW(TAG, "Partial parse of '%s', using parsed value %ld", str.c_str(), val);
-            }
         }
 
         result = static_cast<int>(val);
@@ -98,7 +89,6 @@ public:
                 !safeStoi(parts[1], cfg.uartChannel) ||
                 !safeStoi(parts[2], cfg.baudrate))
             {
-                ESP_LOGW(TAG, "Skipping invalid maestro config line: %s", trimmedLine.c_str());
                 continue;
             }
 
@@ -125,7 +115,6 @@ public:
             auto parts = AstrOsStringUtils::splitString(cfig, ':');
             if (parts.size() != 7) // must have 7 parts
             {
-                ESP_LOGW(TAG, "Skipping servo config with wrong field count: %s", cfig.c_str());
                 continue;
             }
 
@@ -142,14 +131,12 @@ public:
 
             if (hasEmptyField)
             {
-                ESP_LOGW(TAG, "Skipping servo config with empty field: %s", cfig.c_str());
                 continue;
             }
 
             int id = 0;
             if (!safeStoi(parts[0], id))
             {
-                ESP_LOGW(TAG, "Skipping servo config with invalid id: %s", cfig.c_str());
                 continue;
             }
 
@@ -200,14 +187,12 @@ public:
                 !safeStoi(parts[5], home) ||
                 !safeStoi(parts[6], inverted))
             {
-                ESP_LOGW(TAG, "Skipping invalid servo config: %s", cfig.c_str());
                 continue;
             }
 
             // Validate id is within bounds
             if (ch.id < 0 || ch.id > maxId)
             {
-                ESP_LOGE(TAG, "Servo id %d out of range (0-%d)", ch.id, maxId);
                 continue;
             }
 

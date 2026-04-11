@@ -1,14 +1,21 @@
 #ifndef ASTROSCONSTANTS_H
 #define ASTROSCONSTANTS_H
 
+// Version and GitSha are defined in version_generated.hpp, which is
+// written by scripts/version_gen.py on every PlatformIO build and is
+// gitignored. Do not redefine them here.
+//
+// version_generated.hpp opens its own `namespace AstrOsConstants { ... }`
+// block. The block below re-opens the same namespace (legal C++) to add
+// the other constants — both sets end up in AstrOsConstants::*.
+#include "version_generated.hpp"
+
 namespace AstrOsConstants
 {
 
     /***********************************
      *  Module
      ***********************************/
-    constexpr const char *Version = "v1.0.0-dev2";
-
     constexpr const char *ModuleName = "AstrOs-esp32";
     constexpr const char *SerialNumber = "0001";
 

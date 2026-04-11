@@ -1,0 +1,15 @@
+---
+# AstrOs.ESP C/C++ formatting rules.
+# Based on LLVM defaults with three overrides:
+#   - 4-space indent (matches existing codebase)
+#   - 120-column limit (fits two panes side-by-side on a typical monitor)
+#   - PointerAlignment: Left (matches `char *foo` pattern used throughout)
+#
+# Phase 1 only lays down this file. Phase 2 adds a CI check that
+# runs `clang-format --dry-run --Werror` against changed files only
+# (grandfathering untouched existing files).
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+PointerAlignment: Left
+---

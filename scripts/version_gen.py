@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+Version resolver for AstrOs.ESP firmware builds.
+
+Runs as a PlatformIO pre-build hook (wired from platformio.ini via
+`extra_scripts = pre:scripts/version_gen.py`) AND as a standalone CLI
+script (`python3 scripts/version_gen.py`). Both entry points produce
+the same output: lib/AstrOsUtility/src/version_generated.hpp.
+
+Version resolution rules (see .docs/plans/20260411-0905-ci-pipeline-design.md):
+
+  BASE_VERSION = contents of VERSION file (e.g. "1.0.0")
+  BASE_TAG     = `git describe --tags --abbrev=0`  (e.g. "v1.0.0-RC.3")
+  COUNT        = `git rev-list BASE_TAG..HEAD --count`
+  SHORT_SHA    = `git rev-parse --short HEAD`
+
+  If no tags exist:       Version = "{BASE_VERSION}-dev.0"
+  If COUNT == 0 (on tag): Version = BASE_TAG with leading 'v' stripped
+  If COUNT >  0 (off tag):Version = "{BASE_VERSION_clean}-dev.{COUNT}"
+                          where BASE_VERSION_clean has any -RC.N suffix stripped
+
+Git SHA is logged to the serial console at boot but never appears in
+the user-visible version string.
+"""
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Detect execution context and resolve REPO_ROOT accordingly.
+#
+# PlatformIO loads this script via SCons `SConscript(..., exports="env")`
+# which execs the module body in an SCons globals dict that does NOT include
+# __file__. So Path(__file__) is unavailable in that context. Instead we use
+# the PlatformIO-provided env and read $PROJECT_DIR, which is the canonical
+# way to find the project root from within an extra_script.
+#
+# Standalone CLI runs (`python3 scripts/version_gen.py`) do have __file__
+# defined but do NOT have Import/env. We detect which mode we're in by
+# trying Import("env").
+_IS_PIO = False
+try:
+    Import("env")  # type: ignore[name-defined]  # noqa: F821
+    _IS_PIO = True
+    REPO_ROOT = Path(env.subst("$PROJECT_DIR"))  # type: ignore[name-defined]  # noqa: F821
+except NameError:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
+
+VERSION_FILE = REPO_ROOT / "VERSION"
+OUTPUT_FILE = REPO_ROOT / "lib" / "AstrOsUtility" / "src" / "version_generated.hpp"
+
+
+def _run(cmd: list[str], default: str = "") -> str:
+    """Run a git (or other) command in REPO_ROOT. Return stripped stdout or default on any failure.
+
+    Takes cmd as a list of argv (NOT a shell string) — this avoids shell injection
+    if any downstream git output (e.g. a crafted tag name on CI) is interpolated.
+    Also catches FileNotFoundError so the script fails gracefully if git is absent
+    (fresh Docker images, minimal CI runners), honoring the "never raises" contract
+    the docstring on resolve_version() makes to its callers.
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            cwd=str(REPO_ROOT),
+            check=True,
+        ).stdout.decode("utf-8").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return default
+
+
+def resolve_version() -> tuple[str, str]:
+    """Return (version_string, short_sha). Never raises — falls back to placeholders.
+
+    Note on the off-tag case: BASE_VERSION_clean is derived from the VERSION file,
+    NOT from the last git tag. This is deliberate: VERSION holds the *next* version
+    under development, so dev builds reflect where the tree is heading (e.g. after
+    bumping VERSION from 1.0.0 to 1.1.0 on main, dev builds become 1.1.0-dev.N
+    immediately, before the first v1.1.0-RC.1 tag exists). Deriving from the tag
+    would freeze dev builds at the last shipped RC until CI created the next tag,
+    which breaks the "number go up" UX for local builders.
+    """
+    if VERSION_FILE.exists():
+        base_version = VERSION_FILE.read_text().strip()
+    else:
+        base_version = "0.0.0"
+
+    base_tag = _run(["git", "describe", "--tags", "--abbrev=0"])
+    short_sha = _run(["git", "rev-parse", "--short", "HEAD"], default="unknown")
+
+    # No tags in the repo yet — first-ever local build or CI on a fresh clone with shallow depth
+    if not base_tag:
+        return f"{base_version}-dev.0", short_sha
+
+    # WARNING: on a shallow clone (e.g. CI with `actions/checkout` at the default
+    # fetch-depth=1), `git rev-list TAG..HEAD --count` can silently return 0 even
+    # when HEAD is many commits past TAG, because the tag's commits may have been
+    # truncated from the shallow history. That would make this function think we
+    # are exactly ON the tag and return the clean release string for a non-release
+    # build. CI workflows MUST check out with `fetch-depth: 0` to avoid this.
+    count_str = _run(["git", "rev-list", f"{base_tag}..HEAD", "--count"], default="0")
+    try:
+        count = int(count_str)
+    except ValueError:
+        count = 0
+
+    if count == 0:
+        # Exact tag — strip leading 'v' if present: v1.0.0-RC.3 -> 1.0.0-RC.3
+        return base_tag.lstrip("v"), short_sha
+
+    # Off-tag dev build — strip any -RC.N / -rc.N suffix from BASE_VERSION (defensive;
+    # the file normally holds just the numeric base like "1.0.0", but if someone
+    # accidentally includes a prerelease suffix we want to strip it here).
+    clean_base = re.sub(r"-RC\.\d+$", "", base_version, flags=re.IGNORECASE)
+    return f"{clean_base}-dev.{count}", short_sha
+
+
+def write_header(version: str, sha: str) -> bool:
+    """Write version_generated.hpp. Returns True if file contents changed."""
+    content = (
+        "// AUTO-GENERATED by scripts/version_gen.py - do not edit.\n"
+        "// Regenerated on every build from the VERSION file + git state.\n"
+        "#pragma once\n"
+        "\n"
+        "namespace AstrOsConstants\n"
+        "{\n"
+        f'    constexpr const char *Version = "{version}";\n'
+        f'    constexpr const char *GitSha = "{sha}";\n'
+        "}\n"
+    )
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if OUTPUT_FILE.exists() and OUTPUT_FILE.read_text() == content:
+        return False
+    OUTPUT_FILE.write_text(content)
+    return True
+
+
+def main() -> None:
+    version, sha = resolve_version()
+    changed = write_header(version, sha)
+    rel_out = OUTPUT_FILE.relative_to(REPO_ROOT)
+    marker = "(updated)" if changed else "(unchanged)"
+    print(f"[version_gen] Version={version} GitSha={sha} -> {rel_out} {marker}")
+
+
+# Dispatch main() in both execution contexts.
+if _IS_PIO:
+    main()
+elif __name__ == "__main__":
+    main()
