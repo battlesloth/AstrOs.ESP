@@ -253,6 +253,7 @@ void init(void)
     }
     else
     {
+        serialConf1.isMaster = false;
         serialConf1.defaultBaudRate = 9600;
     }
 

@@ -14,6 +14,7 @@
 //#define I2C_NUM I2C_NUM_1
 
 #define I2C_MASTER_FREQ_HZ 400000 /*!< I2C clock of SSD1306 can run at 400 kHz max. */
+#define I2C_TIMEOUT_TICKS (100 / portTICK_PERIOD_MS)
 
 void i2c_master_init(SSD1306_t * dev, int16_t sda, int16_t scl, int16_t reset)
 {
@@ -91,7 +92,7 @@ void i2c_init(SSD1306_t * dev, int width, int height) {
 
 	i2c_master_stop(cmd);
 
-	esp_err_t espRc = i2c_master_cmd_begin(I2C_NUM, cmd, 10/portTICK_PERIOD_MS);
+	esp_err_t espRc = i2c_master_cmd_begin(I2C_NUM, cmd, I2C_TIMEOUT_TICKS);
 	if (espRc == ESP_OK) {
 		ESP_LOGI(tag, "OLED configured successfully");
 	} else {
@@ -129,8 +130,10 @@ void i2c_display_image(SSD1306_t * dev, int page, int seg, uint8_t * images, int
 	i2c_master_write_byte(cmd, 0xB0 | _page, true);
 
 	i2c_master_stop(cmd);
-	i2c_master_cmd_begin(I2C_NUM, cmd, 10/portTICK_PERIOD_MS);
+	esp_err_t res = i2c_master_cmd_begin(I2C_NUM, cmd, I2C_TIMEOUT_TICKS);
 	i2c_cmd_link_delete(cmd);
+
+	if (res != ESP_OK) return;
 
 	cmd = i2c_cmd_link_create();
 	i2c_master_start(cmd);
@@ -140,7 +143,7 @@ void i2c_display_image(SSD1306_t * dev, int page, int seg, uint8_t * images, int
 	i2c_master_write(cmd, images, width, true);
 
 	i2c_master_stop(cmd);
-	i2c_master_cmd_begin(I2C_NUM, cmd, 10/portTICK_PERIOD_MS);
+	i2c_master_cmd_begin(I2C_NUM, cmd, I2C_TIMEOUT_TICKS);
 	i2c_cmd_link_delete(cmd);
 }
 
@@ -157,7 +160,7 @@ void i2c_contrast(SSD1306_t * dev, int contrast) {
 	i2c_master_write_byte(cmd, OLED_CMD_SET_CONTRAST, true);			// 81
 	i2c_master_write_byte(cmd, _contrast, true);
 	i2c_master_stop(cmd);
-	i2c_master_cmd_begin(I2C_NUM, cmd, 10/portTICK_PERIOD_MS);
+	i2c_master_cmd_begin(I2C_NUM, cmd, I2C_TIMEOUT_TICKS);
 	i2c_cmd_link_delete(cmd);
 }
 
@@ -236,7 +239,7 @@ void i2c_hardware_scroll(SSD1306_t * dev, ssd1306_scroll_type_t scroll) {
 	}
 
 	i2c_master_stop(cmd);
-	espRc = i2c_master_cmd_begin(I2C_NUM, cmd, 10/portTICK_PERIOD_MS);
+	espRc = i2c_master_cmd_begin(I2C_NUM, cmd, I2C_TIMEOUT_TICKS);
 	if (espRc == ESP_OK) {
 		ESP_LOGD(tag, "Scroll command succeeded");
 	} else {

@@ -111,21 +111,22 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
 
                 auto err = uart_get_baudrate(port, &currentBaud);
 
-                ESP_LOGI(TAG, "Current baudrate: %lu, Desired baudrate: %d", currentBaud, baud);
-
                 if (logError(TAG, __FUNCTION__, __LINE__, err))
                 {
-                    ESP_LOGE(TAG, "Failed to get baudrate!");
+                    ESP_LOGE(TAG, "Serial port %d - Failed to get baudrate!", this->port);
                 }
                 else if (currentBaud != (uint32_t)baud)
                 {
-                    ESP_LOGI(TAG, "Changing baudrate to %d", baud);
-
                     err = uart_set_baudrate(port, (uint32_t)baud);
 
                     if (logError(TAG, __FUNCTION__, __LINE__, err))
                     {
-                        ESP_LOGE(TAG, "Failed to set baudrate %d!", baud);
+                        ESP_LOGE(TAG, "Serial port %d - Failed to set baudrate %d!", this->port, baud);
+                    } else {
+                         auto err = uart_get_baudrate(port, &currentBaud);
+                        if (logError(TAG, __FUNCTION__, __LINE__, err))                        {
+                            ESP_LOGE(TAG, "Serial port %d - Failed to get baudrate after setting it!", this->port);
+                        }
                     }
                 }
             }
