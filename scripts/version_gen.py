@@ -28,7 +28,25 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# Detect execution context and resolve REPO_ROOT accordingly.
+#
+# PlatformIO loads this script via SCons `SConscript(..., exports="env")`
+# which execs the module body in an SCons globals dict that does NOT include
+# __file__. So Path(__file__) is unavailable in that context. Instead we use
+# the PlatformIO-provided env and read $PROJECT_DIR, which is the canonical
+# way to find the project root from within an extra_script.
+#
+# Standalone CLI runs (`python3 scripts/version_gen.py`) do have __file__
+# defined but do NOT have Import/env. We detect which mode we're in by
+# trying Import("env").
+_IS_PIO = False
+try:
+    Import("env")  # type: ignore[name-defined]  # noqa: F821
+    _IS_PIO = True
+    REPO_ROOT = Path(env.subst("$PROJECT_DIR"))  # type: ignore[name-defined]  # noqa: F821
+except NameError:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
+
 VERSION_FILE = REPO_ROOT / "VERSION"
 OUTPUT_FILE = REPO_ROOT / "lib" / "AstrOsUtility" / "src" / "version_generated.hpp"
 
@@ -121,12 +139,8 @@ def main() -> None:
     print(f"[version_gen] Version={version} GitSha={sha} -> {rel_out} {marker}")
 
 
-# Detect PlatformIO context: the `Import` builtin is injected when
-# platformio loads this script via extra_scripts. Standalone runs
-# get a NameError, which we treat as "run main() if __main__".
-try:
-    Import("env")  # type: ignore[name-defined]  # noqa: F821
+# Dispatch main() in both execution contexts.
+if _IS_PIO:
     main()
-except NameError:
-    if __name__ == "__main__":
-        main()
+elif __name__ == "__main__":
+    main()
