@@ -87,3 +87,35 @@ jobs:
           # --Werror turns format diffs into a non-zero exit, --dry-run avoids
           # touching the working tree. xargs preserves whitespace via -d '\n'.
           echo "$changed" | xargs -d '\n' clang-format --dry-run --Werror
+
+  native-tests:
+    name: Native unit tests (pio test -e test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Shallow clone is fine; version_gen.py is hardened against missing
+        # tags (commit 447e423) and produces a placeholder version string
+        # when git history isn't available.
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO core
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-test-${{ hashFiles('platformio.ini', 'sdkconfig.lolin_d32_pro', 'sdkconfig.metro_s3', 'dependencies.lock') }}
+          restore-keys: |
+            pio-${{ runner.os }}-test-
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: |
+          set -euo pipefail
+          pip install --upgrade platformio
+          pio --version
+
+      - name: Run native unit tests
+        run: pio test -e test
