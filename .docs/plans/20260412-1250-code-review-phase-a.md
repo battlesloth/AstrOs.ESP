@@ -1,6 +1,6 @@
 # Code Review Remediation Phase A — Memory Leaks + Buffer Safety
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fix the highest-priority memory leaks and buffer safety issues identified in `.docs/code-review/code-review.md`. This phase covers 7 implementation tasks (sprintf overflow, malloc leak in timer callback, queue-failure leaks, semaphore cleanup, NVS bounds validation, ESP-NOW name overflow, and raw-pointer ownership) plus a QA test plan.
 
@@ -30,14 +30,14 @@
 
 **Files:** None (git operations only)
 
-- [ ] **Step 1: Create feature branch from develop**
+- [x] **Step 1: Create feature branch from develop**
 
 Run:
 ```bash
 cd /home/jeff/Source/astros/AstrOs.ESP && git checkout develop && git pull && git checkout -b fix/code-review-phase-a
 ```
 
-- [ ] **Step 2: Commit this plan file**
+- [x] **Step 2: Commit this plan file**
 
 Run:
 ```bash
@@ -53,7 +53,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add .docs/plans/20260412-1250-code
 
 **What:** `sprintf` into a 64-byte stack buffer with no length guard. Each `%x` expander can produce 1-2 hex chars for a `uint8_t`, so the current code is safe in practice, but `snprintf` costs nothing and prevents future regressions.
 
-- [ ] **Step 1: Replace sprintf with snprintf**
+- [x] **Step 1: Replace sprintf with snprintf**
 
 In `lib/Uuid/guid.h`, replace:
 
@@ -69,14 +69,14 @@ with:
                  raw[7], raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]);
 ```
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 ```bash
@@ -92,7 +92,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/Uuid/guid.h && git commit 
 
 **What:** `pollingTimerCallback` mallocs 37 bytes for a fingerprint string every 2 seconds and never frees it. Over 30 minutes that leaks ~33 KB. Fix: use a stack-allocated `char[37]` instead — `getControllerFingerprint` takes a `char*` regardless of allocation source.
 
-- [ ] **Step 1: Replace malloc with stack allocation**
+- [x] **Step 1: Replace malloc with stack allocation**
 
 In `src/main.cpp`, replace:
 
@@ -110,14 +110,14 @@ with:
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint), true);
 ```
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 ```bash
@@ -133,7 +133,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add src/main.cpp && git commit -m 
 
 **What:** Both `displayUpdate` and `displayClear` malloc a buffer for `i2cMsg.data` but never free it when `xQueueSend` fails. The queue consumer owns the buffer on success; the producer must free on failure.
 
-- [ ] **Step 1: Add free on queue send failure in displayUpdate**
+- [x] **Step 1: Add free on queue send failure in displayUpdate**
 
 In `lib/AstrOsDisplay/src/DisplayService.cpp`, replace:
 
@@ -156,7 +156,7 @@ with:
 }
 ```
 
-- [ ] **Step 2: Add free on queue send failure in displayClear**
+- [x] **Step 2: Add free on queue send failure in displayClear**
 
 In `lib/AstrOsDisplay/src/DisplayService.cpp`, replace:
 
@@ -179,14 +179,14 @@ with:
 }
 ```
 
-- [ ] **Step 3: Verify compilation**
+- [x] **Step 3: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 ```bash
@@ -202,7 +202,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/AstrOsDisplay/src/DisplayS
 
 **What:** The destructor is empty but the constructor creates a FreeRTOS mutex via `xSemaphoreCreateMutex()`. The mutex is never deleted. In practice the singleton lives forever, but correctness requires cleanup in the destructor.
 
-- [ ] **Step 1: Add vSemaphoreDelete to destructor**
+- [x] **Step 1: Add vSemaphoreDelete to destructor**
 
 In `lib/AnimationController/src/AnimationController.cpp`, replace:
 
@@ -219,14 +219,14 @@ AnimationController::~AnimationController()
 }
 ```
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 ```bash
@@ -242,7 +242,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/AnimationController/src/An
 
 **What:** `setKeyId` hardcodes `key[2]` and `key[3]` in the else branch, ignoring `startPos`. It also only handles ids 10-19 correctly — ids 20-99 produce wrong digits, and ids >= 100 could overflow. Fix: compute tens/units digits arithmetically, guard against id >= 100. Note: this is a C file, so use `ESP_LOGE` (already available via includes in the file).
 
-- [ ] **Step 1: Replace setKeyId implementation**
+- [x] **Step 1: Replace setKeyId implementation**
 
 In `lib/AstrOsStorageManager/src/NvsManager.c`, replace:
 
@@ -276,18 +276,18 @@ static void setKeyId(char *key, uint8_t id, uint8_t startPos)
 }
 ```
 
-- [ ] **Step 2: Verify that ESP_LOGE is available**
+- [x] **Step 2: Verify that ESP_LOGE is available**
 
 The file already includes `<AstrOsUtility_ESP.h>` and defines `static const char *TAG = "NvsManager";` at line 10. `ESP_LOGE` is provided transitively via `esp_log.h`. Confirm by checking compilation in the next step.
 
-- [ ] **Step 3: Verify compilation**
+- [x] **Step 3: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 ```bash
@@ -303,7 +303,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/AstrOsStorageManager/src/N
 
 **What:** `memcpy(newPeer.name, name.c_str(), name.length() + 1)` copies the full string including null terminator into `char name[16]`. If `name.length() >= 16`, this overflows the field. Fix: clamp to 15 chars and null-terminate. The file already includes `<algorithm>` so `std::min` is available.
 
-- [ ] **Step 1: Replace unbounded memcpy with clamped copy**
+- [x] **Step 1: Replace unbounded memcpy with clamped copy**
 
 In `lib/AstrOsEspNow/src/AstrOsEspNowService.cpp`, replace:
 
@@ -319,14 +319,14 @@ with:
     newPeer.name[nameLen] = '\0';
 ```
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 ```bash
@@ -346,7 +346,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/AstrOsEspNow/src/AstrOsEsp
 
 **What:** `GetCommandTemplatePtr()` and `getNextCommandPtr()` return raw `CommandTemplate*` with a caller-owns-delete contract. The caller in `main.cpp` calls `delete(cmd)` at the end. Converting to `std::unique_ptr<CommandTemplate>` makes ownership explicit and eliminates the risk of leaks on early-return paths. The `nullptr` check at line 453 of `main.cpp` still works because `unique_ptr` is contextually convertible to `bool` and compares equal to `nullptr` when empty.
 
-- [ ] **Step 1: Update AnimationCommand.hpp — return type + include**
+- [x] **Step 1: Update AnimationCommand.hpp — return type + include**
 
 In `lib/AnimationController/src/AnimationCommand.hpp`, replace:
 
@@ -381,7 +381,7 @@ with:
     std::unique_ptr<CommandTemplate> GetCommandTemplatePtr();
 ```
 
-- [ ] **Step 2: Update AnimationCommand.cpp — implementation**
+- [x] **Step 2: Update AnimationCommand.cpp — implementation**
 
 In `lib/AnimationController/src/AnimationCommand.cpp`, replace:
 
@@ -402,7 +402,7 @@ std::unique_ptr<CommandTemplate> AnimationCommand::GetCommandTemplatePtr()
 }
 ```
 
-- [ ] **Step 3: Update AnimationController.hpp — return type + include**
+- [x] **Step 3: Update AnimationController.hpp — return type + include**
 
 In `lib/AnimationController/include/AnimationController.hpp`, replace:
 
@@ -441,7 +441,7 @@ with:
     std::unique_ptr<CommandTemplate> getNextCommandPtr();
 ```
 
-- [ ] **Step 4: Update AnimationController.cpp — implementation**
+- [x] **Step 4: Update AnimationController.cpp — implementation**
 
 In `lib/AnimationController/src/AnimationController.cpp`, replace:
 
@@ -548,7 +548,7 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 }
 ```
 
-- [ ] **Step 5: Update main.cpp — call site**
+- [x] **Step 5: Update main.cpp — call site**
 
 In `src/main.cpp`, replace:
 
@@ -576,14 +576,14 @@ with:
         ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
 ```
 
-- [ ] **Step 6: Verify compilation**
+- [x] **Step 6: Verify compilation**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 ```bash
@@ -597,7 +597,7 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add lib/AnimationController/src/An
 **Files:**
 - Create: `.docs/qa/code-review-phase-a.md`
 
-- [ ] **Step 1: Create QA test plan**
+- [x] **Step 1: Create QA test plan**
 
 Create `.docs/qa/code-review-phase-a.md` with the following content:
 
@@ -691,7 +691,7 @@ Create `.docs/qa/code-review-phase-a.md` with the following content:
 - **unique_ptr nullptr path:** Queue an animation, then immediately trigger a panic stop. The early return at the `cmd == nullptr` check (line 453 of main.cpp) should still work correctly — `unique_ptr` compares equal to `nullptr` when default-constructed. Verify by code inspection that the early return path does not call `delete`.
 ```
 
-- [ ] **Step 2: Commit QA plan**
+- [x] **Step 2: Commit QA plan**
 
 Run:
 ```bash
@@ -702,20 +702,20 @@ cd /home/jeff/Source/astros/AstrOs.ESP && git add .docs/qa/code-review-phase-a.m
 
 ## Final Verification
 
-- [ ] **Step 1: Build both board environments**
+- [x] **Step 1: Build both board environments**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio run -e metro_s3 && ~/.platformio/penv/bin/pio run -e lolin_d32_pro
 ```
 
-- [ ] **Step 2: Run native tests**
+- [x] **Step 2: Run native tests**
 
 Run:
 ```bash
 ~/.platformio/penv/bin/pio test -e test
 ```
 
-- [ ] **Step 3: Update plan — mark complete**
+- [x] **Step 3: Update plan — mark complete**
 
 Check off this section's boxes in this plan file and commit the update.
