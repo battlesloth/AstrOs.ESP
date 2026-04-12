@@ -110,7 +110,7 @@ When touching these files, prefer fixes that also resolve the relevant review it
 ## Things that are *not* in the repo
 
 - No Cursor / Copilot rules.
-- No pre-commit hooks configured. `.clang-format` exists but is only enforced by CI on PRs, not by a local hook.
+- A pre-commit hook at `.githooks/pre-commit` auto-formats staged C/C++ files with clang-format. Activate once per clone: `git config core.hooksPath .githooks`. The hook is opt-in — it does nothing until `core.hooksPath` is set.
 - No submodules (`.gitmodules` is empty).
 - GitHub Actions CI lives under `.github/workflows/` — PR validation exists today; RC and release artifact workflows are planned for Phase 3 of the CI pipeline design in `.docs/plans/20260411-0905-ci-pipeline-design.md`.
 
