@@ -11,15 +11,13 @@ static const char *TAG = "NvsManager";
 
 static void setKeyId(char *key, uint8_t id, uint8_t startPos)
 {
-    if (id < 10)
+    if (id > 99)
     {
-        key[startPos + 1] = (id + '0');
+        ESP_LOGE(TAG, "Peer index %d exceeds maximum of 99", id);
+        return;
     }
-    else
-    {
-        key[2] = (1 + '0');
-        key[3] = ((id - 10) + '0');
-    }
+    key[startPos] = '0' + (id / 10);
+    key[startPos + 1] = '0' + (id % 10);
 }
 
 bool nvsSaveServiceConfig(svc_config_t config)
