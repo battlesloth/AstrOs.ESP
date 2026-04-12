@@ -1,6 +1,6 @@
 # CI Phase 3 — RC & Release Build Workflows Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add two GitHub Actions workflows that automatically tag, build, package, and publish firmware artifacts — `rc-build.yml` creates pre-releases on pushes to `main`, and `release-build.yml` creates full releases on pushes to `release/rel_*` branches.
 
@@ -83,7 +83,7 @@ These values come from the partition tables (`partition_8mb.csv`, `partition_16m
 
 This task creates the workflow file with triggers, concurrency, permissions, and the `compute-tag` job that figures out the next RC number and pushes the tag. No build yet — just tagging.
 
-- [ ] **Step 1: Create `.github/workflows/rc-build.yml`**
+- [x] **Step 1: Create `.github/workflows/rc-build.yml`**
 
 ```yaml
 name: RC Build
@@ -145,14 +145,14 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 ```
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/rc-build.yml')); print('YAML OK')"
 ```
 Expected: `YAML OK`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/rc-build.yml
@@ -168,7 +168,7 @@ git commit -m "scaffold rc-build workflow with tag computation"
 
 This task adds the `build` job: PlatformIO setup, cache, matrix build for both boards, `esptool.py merge_bin`, and artifact upload (to the workflow run, not the release — that's Task 3).
 
-- [ ] **Step 1: Add the `build` job after `compute-tag`**
+- [x] **Step 1: Add the `build` job after `compute-tag`**
 
 Append this job to `.github/workflows/rc-build.yml`:
 
@@ -283,13 +283,13 @@ Notes for the implementer:
 - All `esptool.py merge_bin` parameters are passed via env vars (safe pattern per the security reminder hook).
 - `actions/upload-artifact@v4` stores the per-board artifacts temporarily (5-day retention). The `release` job (Task 3) downloads them.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/rc-build.yml')); print('YAML OK')"
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/rc-build.yml
@@ -305,7 +305,7 @@ git commit -m "add matrix build and artifact packaging to rc-build"
 
 This task adds the `release` job that downloads all build artifacts and creates a GitHub Pre-release.
 
-- [ ] **Step 1: Add the `release` job after `build`**
+- [x] **Step 1: Add the `release` job after `build`**
 
 Append this job to `.github/workflows/rc-build.yml`:
 
@@ -346,13 +346,13 @@ Notes for the implementer:
 - The `--repo` flag uses `GITHUB_REPOSITORY` (e.g., `battlesloth/AstrOs.ESP`) to be explicit.
 - `artifacts/*` globs all six files (3 per board × 2 boards).
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/rc-build.yml')); print('YAML OK')"
 ```
 
-- [ ] **Step 3: Verify the complete workflow structure**
+- [x] **Step 3: Verify the complete workflow structure**
 
 ```bash
 python3 -c "
@@ -366,7 +366,7 @@ print('Structure OK')
 "
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/rc-build.yml
@@ -385,7 +385,7 @@ This workflow is structurally similar to `rc-build.yml` but differs in:
 - Tag computation: `v<MAJOR>.<MINOR>.<PATCH>` (auto-incremented) instead of `v<BASE>-RC.<N>`
 - Release type: full release instead of pre-release
 
-- [ ] **Step 1: Create `.github/workflows/release-build.yml`**
+- [x] **Step 1: Create `.github/workflows/release-build.yml`**
 
 ```yaml
 name: Release Build
@@ -583,13 +583,13 @@ Key differences from `rc-build.yml`:
 - `gh release create` does NOT include `--prerelease` — this is a full release
 - Concurrency group includes `${{ github.ref }}` so different release lines (`release/rel_1.0` vs `release/rel_1.1`) can build in parallel
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release-build.yml')); print('YAML OK')"
 ```
 
-- [ ] **Step 3: Verify job structure**
+- [x] **Step 3: Verify job structure**
 
 ```bash
 python3 -c "
@@ -603,7 +603,7 @@ print('Structure OK')
 "
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/release-build.yml
@@ -619,7 +619,7 @@ git commit -m "add release-build workflow for stable releases"
 
 Deferred from Phase 2 per user direction. A weekly cron job that builds both boards to keep the PlatformIO cache warm. This ensures the first PR after an idle period doesn't hit a cold-cache 10-minute build.
 
-- [ ] **Step 1: Create `.github/workflows/cache-warm.yml`**
+- [x] **Step 1: Create `.github/workflows/cache-warm.yml`**
 
 ```yaml
 name: Cache Warm
@@ -674,13 +674,13 @@ Notes for the implementer:
 - The cache key matches the PR validation and RC/release build keys exactly — a warm run here benefits all other workflows.
 - No artifact packaging or release creation — this is purely about cache maintenance.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/cache-warm.yml')); print('YAML OK')"
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/cache-warm.yml
@@ -696,11 +696,11 @@ git commit -m "add weekly cache-warming workflow"
 
 Document the release workflow, VERSION-file bump process, and release branch conventions so future sessions follow the correct workflow.
 
-- [ ] **Step 1: Read CLAUDE.md and find the insertion point**
+- [x] **Step 1: Read CLAUDE.md and find the insertion point**
 
 Read `CLAUDE.md` to find the "Branching and merge workflow" section added in Phase 2. The new content extends that section with release-specific guidance.
 
-- [ ] **Step 2: Add release workflow documentation**
+- [x] **Step 2: Add release workflow documentation**
 
 After the existing "Branching and merge workflow" section's bullet about `release/rel_X.Y` branches, add:
 
@@ -714,7 +714,7 @@ After the existing "Branching and merge workflow" section's bullet about `releas
 5. **Cache warming** — `.github/workflows/cache-warm.yml` runs weekly (Monday 06:00 UTC) to keep the PlatformIO cache warm. Can also be triggered manually.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md
