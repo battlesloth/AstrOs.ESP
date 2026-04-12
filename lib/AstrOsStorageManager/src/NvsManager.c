@@ -13,7 +13,7 @@ static void setKeyId(char *key, uint8_t id, uint8_t startPos)
 {
     if (id > 99)
     {
-        ESP_LOGE(TAG, "Peer index %d exceeds maximum of 99", id);
+        ESP_LOGE(TAG, "Peer index %u exceeds maximum of 99", (unsigned)id);
         return;
     }
     key[startPos] = '0' + (id / 10);
