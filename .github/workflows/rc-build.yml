@@ -1,0 +1,57 @@
+name: RC Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize RC builds — two merges racing must not compute the same tag number.
+concurrency:
+  group: rc-build
+  cancel-in-progress: false
+
+jobs:
+  compute-tag:
+    name: Compute next RC tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and push next RC tag
+        id: tag
+        run: |
+          set -euo pipefail
+
+          BASE_VERSION=$(cat VERSION)
+          echo "Base version from VERSION file: ${BASE_VERSION}"
+
+          # Find the highest existing RC tag for this base version.
+          LAST_RC=$(git tag -l "v${BASE_VERSION}-RC.*" | sort -t. -k4 -n | tail -1)
+
+          if [ -z "$LAST_RC" ]; then
+            NEXT_N=1
+          else
+            CURRENT_N=$(echo "$LAST_RC" | grep -oP 'RC\.\K\d+')
+            NEXT_N=$((CURRENT_N + 1))
+          fi
+
+          TAG="v${BASE_VERSION}-RC.${NEXT_N}"
+          VERSION="${TAG#v}"
+          echo "Creating tag: ${TAG} (version: ${VERSION})"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "RC build ${VERSION}"
+          git push origin "${TAG}"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
