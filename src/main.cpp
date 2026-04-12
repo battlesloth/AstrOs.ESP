@@ -398,7 +398,7 @@ static void pollingTimerCallback(void *arg)
             msg.eventType = POLL_PADAWANS;
             polling = true;
 
-            char *fingerprint = (char *)malloc(37);
+            char fingerprint[37];
             AstrOs_Storage.getControllerFingerprint(fingerprint);
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint), true);
         }
