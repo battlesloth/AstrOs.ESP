@@ -119,3 +119,41 @@ jobs:
 
       - name: Run native unit tests
         run: pio test -e test
+
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel the other board if one fails — we want to see both results.
+      fail-fast: false
+      matrix:
+        env: [lolin_d32_pro, metro_s3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # version_gen.py runs `git describe --tags --abbrev=0` to compute
+          # the version string. fetch-depth: 0 ensures all tags are present.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO core
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('platformio.ini', 'sdkconfig.lolin_d32_pro', 'sdkconfig.metro_s3', 'dependencies.lock') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.env }}-
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: |
+          set -euo pipefail
+          pip install --upgrade platformio
+          pio --version
+
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
