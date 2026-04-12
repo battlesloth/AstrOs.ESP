@@ -75,9 +75,3 @@ TEST(StringUtils, splitStringWithWindowsLineEndings)
     EXPECT_STREQ("PART2", parts[1].c_str());
     EXPECT_STREQ("PART3", parts[2].c_str());
 }
-
-// CANARY: deliberate failure to verify CI catches native test failures.
-TEST(CanaryTest, AlwaysFails)
-{
-    EXPECT_EQ(1, 2) << "CANARY: this test is designed to fail";
-}
