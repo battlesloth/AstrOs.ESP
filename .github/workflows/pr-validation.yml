@@ -1,0 +1,27 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+      - 'release/rel_*'
+  workflow_dispatch:
+
+# Cancel in-flight runs when a new commit is pushed to the same PR.
+# (Phase 3 release/RC workflows will use cancel-in-progress: false to serialize on tag counts.)
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Jobs added in subsequent tasks:
+  #   Task 2 — messaging-purity
+  #   Task 3 — clang-format
+  #   Task 4 — native-tests
+  #   Task 5 — build (matrix over lolin_d32_pro + metro_s3)
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "scaffolding only — replaced in Task 2"
