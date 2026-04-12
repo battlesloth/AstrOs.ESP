@@ -1,6 +1,6 @@
 # CI Phase 2 — PR Validation Workflow Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or superpowers:subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a single GitHub Actions workflow (`.github/workflows/pr-validation.yml`) that runs four checks against every pull request: native unit tests, both-board firmware compile, AstrOsMessaging native-purity guard, and changed-files clang-format.
 
@@ -75,12 +75,12 @@ These are facts about the current state of the repo as of plan-writing time. Ver
 **Files:**
 - Modify: `.docs/plans/20260411-1811-ci-phase2-pr-validation.md` (this file)
 
-- [ ] **Step 1: Confirm branch state**
+- [x] **Step 1: Confirm branch state**
 
 Run: `git branch --show-current && git status`
 Expected: branch is `ci/phase2-pr-validation`, working tree clean.
 
-- [ ] **Step 2: Confirm the plan file is committed**
+- [x] **Step 2: Confirm the plan file is committed**
 
 Run: `git log --oneline -1 -- .docs/plans/20260411-1811-ci-phase2-pr-validation.md`
 Expected: shows the commit that introduced this plan file. If empty, commit it now with:
@@ -99,7 +99,7 @@ git commit -m "add Phase 2 PR validation plan"
 
 The first task creates the workflow file with header, triggers, concurrency configuration, and an empty `jobs:` block. Subsequent tasks add one job at a time.
 
-- [ ] **Step 1: Create the directory and skeleton file**
+- [x] **Step 1: Create the directory and skeleton file**
 
 Run: `mkdir -p .github/workflows`
 
@@ -137,7 +137,7 @@ jobs:
 
 The `noop` job is a temporary placeholder so the YAML is valid as a standalone commit. Task 2 deletes it as part of adding the first real job.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 If `actionlint` is installed locally, run:
 ```bash
@@ -151,16 +151,16 @@ python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr-validation.ym
 ```
 Expected: no output (success). Any error here means the file has a syntax problem and must be fixed before committing.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/pr-validation.yml
 git commit -m "scaffold pr-validation workflow with triggers and concurrency"
 ```
 
-- [ ] **Step 4: Update plan**
+- [x] **Step 4: Update plan**
 
-Edit this plan file: change `- [ ]` to `- [x]` for each Task 1 step. Stage and commit:
+Edit this plan file: change `- [x]` to `- [x]` for each Task 1 step. Stage and commit:
 ```bash
 git add .docs/plans/20260411-1811-ci-phase2-pr-validation.md
 git commit -m "mark Phase 2 Task 1 complete"
@@ -177,7 +177,7 @@ git commit -m "mark Phase 2 Task 1 complete"
 
 This is the simplest job: a single grep over `lib/AstrOsMessaging/`. No toolchain install, no cache, runs in seconds. Doing it first builds confidence that the workflow file structure is correct.
 
-- [ ] **Step 1: Replace the `noop` placeholder with the real `messaging-purity` job**
+- [x] **Step 1: Replace the `noop` placeholder with the real `messaging-purity` job**
 
 In `.github/workflows/pr-validation.yml`, delete the `noop:` block and replace it with:
 
@@ -207,28 +207,28 @@ Notes for the implementer:
 - `set -euo pipefail` is important in `run:` blocks. Without it, an undefined variable or pipeline failure would silently succeed.
 - The `if grep ... ; then ... ; fi` shape relies on grep's exit codes: 0 = match found (we want to fail), 1 = no match (we want to pass), 2 = error (we treat as pass — extremely unlikely on a clean checkout).
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr-validation.yml'))"
 ```
 Expected: no output.
 
-- [ ] **Step 3: Locally smoke-test the grep itself**
+- [x] **Step 3: Locally smoke-test the grep itself**
 
 ```bash
 grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/)' lib/AstrOsMessaging/ && echo "FAIL" || echo "OK"
 ```
 Expected: `OK` (no forbidden includes today). If it prints `FAIL`, that means the library already has a violation that must be cleaned up before this check can land — stop and ask the user.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/pr-validation.yml
 git commit -m "add messaging-purity job to pr-validation workflow"
 ```
 
-- [ ] **Step 5: Update plan checkboxes**
+- [x] **Step 5: Update plan checkboxes**
 
 Mark Task 2 steps as `- [x]` in this plan file. Commit the plan update either now or roll it into the next task's commit.
 
@@ -241,7 +241,7 @@ Mark Task 2 steps as `- [x]` in this plan file. Commit the plan update either no
 
 This job installs a pinned clang-format and runs it against only the C/C++ files changed in the PR (grandfathering untouched files until a future full-tree reformat).
 
-- [ ] **Step 1: Append the `clang-format` job to `.github/workflows/pr-validation.yml`**
+- [x] **Step 1: Append the `clang-format` job to `.github/workflows/pr-validation.yml`**
 
 Add this block underneath the `messaging-purity` job (note the two-space indentation matches the other job):
 
@@ -306,21 +306,21 @@ Notes for the implementer:
 - The fall-back path for `workflow_dispatch` is intentional: it lets you manually re-trigger the check via the Actions tab without a PR context. Without this branch, a manual run would crash on the empty `BASE_SHA`.
 - The `xargs -d '\n'` form correctly handles file paths containing spaces. Paths in this repo don't have spaces today, but it's free protection.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr-validation.yml'))"
 ```
 Expected: no output.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/pr-validation.yml
 git commit -m "add pinned clang-format check (changed files only) to pr-validation"
 ```
 
-- [ ] **Step 4: Update plan checkboxes**
+- [x] **Step 4: Update plan checkboxes**
 
 Mark Task 3 as complete in the plan file.
 
@@ -333,7 +333,7 @@ Mark Task 3 as complete in the plan file.
 
 This job installs PlatformIO and runs `pio test -e test`, which builds the googletest-based suite under `test/test_native/` against host g++.
 
-- [ ] **Step 1: Append the `native-tests` job to `.github/workflows/pr-validation.yml`**
+- [x] **Step 1: Append the `native-tests` job to `.github/workflows/pr-validation.yml`**
 
 Add this block underneath the `clang-format` job:
 
@@ -376,28 +376,28 @@ Notes for the implementer:
 - `pio test -e test` exits non-zero on test failure, which is exactly the behavior we want for a CI gate. No additional flags needed.
 - The cache key segment `test` (between `${{ runner.os }}` and the hash) is what isolates this job's cache from the matrix-build job's caches in Task 5. Without per-job key segments, all jobs would fight over the same cache slot.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr-validation.yml'))"
 ```
 Expected: no output.
 
-- [ ] **Step 3: Locally smoke-test the test invocation**
+- [x] **Step 3: Locally smoke-test the test invocation**
 
 ```bash
 pio test -e test
 ```
 Expected: tests pass (or, if you have `StringUtils.GetMessageAt` disabled per commit `c0ccfd3`, that test is skipped). If tests fail locally on a clean working tree, stop and ask the user — that means CI will be broken on day one.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/pr-validation.yml
 git commit -m "add native-tests job (pio test -e test) to pr-validation"
 ```
 
-- [ ] **Step 5: Update plan checkboxes**
+- [x] **Step 5: Update plan checkboxes**
 
 Mark Task 4 as complete.
 
@@ -410,7 +410,7 @@ Mark Task 4 as complete.
 
 This is the most expensive job: matrix-builds both ESP32 firmware variants. Cold runs ~10 min per board; warm runs ~2-3 min per board (per the design doc estimate).
 
-- [ ] **Step 1: Append the `build` job to `.github/workflows/pr-validation.yml`**
+- [x] **Step 1: Append the `build` job to `.github/workflows/pr-validation.yml`**
 
 Add this block underneath the `native-tests` job:
 
@@ -460,28 +460,28 @@ Notes for the implementer:
 - Both sdkconfig files are in the hash key intentionally — touching only `sdkconfig.metro_s3` will still bust the `lolin_d32_pro` cache, which is a slight over-invalidation but keeps the key simple and correct. Phase 3 can refine this if cold-build minutes become a problem.
 - `pio run` (no `-t upload`, no `-t monitor`) builds only — does not flash or open serial. Correct for CI.
 
-- [ ] **Step 2: Verify YAML syntax**
+- [x] **Step 2: Verify YAML syntax**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr-validation.yml'))"
 ```
 Expected: no output.
 
-- [ ] **Step 3: Locally smoke-test both builds**
+- [x] **Step 3: Locally smoke-test both builds**
 
 ```bash
 pio run -e lolin_d32_pro && pio run -e metro_s3
 ```
 Expected: both builds succeed. If either fails on a clean working tree, stop and ask the user — CI will break on day one. (Note: `lolin_d32_pro` was just fixed in commit `bfc5114` for the SPIRAM IRAM overflow issue; verify that fix is still present.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/pr-validation.yml
 git commit -m "add both-board build matrix job to pr-validation"
 ```
 
-- [ ] **Step 5: Update plan checkboxes**
+- [x] **Step 5: Update plan checkboxes**
 
 Mark Task 5 as complete.
 
@@ -494,11 +494,11 @@ Mark Task 5 as complete.
 
 The user established the new branching etiquette on 2026-04-11: no direct commits to `main`; work flows through `develop` and integrates via PR. This rule needs to be in CLAUDE.md so future Claude Code sessions (and human contributors reading CLAUDE.md) follow it.
 
-- [ ] **Step 1: Read the existing CLAUDE.md to find the right insertion point**
+- [x] **Step 1: Read the existing CLAUDE.md to find the right insertion point**
 
 Run: read `CLAUDE.md` end-to-end and identify the section "Conventions worth knowing" or a similar process-oriented section. The new content should slot in as a clearly-titled subsection near the top (so it's seen early), or under "Conventions worth knowing" if that flows better.
 
-- [ ] **Step 2: Add the branching workflow section**
+- [x] **Step 2: Add the branching workflow section**
 
 Insert this content (adjust the heading level to match surrounding sections):
 
@@ -512,14 +512,14 @@ Insert this content (adjust the heading level to match surrounding sections):
 - **When using Claude Code** to commit on this repo: always confirm `git branch --show-current` is not `main` before committing. If it is, stop and switch to `develop` (or a feature branch) first.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md
 git commit -m "document develop branch workflow and PR validation in CLAUDE.md"
 ```
 
-- [ ] **Step 4: Update plan checkboxes**
+- [x] **Step 4: Update plan checkboxes**
 
 Mark Task 6 as complete.
 
