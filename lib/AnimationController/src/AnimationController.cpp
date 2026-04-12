@@ -26,7 +26,10 @@ AnimationController::AnimationController()
     this->queueing = false;
 }
 
-AnimationController::~AnimationController() {}
+AnimationController::~AnimationController()
+{
+    vSemaphoreDelete(this->animationMutex);
+}
 
 void AnimationController::panicStop()
 {
