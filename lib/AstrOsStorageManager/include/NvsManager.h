@@ -5,8 +5,8 @@ extern "C"
 {
 #endif
 
-#include <AstrOsUtility.h>
 #include <AstrOsEspNow_c.h>
+#include <AstrOsUtility.h>
 
     // save the service configuration to NVS
     bool nvsSaveServiceConfig(svc_config_t config);
@@ -24,13 +24,13 @@ extern "C"
     bool nvsGetControllerFingerprint(char *fingerprint);
 
     // saves a single servo config
-    //bool nvsSaveServoConfig(int boardId, servo_channel config);
+    // bool nvsSaveServoConfig(int boardId, servo_channel config);
 
     // saves the servo config
     // bool nvsSaveServoConfig(int boardId, servo_channel *config, int arraySize);
 
     // gets the servo config
-    //bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize);
+    // bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize);
 
     // saves single espnow peer config
     bool nvsSaveEspNowPeer(espnow_peer_t config);

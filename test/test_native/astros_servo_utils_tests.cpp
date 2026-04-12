@@ -1,10 +1,10 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
 #include <AstrOsServoUtils.hpp>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 TEST(ServoUtils, GetMicroSecondsAsStep)
 {
-    auto freq = 50.0; // 50 Hz
+    auto freq = 50.0;                // 50 Hz
     auto freq_us = 1000000.0 / freq; // frequency in microseconds
 
     auto step1 = GetMicroSecondsAsStep(500, freq_us);
@@ -18,13 +18,13 @@ TEST(ServoUtils, GetMicroSecondsAsStep)
 
 TEST(ServoUtils, GetMicroSecondsAsMapPosition)
 {
-    auto freq = 50; // 50 Hz
+    auto freq = 50;                 // 50 Hz
     auto freq_us = 1000000l / freq; // frequency in microseconds
 
     auto positionA = MicroSecondsToMapPosition(500, freq_us, 102, 512, 360);
     auto positionB = MicroSecondsToMapPosition(1200, freq_us, 102, 512, 360);
     auto positionC = MicroSecondsToMapPosition(2500, freq_us, 102, 512, 360);
-    
+
     EXPECT_EQ(0, positionA);
     EXPECT_EQ(126, positionB);
     EXPECT_EQ(359, positionC);
@@ -36,7 +36,7 @@ TEST(ServoUtils, CalculateStepMap)
 
     auto step = CalculateStepMap(50, map, 360);
 
-    EXPECT_EQ(1.1389, std::round(step * 10000 ) / 10000.0);
+    EXPECT_EQ(1.1389, std::round(step * 10000) / 10000.0);
 
     EXPECT_EQ(102, (int)map[0]);
 
@@ -48,11 +48,10 @@ TEST(ServoUtils, CalculateStepMap)
 }
 
 TEST(ServoUtils, GetRelativeRequestedPosition)
-{    
+{
     auto positionA = GetRelativeRequestedPosition(0, 359, 0);
     auto positionB = GetRelativeRequestedPosition(0, 359, 50);
     auto positionC = GetRelativeRequestedPosition(0, 359, 100);
-
 
     auto positionD = GetRelativeRequestedPosition(33, 326, 0);
     auto positionE = GetRelativeRequestedPosition(33, 326, 50);
@@ -61,7 +60,7 @@ TEST(ServoUtils, GetRelativeRequestedPosition)
     auto positionG = GetRelativeRequestedPosition(179, 326, 0);
     auto positionH = GetRelativeRequestedPosition(179, 326, 50);
     auto positionI = GetRelativeRequestedPosition(179, 326, 100);
-    
+
     EXPECT_EQ(0, positionA);
     EXPECT_EQ(179, positionB);
     EXPECT_EQ(359, positionC);

@@ -1,25 +1,23 @@
 #include <pca9685.hpp>
 
-#include <esp_system.h>
 #include <driver/i2c.h>
-#include <math.h>
 #include <esp_log.h>
-
+#include <esp_system.h>
+#include <math.h>
 
 Pca9685::Pca9685() {}
 Pca9685::~Pca9685() {}
 
-/// @brief 
-/// @param i2cMaster 
-/// @param addr 
-/// @param frequency 
+/// @brief
+/// @param i2cMaster
+/// @param addr
+/// @param frequency
 /// @param slop positive value decreases frequency
-/// @return 
+/// @return
 esp_err_t Pca9685::Init(I2cMaster i2cMaster, uint8_t addr, uint16_t frequency, int slop)
 {
     this->i2cMaster = i2cMaster;
     this->address = addr;
-   
 
     if (!this->i2cMaster.DeviceExists(this->address))
     {
@@ -43,7 +41,7 @@ esp_err_t Pca9685::Init(I2cMaster i2cMaster, uint8_t addr, uint16_t frequency, i
 }
 
 /// @brief Get I2c address of the PCA9685
-/// @return 
+/// @return
 uint8_t Pca9685::GetAddress()
 {
     return this->address;
@@ -51,9 +49,9 @@ uint8_t Pca9685::GetAddress()
 
 /// @brief Sets the frequency of the PCA9685. Page 25 of the datasheet
 // documents the process and has formula for calculating the frequency prescale.
-/// @param freq 
+/// @param freq
 /// @param slop this value is to compensate the clock inconsistancy, the default value is 1
-/// @return 
+/// @return
 bool Pca9685::SetFrequency(uint16_t freq, int slop)
 {
     this->frequency = freq;
@@ -78,13 +76,13 @@ bool Pca9685::SetFrequency(uint16_t freq, int slop)
     {
         return false;
     }
-    
+
     // waitfor oscillator to stabilize
-    vTaskDelay( 10 / portTICK_PERIOD_MS);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
 
     // reset again
     Pca9685::reset();
-    
+
     // Write 0xa0 for auto increment LED0_x after received cmd
     return this->i2cMaster.WriteByte(this->address, MODE1, 0xa0);
 }
@@ -120,10 +118,11 @@ bool Pca9685::GetPwm(uint8_t channel, uint16_t *on, uint16_t *off)
 
 bool Pca9685::reset()
 {
-   return this->i2cMaster.WriteByte(this->address, MODE1, 0x80);
+    return this->i2cMaster.WriteByte(this->address, MODE1, 0x80);
 }
 
-bool Pca9685::getPWMDetail(uint8_t channel, uint8_t *dataReadOn0, uint8_t *dataReadOn1, uint8_t *dataReadOff0, uint8_t *dataReadOff1)
+bool Pca9685::getPWMDetail(uint8_t channel, uint8_t *dataReadOn0, uint8_t *dataReadOn1, uint8_t *dataReadOff0,
+                           uint8_t *dataReadOff1)
 {
     uint8_t pinAddress = 0x6 + 4 * channel;
     uint16_t readOn0;
@@ -136,10 +135,9 @@ bool Pca9685::getPWMDetail(uint8_t channel, uint8_t *dataReadOn0, uint8_t *dataR
 
     *dataReadOn0 = readOn0 & 0xff;
     *dataReadOn1 = readOn0 >> 8;
-     
 
     pinAddress = 0x8 + 4 * channel;
-    
+
     if (this->i2cMaster.ReadTwoWords(this->address, pinAddress, &readOn0, &readOn1))
     {
         return false;

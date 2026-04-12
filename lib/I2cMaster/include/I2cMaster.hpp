@@ -14,7 +14,6 @@
 class I2cMaster
 {
 private:
-
 public:
     I2cMaster();
     ~I2cMaster();
@@ -30,8 +29,6 @@ public:
     bool ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data);
     bool ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1, uint16_t *data2);
 };
-
-
 
 extern I2cMaster i2cMaster;
 

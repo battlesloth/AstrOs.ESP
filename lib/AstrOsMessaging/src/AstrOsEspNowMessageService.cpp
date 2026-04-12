@@ -2,9 +2,9 @@
 #include <AstrOsStringUtils.hpp>
 
 #include <cmath>
-#include <string>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
+#include <string>
 
 AstrOsEspNowMessageService::AstrOsEspNowMessageService()
 {
@@ -32,11 +32,10 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::SERVO_TEST_ACK] = AstrOsENC::SERVO_TEST_ACK;
 }
 
-AstrOsEspNowMessageService::~AstrOsEspNowMessageService()
-{
-}
+AstrOsEspNowMessageService::~AstrOsEspNowMessageService() {}
 
-std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac, std::string message)
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(AstrOsPacketType type, std::string mac,
+                                                                                std::string message)
 {
     if (this->packetTypeMap.find(type) == this->packetTypeMap.end())
     {
@@ -48,7 +47,8 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateEspNowMsg(
     return AstrOsEspNowMessageService::generatePackets(type, msg);
 }
 
-std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type, std::string message)
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(AstrOsPacketType type,
+                                                                              std::string message)
 {
     std::vector<astros_espnow_data_t> packets;
 
@@ -135,8 +135,8 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
     return parsedPacket;
 }
 
-/// @brief validates that the packet payload contains the expected validator and returns the number of bytes to remove from the payload
-/// to remove validator, a -1 indicates the packet is invalid
+/// @brief validates that the packet payload contains the expected validator and returns the number of bytes to remove
+/// from the payload to remove validator, a -1 indicates the packet is invalid
 /// @param packet
 /// @return number of bytes to remove from the payload
 int AstrOsEspNowMessageService::validatePacket(astros_packet_t packet)

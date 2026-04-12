@@ -3,9 +3,9 @@
 
 #include <AnimationCommand.hpp>
 
+#include <driver/uart.h>
 #include <esp_system.h>
 #include <string>
-#include <driver/uart.h>
 
 typedef struct
 {
@@ -21,12 +21,13 @@ class SerialModule
 private:
     void SendData(int baud, const uint8_t *data, size_t size);
     esp_err_t InstallSerial(uart_port_t port, int tx, int rx, int baud);
-   
+
     uart_port_t port;
     int tx;
     int rx;
     int defaultBaudrate;
     bool isMaster;
+
 public:
     SerialModule(/* args */);
     ~SerialModule();

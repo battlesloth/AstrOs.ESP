@@ -1,17 +1,13 @@
 #include "AstrOsDisplay.hpp"
 #include <AstrOsUtility.h>
-#include <string.h>
 #include <esp_log.h>
+#include <string.h>
 
 static const char *TAG = "AstrOsDisplay";
 
-AstrOsDisplayService::AstrOsDisplayService()
-{
-}
+AstrOsDisplayService::AstrOsDisplayService() {}
 
-AstrOsDisplayService::~AstrOsDisplayService()
-{
-}
+AstrOsDisplayService::~AstrOsDisplayService() {}
 
 void AstrOsDisplayService::init(QueueHandle_t i2cQueue)
 {

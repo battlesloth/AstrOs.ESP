@@ -2,10 +2,10 @@
 #include <AstrOsStringUtils.hpp>
 
 #include <cmath>
-#include <string>
-#include <sstream>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
+#include <sstream>
+#include <string>
 
 AstrOsSerialMessageService::AstrOsSerialMessageService()
 {
@@ -35,11 +35,10 @@ AstrOsSerialMessageService::AstrOsSerialMessageService()
     };
 }
 
-AstrOsSerialMessageService::~AstrOsSerialMessageService()
-{
-}
+AstrOsSerialMessageService::~AstrOsSerialMessageService() {}
 
-/// @brief validates serial messages by comparing the header to the expected values. Header consists of 2 parts, type enum and validation string
+/// @brief validates serial messages by comparing the header to the expected values. Header consists of 2 parts, type
+/// enum and validation string
 /// @param header serial message header
 /// @return is valid
 astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std::string msg)
@@ -90,14 +89,16 @@ std::string AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType t
     auto validation = this->msgTypeMap[type];
 
     std::stringstream ss;
-    ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation << RECORD_SEPARATOR << msgId << GROUP_SEPARATOR;
+    ss << std::to_string(static_cast<int>(type)) << RECORD_SEPARATOR << validation << RECORD_SEPARATOR << msgId
+       << GROUP_SEPARATOR;
     return ss.str();
 }
 
 /// @brief generates a registration sync acknowledgment message which contains a list of registered controlellers
 /// @param peers list of registered controllers
 /// @return serial message
-std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId, std::vector<astros_peer_data_t> controllers)
+std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId,
+                                                               std::vector<astros_peer_data_t> controllers)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::REGISTRATION_SYNC_ACK, msgId);
@@ -119,7 +120,8 @@ std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId
 /// @param name peer controller
 /// @param fingerprint configuration fingerprint
 /// @return serial message
-std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::string controller, std::string fingerprint)
+std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::string controller,
+                                                   std::string fingerprint)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
@@ -145,7 +147,8 @@ std::string AstrOsSerialMessageService::getPollNak(std::string macAddress, std::
 /// @param controller peer controller
 /// @param id message id
 /// @return serial message
-std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType type, std::string msgId, std::string macAddress, std::string controller, std::string data)
+std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType type, std::string msgId,
+                                                       std::string macAddress, std::string controller, std::string data)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(type, msgId);
@@ -171,7 +174,9 @@ std::string AstrOsSerialMessageService::getRegistrationSync(std::string msgId)
 /// @param controllers list of controllers to deploy the config to
 /// @param configs list of configs to deploy, indexed to controllers list
 /// @return serial message
-std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::vector<std::string> macs, std::vector<std::string> controllers, std::vector<std::string> configs)
+std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::vector<std::string> macs,
+                                                        std::vector<std::string> controllers,
+                                                        std::vector<std::string> configs)
 {
     if (controllers.size() != configs.size())
     {
@@ -183,7 +188,8 @@ std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::
 
     for (size_t i = 0; i < controllers.size(); i++)
     {
-        ss << macs[i] << UNIT_SEPARATOR << controllers[i] << UNIT_SEPARATOR << "32" << UNIT_SEPARATOR << configs[i] << RECORD_SEPARATOR;
+        ss << macs[i] << UNIT_SEPARATOR << controllers[i] << UNIT_SEPARATOR << "32" << UNIT_SEPARATOR << configs[i]
+           << RECORD_SEPARATOR;
     }
 
     std::string message = ss.str();
@@ -198,7 +204,9 @@ std::string AstrOsSerialMessageService::getDeployConfig(std::string msgId, std::
 /// @param controllers list of controllers to deploy the script to
 /// @param scripts list of scripts to deploy, indexed to controllers list
 /// @return serial message
-std::string AstrOsSerialMessageService::getDeployScript(std::string msgId, std::string scriptId, std::vector<std::string> controllers, std::vector<std::string> scripts)
+std::string AstrOsSerialMessageService::getDeployScript(std::string msgId, std::string scriptId,
+                                                        std::vector<std::string> controllers,
+                                                        std::vector<std::string> scripts)
 {
     if (controllers.size() != scripts.size())
     {
@@ -270,7 +278,8 @@ std::string AstrOsSerialMessageService::getFormatSD(std::string msgId)
 /// @param controller controller to run the command on
 /// @param data data to send
 /// @return serial message
-std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::string macAddress, std::string controller, std::string data)
+std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::string macAddress, std::string controller,
+                                                     std::string data)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::SERVO_TEST, msgId);

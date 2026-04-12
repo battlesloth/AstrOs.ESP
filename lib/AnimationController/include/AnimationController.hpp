@@ -3,8 +3,8 @@
 
 #include <AnimationCommand.hpp>
 
-#include <string>
 #include <array>
+#include <string>
 
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
@@ -23,7 +23,6 @@ typedef struct
 class AnimationController
 {
 private:
-
     SemaphoreHandle_t animationMutex;
 
     // script queue

@@ -1,27 +1,27 @@
 #include <AstrOsEspNowService.hpp>
-#include <AstrOsUtility_ESP.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
+#include <AstrOsUtility_ESP.h>
 
-#include <esp_err.h>
-#include <esp_now.h>
-#include <esp_log.h>
-#include <string.h>
-#include <string>
-#include <sstream>
 #include <algorithm>
+#include <esp_err.h>
+#include <esp_log.h>
+#include <esp_mac.h>
+#include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
-#include <esp_mac.h>
+#include <sstream>
+#include <string.h>
+#include <string>
 
-#include <esp_netif.h>
-#include <esp_wifi.h>
-#include <esp_now.h>
-#include <esp_crc.h>
-#include <esp_wifi_types.h>
-#include <esp_timer.h>
 #include <AstrOsInterfaceResponseMsg.hpp>
+#include <esp_crc.h>
+#include <esp_netif.h>
+#include <esp_now.h>
+#include <esp_timer.h>
+#include <esp_wifi.h>
+#include <esp_wifi_types.h>
 
 static const char *TAG = "AstrOsEspNow";
 SemaphoreHandle_t masterMacMutex;
@@ -32,13 +32,9 @@ AstrOsEspNow AstrOs_EspNow;
 static void (*espnowSendCallback)(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 static void (*espnowRecvCallback)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
-AstrOsEspNow::AstrOsEspNow()
-{
-}
+AstrOsEspNow::AstrOsEspNow() {}
 
-AstrOsEspNow::~AstrOsEspNow()
-{
-}
+AstrOsEspNow::~AstrOsEspNow() {}
 
 esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
 {
@@ -280,9 +276,7 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
 
     result.clear();
 
-    espnow_peer_t master = {
-        .id = 0,
-        .name = "master"};
+    espnow_peer_t master = {.id = 0, .name = "master"};
 
     memcpy(master.mac_addr, nullMac, ESP_NOW_ETH_ALEN);
 
@@ -463,7 +457,8 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
     std::string padewanName;
     auto s = this->peers.size();
 
-    // if the mac is already in the peer cache, then use the existing name, otherwise assign a new name based on the number of peers
+    // if the mac is already in the peer cache, then use the existing name, otherwise assign a new name based on the
+    // number of peers
     auto it = std::find_if(this->peers.begin(), this->peers.end(), [&](const espnow_peer_t &p)
                            { return AstrOsStringUtils::macToString(p.mac_addr) == macStr; });
     if (it != this->peers.end())
@@ -491,7 +486,8 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
         }
     }
 
-    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
+    astros_espnow_data_t data =
+        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -531,7 +527,8 @@ bool AstrOsEspNow::handleRegistration(uint8_t *src, astros_packet_t packet)
 
     if (!AstrOsStringUtils::caseInsensitiveCmp(mac, this->mac))
     {
-        ESP_LOGI(TAG, "Registraion received for different device: %s, this device is %s", mac.c_str(), this->mac.c_str());
+        ESP_LOGI(TAG, "Registraion received for different device: %s, this device is %s", mac.c_str(),
+                 this->mac.c_str());
         return false;
     }
 
@@ -570,7 +567,8 @@ bool AstrOsEspNow::sendRegistrationAck()
         return false;
     }
 
-    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name)[0];
+    astros_espnow_data_t data =
+        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name)[0];
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -671,7 +669,8 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
 
-    astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
+    astros_espnow_data_t data =
+        this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
@@ -706,8 +705,7 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK,
-                               "", padawanMac, padawan, fingerprint);
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, fingerprint);
 
     return true;
 }
@@ -727,8 +725,7 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
 
             auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
-            this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK,
-                                       "", macStr, peer.name, "");
+            this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK, "", macStr, peer.name, "");
         }
         else
         {
@@ -768,8 +765,7 @@ bool AstrOsEspNow::handleConfig(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG,
-                               parts[1], "", "", parts[2]);
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG, parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -850,8 +846,7 @@ bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
     std::stringstream ss;
     ss << parts[2] << UNIT_SEPARATOR << parts[3];
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT,
-                               parts[1], "", "", ss.str());
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT, parts[1], "", "", ss.str());
 
     return true;
 }
@@ -886,8 +881,7 @@ bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN,
-                               parts[1], "", "", parts[2]);
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN, parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -918,8 +912,7 @@ bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP,
-                               parts[1], "", "", "");
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP, parts[1], "", "", "");
 
     return true;
 }
@@ -954,8 +947,7 @@ bool AstrOsEspNow::handleCommandRun(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND,
-                               parts[1], "", "", parts[2]);
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND, parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -990,8 +982,7 @@ bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD,
-                               parts[1], "", "", "");
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD, parts[1], "", "", "");
 
     return true;
 }
@@ -1022,8 +1013,7 @@ bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST,
-                               parts[1], "", "", parts[2]);
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST, parts[1], "", "", parts[2]);
 
     return true;
 }
@@ -1147,9 +1137,7 @@ std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
     auto payload = std::string((char *)packet.payload, packet.payloadSize);
 
     PacketData packetData = {
-        .packetNumber = packet.packetNumber,
-        .totalPackets = packet.totalPackets,
-        .payload = payload};
+        .packetNumber = packet.packetNumber, .totalPackets = packet.totalPackets, .payload = payload};
 
     auto result = this->packetTracker.addPacket(msgId, packetData, esp_timer_get_time() / 1000);
 
@@ -1223,7 +1211,8 @@ void AstrOsEspNow::sendEspNowMessage(AstrOsPacketType type, std::string peer, st
     free(destMac);
 }
 
-void AstrOsEspNow::sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac, std::string peerName, std::string message)
+void AstrOsEspNow::sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId,
+                                        std::string peerMac, std::string peerName, std::string message)
 {
     auto msgIdSize = msgId.size() + 1;
     auto peerMacSize = peerMac.size() + 1;
@@ -1315,7 +1304,8 @@ esp_err_t AstrOsEspNow::wifiInit(void)
 
     err = esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
-    err = esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+    err = esp_wifi_set_protocol(ESPNOW_WIFI_IF,
+                                WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         return err;

@@ -1,13 +1,12 @@
 #ifndef MAESTROMODULE_HPP
 #define MAESTROMODULE_HPP
 
-#include <string>
 #include <esp_err.h>
 #include <hal/uart_types.h>
+#include <string>
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-
 
 #define BAUD_RATE_INDICATION 0xAA
 #define SET_SERVO_COMMAND 0x84
@@ -41,7 +40,7 @@ private:
     bool loading;
     int idx;
     int baudRate;
-    
+
     QueueHandle_t serialQueue;
     SemaphoreHandle_t mutex;
     void SendCommand(uint8_t *cmd);
@@ -50,6 +49,7 @@ private:
     int getServoPosition(uint8_t channel);
     void getError();
     void sendQueueMsg(uint8_t cmd[], size_t size);
+
 public:
     MaestroModule(QueueHandle_t queue, int idx, int baud);
     ~MaestroModule();
@@ -63,6 +63,5 @@ public:
     // periodically check servos to turn them off
     void CheckServos(int msSinceLastCheck);
 };
-
 
 #endif

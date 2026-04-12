@@ -6,8 +6,8 @@ extern "C"
 {
 #endif
 
-#include <esp_log.h>
 #include <esp_err.h>
+#include <esp_log.h>
 #include <stdbool.h>
 
     // if the esp_err_t != ESP_OK, log the error with the function and line number

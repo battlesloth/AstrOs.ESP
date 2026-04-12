@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: auto-format staged C/C++ files with clang-format.
+#
+# Formats files in-place, re-stages them, and prints which files were
+# reformatted. The commit proceeds with clean formatting automatically.
+#
+# Activate once per clone:
+#   git config core.hooksPath .githooks
+#
+# Requires clang-format on PATH. Install via:
+#   pip install 'clang-format==18.1.8'
+#
+# To bypass this hook in an emergency:
+#   git commit --no-verify
+
+set -euo pipefail
+
+# Find clang-format — check PATH first, then PlatformIO's venv as a fallback.
+if command -v clang-format &>/dev/null; then
+    CF="clang-format"
+elif [ -x "${HOME}/.platformio/penv/bin/clang-format" ]; then
+    CF="${HOME}/.platformio/penv/bin/clang-format"
+else
+    echo "pre-commit: clang-format not found. Skipping format check."
+    echo "  Install with: pip install 'clang-format==18.1.8'"
+    exit 0
+fi
+
+# Collect staged C/C++ files (only added, copied, modified, renamed — not deleted).
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.c' '*.cpp' '*.h' '*.hpp')
+
+if [ -z "$staged_files" ]; then
+    exit 0
+fi
+
+reformatted=()
+
+for file in $staged_files; do
+    # Skip files in components/ (vendor code) and generated files.
+    case "$file" in
+        components/*|*/version_generated.hpp) continue ;;
+    esac
+
+    # Capture the file before formatting.
+    before=$(git hash-object "$file")
+
+    # Format in-place.
+    "$CF" -i "$file"
+
+    # Check if anything changed.
+    after=$(git hash-object "$file")
+    if [ "$before" != "$after" ]; then
+        reformatted+=("$file")
+        # Re-stage the formatted version.
+        git add "$file"
+    fi
+done
+
+if [ ${#reformatted[@]} -gt 0 ]; then
+    echo "pre-commit: clang-format reformatted ${#reformatted[@]} file(s):"
+    for f in "${reformatted[@]}"; do
+        echo "  $f"
+    done
+fi

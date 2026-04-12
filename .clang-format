@@ -1,15 +1,25 @@
 ---
 # AstrOs.ESP C/C++ formatting rules.
-# Based on LLVM defaults with three overrides:
-#   - 4-space indent (matches existing codebase)
-#   - 120-column limit (fits two panes side-by-side on a typical monitor)
-#   - PointerAlignment: Left (matches `char *foo` pattern used throughout)
+# Based on LLVM defaults with overrides chosen to match the existing codebase,
+# which uses Allman brace style, 4-space indent, and a 120-column limit.
 #
-# Phase 1 only lays down this file. Phase 2 adds a CI check that
-# runs `clang-format --dry-run --Werror` against changed files only
-# (grandfathering untouched existing files).
+# Phase 1 laid down this file; Phase 2 calibrated it against the actual
+# codebase and ran a full-repo reformat to establish a clean baseline.
+#
+# Overrides (relative to LLVM defaults):
+#   IndentWidth: 4               — matches existing code
+#   ColumnLimit: 120             — fits two panes side-by-side on a typical monitor
+#   PointerAlignment: Right      — matches the `char *foo` / `uint8_t *data` convention
+#   BreakBeforeBraces: Allman    — brace-on-next-line throughout the codebase
+#   AllowShortFunctionsOnASingleLine: Empty  — collapse empty bodies: `Foo() {}`
+#   AccessModifierOffset: -4     — `public:`/`private:` at column 0 inside classes
+#   NamespaceIndentation: All    — indent inside namespace blocks
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 120
-PointerAlignment: Left
+PointerAlignment: Right
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: Empty
+AccessModifierOffset: -4
+NamespaceIndentation: All
 ---

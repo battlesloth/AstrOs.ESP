@@ -1,13 +1,13 @@
-#include <SerialModule.hpp>
 #include <AnimationCommands.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
+#include <SerialModule.hpp>
 
-#include <esp_system.h>
 #include <driver/uart.h>
 #include <esp_log.h>
-#include <string>
+#include <esp_system.h>
 #include <string.h>
+#include <string>
 
 static const char *TAG = "SerialModule";
 static SemaphoreHandle_t serialMutex;
@@ -87,7 +87,8 @@ void SerialModule::SendCommand(uint8_t *cmd)
 
     auto command = SerialCommand(std::string(reinterpret_cast<char *>(cmd)));
 
-    SerialModule::SendData(command.baudRate, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()), command.GetValue().size());
+    SerialModule::SendData(command.baudRate, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()),
+                           command.GetValue().size());
 }
 
 void SerialModule::SendBytes(int baud, uint8_t *data, size_t size)
@@ -122,9 +123,12 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
                     if (logError(TAG, __FUNCTION__, __LINE__, err))
                     {
                         ESP_LOGE(TAG, "Serial port %d - Failed to set baudrate %d!", this->port, baud);
-                    } else {
-                         auto err = uart_get_baudrate(port, &currentBaud);
-                        if (logError(TAG, __FUNCTION__, __LINE__, err))                        {
+                    }
+                    else
+                    {
+                        auto err = uart_get_baudrate(port, &currentBaud);
+                        if (logError(TAG, __FUNCTION__, __LINE__, err))
+                        {
                             ESP_LOGE(TAG, "Serial port %d - Failed to get baudrate after setting it!", this->port);
                         }
                     }
