@@ -1,7 +1,7 @@
 
-#include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <AstrOsMessaging.hpp>
+#include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsStringUtils.hpp>
 #include <AstrOsUtility.h>
 #include <esp_log.h>
@@ -327,7 +327,8 @@ void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, s
     }
 }
 
-void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name, std::string payload)
+void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac,
+                                                     std::string name, std::string payload)
 {
     auto response = this->msgService.getBasicAckNak(type, msgId, mac, name, payload);
 

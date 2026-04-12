@@ -1,8 +1,8 @@
 #ifndef ASTROSSERIALMSGHANDLER_HPP
 #define ASTROSSERIALMSGHANDLER_HPP
 
-#include <AstrOsMessaging.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
+#include <AstrOsMessaging.hpp>
 
 #include <string>
 #include <vector>
@@ -25,8 +25,8 @@ private:
     void handleBasicCommand(AstrOsSerialMessageType type, std::string msgId, std::string message);
 
     AstrOsInterfaceResponseType getResponseType(AstrOsSerialMessageType type, bool isMaster);
-    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId,
-                              std::string peerMac, std::string peerName, std::string message);
+    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac,
+                              std::string peerName, std::string message);
 
 public:
     AstrOsSerialMsgHandler();
@@ -35,7 +35,8 @@ public:
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
     void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck);
-    void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name, std::string payload);
+    void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name,
+                                 std::string payload);
 };
 
 extern AstrOsSerialMsgHandler AstrOs_SerialMsgHandler;

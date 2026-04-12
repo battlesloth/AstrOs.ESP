@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include <AstrOsUtility.h>
 #include <AstrOsEspNowUtility.h>
+#include <AstrOsUtility.h>
 
 class AstrOsStorageManager
 {

@@ -1,16 +1,16 @@
 #ifndef ASTROSFILEUTILS_H
 #define ASTROSFILEUTILS_H
 
-#include <string>
-#include <vector>
-#include <map>
+#include <AstrOsStringUtils.hpp>
+#include <AstrOsStructs.h>
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
-#include <cctype>
-#include <AstrOsStringUtils.hpp>
-#include <AstrOsStructs.h>
+#include <map>
+#include <string>
+#include <vector>
 
 class AstrOsFileUtils
 {
@@ -85,8 +85,7 @@ public:
             }
 
             maestro_config cfg;
-            if (!safeStoi(parts[0], cfg.idx) ||
-                !safeStoi(parts[1], cfg.uartChannel) ||
+            if (!safeStoi(parts[0], cfg.idx) || !safeStoi(parts[1], cfg.uartChannel) ||
                 !safeStoi(parts[2], cfg.baudrate))
             {
                 continue;
@@ -179,12 +178,8 @@ public:
             int isServo = 0;
             int inverted = 0;
 
-            if (!safeStoi(parts[0], ch.id) ||
-                !safeStoi(parts[1], enabled) ||
-                !safeStoi(parts[2], isServo) ||
-                !safeStoi(parts[3], ch.minPos) ||
-                !safeStoi(parts[4], ch.maxPos) ||
-                !safeStoi(parts[5], home) ||
+            if (!safeStoi(parts[0], ch.id) || !safeStoi(parts[1], enabled) || !safeStoi(parts[2], isServo) ||
+                !safeStoi(parts[3], ch.minPos) || !safeStoi(parts[4], ch.maxPos) || !safeStoi(parts[5], home) ||
                 !safeStoi(parts[6], inverted))
             {
                 continue;

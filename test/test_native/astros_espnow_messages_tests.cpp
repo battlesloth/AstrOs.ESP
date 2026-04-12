@@ -1,10 +1,10 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsStringUtils.hpp>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
-//using ::testing::MatchesRegex;
-//using ::testing::StartsWith;
+// using ::testing::MatchesRegex;
+// using ::testing::StartsWith;
 
 TEST(EspNowMessages, InvalidPacket)
 {
@@ -14,12 +14,14 @@ TEST(EspNowMessages, InvalidPacket)
 
     auto values = msgService.generatePackets(AstrOsPacketType::REGISTRATION, testString);
 
-    ASSERT_EQ(1, values.size())
-        << [values]() -> std::string
-    { for (size_t i = 0; i < values.size(); i++)
+    ASSERT_EQ(1, values.size()) << [values]() -> std::string
     {
-        free(values[i].data);
-    }; return "Incorrect number of packets generated"; }();
+        for (size_t i = 0; i < values.size(); i++)
+        {
+            free(values[i].data);
+        };
+        return "Incorrect number of packets generated";
+    }();
 
     memccpy(values[0].data + 20, "INVALID", 7, 7);
 
@@ -41,12 +43,14 @@ TEST(EspNowMessages, SinglePacket)
 
     auto values = msgService.generatePackets(AstrOsPacketType::BASIC, testString);
 
-    ASSERT_EQ(1, values.size())
-        << [values]() -> std::string
-    { for (size_t i = 0; i < values.size(); i++)
+    ASSERT_EQ(1, values.size()) << [values]() -> std::string
     {
-        free(values[i].data);
-    }; return "Incorrect number of packets generated"; }();
+        for (size_t i = 0; i < values.size(); i++)
+        {
+            free(values[i].data);
+        };
+        return "Incorrect number of packets generated";
+    }();
 
     auto parsed = msgService.parsePacket(values[0].data);
 
@@ -68,17 +72,18 @@ TEST(EspNowMessages, SinglePacket)
 
 TEST(EspNowMessages, MultiPacket)
 {
-    std::string packet1 =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Pellentesque nec nam aliquam sem et tortor consequat. No";
+    std::string packet1 = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt "
+                          "ut labore et dolore magna aliqua. Pellentesque nec nam aliquam sem et tortor consequat. No";
 
-    std::string packet2 =
-        "n consectetur a erat nam. Nec feugiat in fermentum posuere urna. Diam maecenas sed enim ut sem viverra. Aenean vel elit scelerisque mauris pellentesque pulvinar pellentesque habita";
+    std::string packet2 = "n consectetur a erat nam. Nec feugiat in fermentum posuere urna. Diam maecenas sed enim ut "
+                          "sem viverra. Aenean vel elit scelerisque mauris pellentesque pulvinar pellentesque habita";
 
     std::string packet3 =
-        "nt morbi. Suspendisse in est ante in nibh mauris cursus. Non curabitur gravida arcu ac tortor dignissim convallis aenean. Ut ornare lectus sit amet est placerat in. Sit amet venena";
+        "nt morbi. Suspendisse in est ante in nibh mauris cursus. Non curabitur gravida arcu ac tortor dignissim "
+        "convallis aenean. Ut ornare lectus sit amet est placerat in. Sit amet venena";
 
-    std::string packet4 =
-        "tis urna cursus eget nunc scelerisque viverra. Velit euismod in pellentesque massa placerat duis ultricies. Nisi est sit amet facilisis magna etiam tempor.";
+    std::string packet4 = "tis urna cursus eget nunc scelerisque viverra. Velit euismod in pellentesque massa placerat "
+                          "duis ultricies. Nisi est sit amet facilisis magna etiam tempor.";
 
     std::string testString = packet1 + packet2 + packet3 + packet4;
 
@@ -86,12 +91,14 @@ TEST(EspNowMessages, MultiPacket)
 
     auto values = msgService.generatePackets(AstrOsPacketType::BASIC, testString);
 
-    ASSERT_EQ(4, values.size())
-        << [values]() -> std::string
-    { for (size_t i = 0; i < values.size(); i++)
+    ASSERT_EQ(4, values.size()) << [values]() -> std::string
     {
-        free(values[i].data);
-    }; return "Incorrect number of packets generated"; }();
+        for (size_t i = 0; i < values.size(); i++)
+        {
+            free(values[i].data);
+        };
+        return "Incorrect number of packets generated";
+    }();
 
     auto parsed0 = msgService.parsePacket(values[0].data);
 
@@ -121,7 +128,8 @@ TEST(EspNowMessages, MultiPacket)
     EXPECT_EQ(4, parsed3.totalPackets);
     EXPECT_EQ(173, parsed3.payloadSize);
 
-    auto payload = (uint8_t *)malloc(parsed0.payloadSize + parsed1.payloadSize + parsed2.payloadSize + parsed3.payloadSize + 1);
+    auto payload =
+        (uint8_t *)malloc(parsed0.payloadSize + parsed1.payloadSize + parsed2.payloadSize + parsed3.payloadSize + 1);
 
     size_t offset = 0;
     memcpy(payload, parsed0.payload, parsed0.payloadSize);

@@ -1,23 +1,19 @@
-#include <GpioModule.hpp>
 #include <AnimationCommands.hpp>
 #include <AstrOsUtility_ESP.h>
+#include <GpioModule.hpp>
 
+#include <driver/gpio.h>
 #include <esp_log.h>
 #include <string>
 #include <vector>
-#include <driver/gpio.h>
 
 static const char *TAG = "GpioModule";
 
 GpioModule GpioMod;
 
-GpioModule::GpioModule()
-{
-}
+GpioModule::GpioModule() {}
 
-GpioModule::~GpioModule()
-{
-}
+GpioModule::~GpioModule() {}
 
 esp_err_t GpioModule::Init(std::vector<int> channels)
 {
@@ -63,17 +59,13 @@ void GpioModule::DefaultGpios()
 {
     for (size_t i = 0; i < this->gpioChannels.size(); i++)
     {
-        if (
-            this->defaults.at(i) != -1 &&
-            this->gpioChannels.at(i) != -1)
+        if (this->defaults.at(i) != -1 && this->gpioChannels.at(i) != -1)
         {
-            gpio_set_level(
-                static_cast<gpio_num_t>(this->gpioChannels.at(i)),
-                this->defaults.at(i));
-        } else if (this->gpioChannels.at(i) != -1){
-            gpio_set_level(
-                static_cast<gpio_num_t>(this->gpioChannels.at(i)),
-                false);
+            gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(i)), this->defaults.at(i));
+        }
+        else if (this->gpioChannels.at(i) != -1)
+        {
+            gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(i)), false);
         }
     }
 }

@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
 #include <AstrOsMessaging.hpp>
 #include <PacketTracker.hpp>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 TEST(PacketTracker, AddPacket)
 {

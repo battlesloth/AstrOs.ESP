@@ -1,11 +1,11 @@
 #ifndef ASTROSNAMES_H
 #define ASTROSNAMES_H
 
-#include <string>
-#include <vector>
 #include <algorithm>
 #include <random>
+#include <string>
 #include <time.h>
+#include <vector>
 
 typedef std::vector<std::string> str_vec_t;
 

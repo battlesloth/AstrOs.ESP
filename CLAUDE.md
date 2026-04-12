@@ -6,6 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AstrOs.ESP is ESP-IDF firmware (built via PlatformIO) for the AstrOs astromech animation and operating system — it runs on ESP32-class boards embedded in animatronic droids and coordinates servos, GPIO, I²C, OLED displays, and serial peripherals, with ESP-NOW mesh networking between nodes.
 
+## Branching and merge workflow
+
+- **`develop` is the integration branch.** Feature work branches off `develop` (use names like `feature/...`, `ci/...`, `fix/...`) and merges back via pull request.
+- **`main` is reserved for release-candidate cuts.** Direct commits to `main` are forbidden — they bypass the RC build pipeline that fires on `push: branches: [main]` and would pollute the RC stream. Always integrate through PR.
+- **`release/rel_X.Y` branches** are cut from `main` when a version is ready to ship. Bug fixes for a released line target the relevant `release/rel_*` branch; forward-port vs backport is decided case-by-case.
+- **PR validation** (`.github/workflows/pr-validation.yml`) runs on pull requests targeting `main`, `develop`, or `release/rel_*`. All four checks — native unit tests, both-board build matrix, AstrOsMessaging native-purity guard, and clang-format on changed files — must pass before merge.
+- **When using Claude Code to commit on this repo:** always confirm `git branch --show-current` is not `main` before committing. If it is, stop and switch to `develop` (or a feature branch) first.
+
+### Release workflow
+
+1. **RC builds** — every push to `main` triggers `.github/workflows/rc-build.yml`, which auto-tags `v<BASE>-RC.<N+1>` and publishes a GitHub Pre-release with six artifacts (3 per board × 2 boards).
+2. **Cutting a release** — create a `release/rel_X.Y` branch from `main` and push. `.github/workflows/release-build.yml` auto-tags `vX.Y.0` and publishes a full GitHub Release with the same six artifacts.
+3. **Patch releases** — push a bug-fix commit to `release/rel_X.Y`. The workflow auto-tags `vX.Y.<N+1>`.
+4. **After cutting a release branch** — open a PR on `develop` that bumps the `VERSION` file to the next planned minor (e.g., `1.0.0` → `1.1.0`). This is a manual step, not automated.
+5. **Cache warming** — `.github/workflows/cache-warm.yml` runs weekly (Monday 06:00 UTC) to keep the PlatformIO cache warm. Can also be triggered manually.
+
 ## Build / flash / test
 
 PlatformIO is the canonical build driver (see `platformio.ini`). Three environments exist:
@@ -101,10 +117,10 @@ When touching these files, prefer fixes that also resolve the relevant review it
 
 ## Things that are *not* in the repo
 
-- No CI config (no `.github/`, no `.gitlab-ci.yml`). Builds and tests are run locally.
 - No Cursor / Copilot rules.
-- No pre-commit hooks or formatters configured.
+- A pre-commit hook at `.githooks/pre-commit` auto-formats staged C/C++ files with clang-format. Activate once per clone: `git config core.hooksPath .githooks`. The hook is opt-in — it does nothing until `core.hooksPath` is set.
 - No submodules (`.gitmodules` is empty).
+- GitHub Actions CI lives under `.github/workflows/` — PR validation exists today; RC and release artifact workflows are planned for Phase 3 of the CI pipeline design in `.docs/plans/20260411-0905-ci-pipeline-design.md`.
 
 ## Planning (MANDATORY)
 

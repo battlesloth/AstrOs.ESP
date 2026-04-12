@@ -1,8 +1,8 @@
 #ifndef BASECOMMAND_HPP
 #define BASECOMMAND_HPP
 
-#include <AstrOsEnums.h>
 #include <AnimationCommon.hpp>
+#include <AstrOsEnums.h>
 #include <string>
 #include <vector>
 

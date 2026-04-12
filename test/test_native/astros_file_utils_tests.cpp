@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
-#include <AstrOsStringUtils.hpp>
 #include <AstrOsFileUtils.hpp>
+#include <AstrOsStringUtils.hpp>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 TEST(FileUtils, ParseMaestroConfig)
 {
@@ -52,11 +52,11 @@ TEST(FileUtils, ParseServoConfig)
     EXPECT_EQ(1250, channels[1].home);
     EXPECT_EQ(1000, channels[1].currentPos);
     EXPECT_EQ(1250, channels[1].requestedPos);
-    EXPECT_EQ(1000, channels[1].lastPos);   
+    EXPECT_EQ(1000, channels[1].lastPos);
     EXPECT_EQ(0, channels[1].speed);
-    EXPECT_EQ(0, channels[1].acceleration);     
+    EXPECT_EQ(0, channels[1].acceleration);
     EXPECT_TRUE(channels[1].inverted);
-    EXPECT_FALSE(channels[1].on);   
+    EXPECT_FALSE(channels[1].on);
 
     EXPECT_EQ(2, channels[2].id);
     EXPECT_TRUE(channels[2].enabled);

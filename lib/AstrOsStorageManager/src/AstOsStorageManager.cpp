@@ -1,22 +1,22 @@
+#include <AstrOsEspNowUtility.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
-#include <AstrOsEspNowUtility.h>
 #include <AstrOsUtility_ESP.h>
 #include <NvsManager.h>
 
-#include <stdio.h>
-#include <stdbool.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
+#include <stdbool.h>
+#include <stdio.h>
 
 #include <string>
 #include <vector>
 
+#include "esp_spiffs.h"
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
-#include "vfs_fat_internal.h"
 #include "sdmmc_cmd.h"
-#include "esp_spiffs.h"
+#include "vfs_fat_internal.h"
 
 #ifdef USE_SPIFFS
 #define MOUNT_POINT "/spiffs"
@@ -172,7 +172,6 @@ bool AstrOsStorageManager::saveModuleConfigs(std::string msg)
         }
     }
 
-
     ESP_LOGI(TAG, "Saving maestro modules, count: %d", maestroConfigs.size());
 
     if (!this->saveMaestroModules(maestroConfigs))
@@ -296,8 +295,8 @@ bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int
            // is between min and max servo config length?
            if (i - start < 11 || i - start > 21)
            {
-               ESP_LOGE(TAG, "Failed to save servo config, invalid config length, config: %s", msg.substr(start, i - start).c_str());
-               return false;
+               ESP_LOGE(TAG, "Failed to save servo config, invalid config length, config: %s", msg.substr(start, i -
+   start).c_str()); return false;
            }
 
            // config must end with a digit
@@ -475,9 +474,7 @@ bool AstrOsStorageManager::formatSdCard()
         return false;
     }
 
-    size_t alloc_unit_size = esp_vfs_fat_get_allocation_unit_size(
-        card->csd.sector_size,
-        allocation_unit_size);
+    size_t alloc_unit_size = esp_vfs_fat_get_allocation_unit_size(card->csd.sector_size, allocation_unit_size);
 
     MKFS_PARM param;
 
@@ -533,13 +530,12 @@ esp_err_t AstrOsStorageManager::mountSdCard()
     auto cs = PIN_NUM_CS;
 #endif
 
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = mosi,
-        .miso_io_num = miso,
-        .sclk_io_num = sclk,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 4000};
+    spi_bus_config_t bus_cfg = {.mosi_io_num = mosi,
+                                .miso_io_num = miso,
+                                .sclk_io_num = sclk,
+                                .quadwp_io_num = -1,
+                                .quadhd_io_num = -1,
+                                .max_transfer_sz = 4000};
 
     spi_host_device_t device = static_cast<spi_host_device_t>(host.slot);
 

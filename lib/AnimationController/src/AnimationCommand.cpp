@@ -1,9 +1,9 @@
-#include <AstrOsEnums.h>
 #include <AnimationCommand.hpp>
 #include <AnimationCommon.hpp>
+#include <AstrOsEnums.h>
+#include <esp_log.h>
 #include <string>
 #include <vector>
-#include <esp_log.h>
 
 CommandTemplate::CommandTemplate(MODULE_TYPE type, int module, std::string val) : val(std::move(val))
 {
@@ -18,9 +18,7 @@ AnimationCommand::AnimationCommand(std::string val) : commandTemplate(std::move(
     this->parseCommandType();
 }
 
-AnimationCommand::~AnimationCommand()
-{
-}
+AnimationCommand::~AnimationCommand() {}
 
 CommandTemplate *AnimationCommand::GetCommandTemplatePtr()
 {
