@@ -158,3 +158,31 @@ jobs:
           name: artifacts-${{ matrix.env }}
           path: artifacts/
           retention-days: 5
+
+  release:
+    name: Create GitHub Pre-release
+    needs: [compute-tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.compute-tag.outputs.tag }}
+          VERSION: ${{ needs.compute-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --prerelease \
+            --title "${TAG}" \
+            --notes "Release candidate ${VERSION}." \
+            artifacts/*
