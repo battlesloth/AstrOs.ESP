@@ -448,7 +448,7 @@ static void animationTimerCallback(void *arg)
 
     if (AnimationCtrl.scriptIsLoaded())
     {
-        CommandTemplate *cmd = AnimationCtrl.getNextCommandPtr();
+        auto cmd = AnimationCtrl.getNextCommandPtr();
 
         if (cmd == nullptr)
         {
@@ -571,8 +571,6 @@ static void animationTimerCallback(void *arg)
         default:
             break;
         }
-
-        delete (cmd);
 
         ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
     }

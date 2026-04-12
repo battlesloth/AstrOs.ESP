@@ -220,9 +220,9 @@ bool AnimationController::scriptIsLoaded()
     return scriptLoaded;
 }
 
-CommandTemplate *AnimationController::getNextCommandPtr()
+std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 {
-    CommandTemplate *cmd = nullptr;
+    std::unique_ptr<CommandTemplate> cmd;
     auto retrieved = false;
 
     while (!retrieved)
@@ -233,16 +233,15 @@ CommandTemplate *AnimationController::getNextCommandPtr()
             if (this->scriptEvents.empty())
             {
                 this->scriptLoaded = false;
-                cmd = new CommandTemplate(MODULE_TYPE::NONE, 0, "");
+                cmd = std::make_unique<CommandTemplate>(MODULE_TYPE::NONE, 0, "");
             }
             else if (this->scriptEvents.size() == 1)
             {
-
-                CommandTemplate *lastCmd = scriptEvents.back().GetCommandTemplatePtr();
+                auto lastCmd = scriptEvents.back().GetCommandTemplatePtr();
                 this->scriptEvents.pop_back();
 
                 this->scriptLoaded = false;
-                cmd = lastCmd;
+                cmd = std::move(lastCmd);
             }
             else
             {

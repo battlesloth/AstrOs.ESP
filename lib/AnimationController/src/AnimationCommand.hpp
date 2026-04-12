@@ -3,6 +3,7 @@
 
 #include <AnimationCommon.hpp>
 #include <AstrOsEnums.h>
+#include <memory>
 
 class CommandTemplate
 {
@@ -31,7 +32,7 @@ public:
     // for Maestro, this will be the module index
     int module;
 
-    CommandTemplate *GetCommandTemplatePtr();
+    std::unique_ptr<CommandTemplate> GetCommandTemplatePtr();
 };
 
 #endif
