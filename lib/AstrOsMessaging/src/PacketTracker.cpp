@@ -6,9 +6,7 @@ PacketTracker::PacketTracker()
     this->packetExpirationMap = std::unordered_map<std::string, int>();
 }
 
-PacketTracker::~PacketTracker()
-{
-}
+PacketTracker::~PacketTracker() {}
 
 AddPacketResult PacketTracker::addPacket(std::string msgId, PacketData data, int time)
 {

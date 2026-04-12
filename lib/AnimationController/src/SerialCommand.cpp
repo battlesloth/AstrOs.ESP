@@ -1,5 +1,5 @@
-#include <SerialCommand.hpp>
 #include <AstrOsStringUtils.hpp>
+#include <SerialCommand.hpp>
 #include <esp_log.h>
 
 SerialCommand::SerialCommand(std::string val)

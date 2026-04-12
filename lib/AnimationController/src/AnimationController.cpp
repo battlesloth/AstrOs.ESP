@@ -1,11 +1,11 @@
-#include <string.h>
-#include <esp_log.h>
 #include <algorithm>
+#include <esp_log.h>
 #include <esp_system.h>
+#include <string.h>
 
-#include <AnimationController.hpp>
-#include <AnimationCommon.hpp>
 #include <AnimationCommand.hpp>
+#include <AnimationCommon.hpp>
+#include <AnimationController.hpp>
 #include <AstrOsStorageManager.hpp>
 
 static const char *TAG = "AnimationController";
@@ -13,15 +13,15 @@ static const char *TAG = "AnimationController";
 AnimationController AnimationCtrl;
 
 AnimationController::AnimationController()
-{      
-    for(auto &script : this->scriptQueue)
+{
+    for (auto &script : this->scriptQueue)
     {
         script = "";
     }
     this->queueFront = 0;
     this->queueRear = -1;
     this->queueSize = 0;
- 
+
     this->animationMutex = xSemaphoreCreateMutex();
     this->queueing = false;
 }
@@ -37,14 +37,14 @@ void AnimationController::panicStop()
     {
         if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
         {
-            for(auto &script : this->scriptQueue)
+            for (auto &script : this->scriptQueue)
             {
                 script = "";
             }
             this->queueFront = 0;
             this->queueRear = -1;
             this->queueSize = 0;
-         
+
             this->scriptEvents.clear();
             this->scriptLoaded = false;
             cleared = true;
@@ -283,16 +283,16 @@ void AnimationController::parseScript(std::string script)
 
             auto parts = AstrOsStringUtils::splitString(script, ';');
 
-           /* auto start = 0U;
-            auto end = script.find(";");
-            while (end != std::string::npos)
-            {
-                AnimationCommand cmd = AnimationCommand(script.substr(start, end - start));
-                this->scriptEvents.push_back(cmd);
-                start = end + 1;
-                end = script.find(";", start);
-            }
-            */
+            /* auto start = 0U;
+             auto end = script.find(";");
+             while (end != std::string::npos)
+             {
+                 AnimationCommand cmd = AnimationCommand(script.substr(start, end - start));
+                 this->scriptEvents.push_back(cmd);
+                 start = end + 1;
+                 end = script.find(";", start);
+             }
+             */
 
             for (auto part : parts)
             {
@@ -303,7 +303,7 @@ void AnimationController::parseScript(std::string script)
                 AnimationCommand cmd = AnimationCommand(part);
                 this->scriptEvents.push_back(cmd);
             }
-            
+
             std::reverse(this->scriptEvents.begin(), this->scriptEvents.end());
 
             ESP_LOGI(TAG, "Loaded: %s", script.c_str());

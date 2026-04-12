@@ -1,9 +1,9 @@
 #include "I2cMaster.hpp"
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/semphr.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #define I2C_TIMEOUT_MS 50
 #define SEMAPHORE_TIMEOUT 1000
@@ -31,15 +31,14 @@ esp_err_t I2cMaster::Init(gpio_num_t sda, gpio_num_t scl)
     conf.clk_flags = 0;
 
     esp_err_t err = i2c_param_config(I2C_PORT, &conf);
-    
+
     if (err != ESP_OK)
     {
         ESP_LOGE("I2C", "Failed to configure I2C: %s", esp_err_to_name(err));
         return err;
     }
-    
-    return i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0);
 
+    return i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0);
 }
 
 bool I2cMaster::DeviceExists(uint8_t addr)
@@ -48,14 +47,14 @@ bool I2cMaster::DeviceExists(uint8_t addr)
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
-            i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-            i2c_master_start(cmd);
-            i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, 1 /* expect ack */);
-            i2c_master_stop(cmd);
-    
-            res = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10 / portTICK_PERIOD_MS);
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, 1 /* expect ack */);
+        i2c_master_stop(cmd);
+
+        res = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10 / portTICK_PERIOD_MS);
         xSemaphoreGive(i2cBusMutext);
-    } 
+    }
     return res == ESP_OK;
 }
 
@@ -111,13 +110,14 @@ bool I2cMaster::WriteWord(uint8_t addr, uint8_t registerAddr, uint16_t word)
     return err == ESP_OK;
 }
 
-bool I2cMaster::WriteTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t word1, uint16_t word2){
+bool I2cMaster::WriteTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t word1, uint16_t word2)
+{
 
     esp_err_t err = ESP_OK;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
-        
+
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
         i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
@@ -160,7 +160,7 @@ bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
             xSemaphoreGive(i2cBusMutext);
             return false;
         }
-       
+
         cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
         i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, ACK_CHECK_EN);
@@ -175,7 +175,7 @@ bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
             xSemaphoreGive(i2cBusMutext);
             return false;
         }
-        
+
         xSemaphoreGive(i2cBusMutext);
     }
 
@@ -189,7 +189,7 @@ bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
 
 bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
 {
-esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_OK;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -229,7 +229,7 @@ esp_err_t err = ESP_OK;
         }
 
         *data = (buffer1 << 8) | buffer2;
-        
+
         i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
@@ -284,7 +284,7 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
         }
 
         *data1 = (buffer1 << 8) | buffer2;
-        
+
         cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
         i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, ACK_CHECK_EN);
@@ -296,11 +296,11 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
 
         if (err != ESP_OK)
         {
-            ESP_LOGE("I2C", "Failed to read from device:%s", esp_err_to_name(err));     
+            ESP_LOGE("I2C", "Failed to read from device:%s", esp_err_to_name(err));
             xSemaphoreGive(i2cBusMutext);
             return false;
         }
-        
+
         *data2 = (buffer1 << 8) | buffer2;
 
         i2c_cmd_link_delete(cmd);
@@ -318,10 +318,10 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
 /*
 #include "I2cMaster.hpp"
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/semphr.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <string.h>
 
 #define I2C_TIMEOUT_MS 50

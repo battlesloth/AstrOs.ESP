@@ -1,10 +1,10 @@
 #ifndef ASTROSESPNOWMESSAGESERVICE_H
 #define ASTROSESPNOWMESSAGESERVICE_H
 
+#include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
-#include <map>
-#include <cstdint>
 
 #define ASTROS_PACKET_PAYLOAD_SIZE 180
 
@@ -40,7 +40,7 @@ namespace AstrOsENC
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
     constexpr const static char *SERVO_TEST = "SERVO_TEST";
     constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
-}
+} // namespace AstrOsENC
 
 enum class AstrOsPacketType
 {
@@ -98,7 +98,8 @@ public:
     AstrOsEspNowMessageService();
     ~AstrOsEspNowMessageService();
 
-    std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "", std::string message = "");
+    std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "",
+                                                        std::string message = "");
     std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
     astros_packet_t parsePacket(uint8_t *packet);
     int validatePacket(astros_packet_t packet);

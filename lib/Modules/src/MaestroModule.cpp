@@ -1,16 +1,16 @@
 #include "MaestroModule.hpp"
 
-#include <AstrOsUtility.h>
-#include <AstrOsStorageManager.hpp>
 #include <AnimationCommands.hpp>
+#include <AstrOsStorageManager.hpp>
+#include <AstrOsUtility.h>
 
-#include <esp_log.h>
-#include <esp_system.h>
-#include <driver/uart.h>
-#include <AstrOsUtility_ESP.h>
 #include <AstrOsServoUtils.hpp>
 #include <AstrOsUtility.h>
+#include <AstrOsUtility_ESP.h>
 #include <SerialModule.hpp>
+#include <driver/uart.h>
+#include <esp_log.h>
+#include <esp_system.h>
 #include <string.h>
 
 static const char *TAG = "MaestroModule";
@@ -34,9 +34,7 @@ MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
     this->loading = false;
 }
 
-MaestroModule::~MaestroModule()
-{
-}
+MaestroModule::~MaestroModule() {}
 
 void MaestroModule::UpdateConfig(QueueHandle_t serialQueue, int baudRate)
 {
@@ -48,7 +46,8 @@ void MaestroModule::UpdateConfig(QueueHandle_t serialQueue, int baudRate)
         if (xSemaphoreTake(this->mutex, 100 / portTICK_PERIOD_MS))
         {
 
-            ESP_LOGI(TAG, "Updating Maestro module %d config, old buad: %d, new baud %d", this->idx, this->baudRate, baudRate);
+            ESP_LOGI(TAG, "Updating Maestro module %d config, old buad: %d, new baud %d", this->idx, this->baudRate,
+                     baudRate);
 
             this->serialQueue = serialQueue;
             this->baudRate = baudRate;
@@ -110,8 +109,9 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, requestPos);
     }
 
-    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d", ch, channels[ch].minPos,
-             channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position, servoCmd.speed, servoCmd.acceleration, channels[ch].inverted);
+    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d", ch,
+             channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position, servoCmd.speed,
+             servoCmd.acceleration, channels[ch].inverted);
 
     channels[ch].currentPos = 0;
     channels[ch].speed = servoCmd.speed;

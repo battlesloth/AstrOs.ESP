@@ -1,12 +1,13 @@
 #ifndef ASTROSSTRINGUTILS_H
 #define ASTROSSTRINGUTILS_H
 
-#include <string>
-#include <vector>
-#include <cctype>
 #include <algorithm>
 #include <bitset>
+#include <cctype>
+#include <cstdint>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #define UNIT_SEPARATOR (char)0x1F
 #define RECORD_SEPARATOR (char)0x1E
@@ -15,8 +16,7 @@
 class AstrOsStringUtils
 {
 public:
-    template <typename T>
-    static std::string toBinaryString(const T &x)
+    template <typename T> static std::string toBinaryString(const T &x)
     {
         std::stringstream ss;
         ss << std::bitset<sizeof(T) * 8>(x);
@@ -26,14 +26,16 @@ public:
     static std::string macToString(const uint8_t *mac)
     {
         char macStr[18] = {0};
-        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4],
+                 mac[5]);
         return std::string(macStr);
     }
 
     static uint8_t *stringToMac(const std::string &macStr)
     {
         uint8_t *mac = new uint8_t[6];
-        sscanf(macStr.c_str(), "%02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+        sscanf(macStr.c_str(), "%02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4],
+               &mac[5]);
         return mac;
     }
 
@@ -78,7 +80,8 @@ public:
         return parts;
     }
 
-    /// @brief Files on Windows and Linux use different line endings, this function will split a string on both \n and \r\n
+    /// @brief Files on Windows and Linux use different line endings, this function will split a string on both \n and
+    /// \r\n
     /// @param str
     /// @return
     static std::vector<std::string> splitStringOnLineEnd(std::string str)
@@ -145,8 +148,7 @@ public:
         return n;
     }
 
-    template <typename... Args>
-    static std::string stringFormat(const std::string &format, Args &&...args)
+    template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)
     {
         auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
         std::string output(size + 1, '\0');

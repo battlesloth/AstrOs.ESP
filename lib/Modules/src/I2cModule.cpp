@@ -1,14 +1,14 @@
-#include <I2cModule.hpp>
 #include <AnimationCommands.hpp>
 #include <AstrOsDisplay.hpp>
 #include <AstrOsUtility.h>
+#include <I2cModule.hpp>
 
-#include <esp_system.h>
-#include <esp_log.h>
 #include <driver/i2c.h>
+#include <esp_log.h>
+#include <esp_system.h>
+#include <ssd1306.h>
 #include <sstream>
 #include <string>
-#include <ssd1306.h>
 
 static const char *TAG = "I2cModule";
 static pthread_mutex_t i2cMutex;
@@ -17,13 +17,9 @@ SSD1306_t oled;
 
 I2cModule I2cMod;
 
-I2cModule::I2cModule(/* args */)
-{
-}
+I2cModule::I2cModule(/* args */) {}
 
-I2cModule::~I2cModule()
-{
-}
+I2cModule::~I2cModule() {}
 
 esp_err_t I2cModule::Init()
 {

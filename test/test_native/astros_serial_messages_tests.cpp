@@ -1,10 +1,10 @@
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
-//using ::testing::MatchesRegex;
-//using ::testing::StartsWith;
+// using ::testing::MatchesRegex;
+// using ::testing::StartsWith;
 
 TEST(SerialMessages, PollAckMessage)
 {
@@ -175,7 +175,6 @@ TEST(SerialMessages, PanicStopMessage)
     EXPECT_EQ(AstrOsSerialMessageType::PANIC_STOP, validation.type);
     EXPECT_STREQ(msgId.c_str(), validation.msgId.c_str());
 }
- 
 
 TEST(SerialMessages, FormatSDMessage)
 {

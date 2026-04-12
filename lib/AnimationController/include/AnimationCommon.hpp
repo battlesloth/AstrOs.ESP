@@ -6,8 +6,6 @@
 
 typedef std::vector<std::string> str_vec_t;
 
-
-
 typedef enum
 {
     START,

@@ -15,13 +15,13 @@ extern "C"
 #include <inttypes.h>
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <freertos/portmacro.h>
+#include <freertos/task.h>
 
-#include <esp_private/esp_clk.h>
+#include "esp_rom_gpio.h"
 #include <driver/gpio.h>
 #include <esp_cpu.h>
-#include "esp_rom_gpio.h"
+#include <esp_private/esp_clk.h>
 
 #define SW_EOF -1
 
@@ -88,8 +88,7 @@ extern "C"
         return esp_cpu_get_cycle_count();
     }
 
-#define WaitBitTime(wait) \
-    for (uint32_t start = getCycleCount(); getCycleCount() - start < wait;)
+#define WaitBitTime(wait) for (uint32_t start = getCycleCount(); getCycleCount() - start < wait;)
 
     // The first byte will wrong, after normal
     static void IRAM_ATTR sw_rx_handler(void *args)

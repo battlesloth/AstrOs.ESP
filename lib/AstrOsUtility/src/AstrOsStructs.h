@@ -6,8 +6,9 @@ extern "C"
 #endif
 
 #include "AstrOsEnums.h"
-#include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 
     typedef struct
     {
@@ -57,13 +58,13 @@ extern "C"
         size_t dataSize;
     } queue_serial_msg_t;
 
-    typedef struct 
+    typedef struct
     {
         int idx;
         int uartChannel;
         int baudrate;
     } maestro_config;
-    
+
     typedef struct
     {
         int id;

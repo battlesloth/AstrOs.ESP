@@ -9,6 +9,7 @@ class GpioModule
 private:
     std::vector<int> gpioChannels;
     std::vector<bool> defaults;
+
 public:
     GpioModule();
     ~GpioModule();

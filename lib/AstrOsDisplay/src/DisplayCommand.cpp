@@ -21,9 +21,7 @@ DisplayCommand::DisplayCommand(std::string cmd)
     DisplayCommand::parseCommand();
 }
 
-DisplayCommand::~DisplayCommand()
-{
-}
+DisplayCommand::~DisplayCommand() {}
 
 void DisplayCommand::setValue(std::string line1, std::string line2, std::string line3)
 {

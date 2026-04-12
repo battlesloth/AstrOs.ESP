@@ -59,8 +59,8 @@ private:
     void (*displayUpdateCallback)(std::string, std::string, std::string);
 
     void sendEspNowMessage(AstrOsPacketType type, std::string peer, std::string msg);
-    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string peerMac,
-                              std::string peerName, std::string msgId, std::string message);
+    void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string peerMac, std::string peerName,
+                              std::string msgId, std::string message);
 
     bool handleRegistrationReq(uint8_t *src);
     bool sendRegistration(uint8_t *macAddress, std::string name);

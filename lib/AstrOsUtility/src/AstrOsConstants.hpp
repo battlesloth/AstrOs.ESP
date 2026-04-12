@@ -47,5 +47,5 @@ namespace AstrOsConstants
     constexpr const char *HEARTBEAT = "Heatbeat";
     constexpr const char *COMMAND_RECEIVED = "CommandReceived";
     constexpr const char *COMMAND_QUEUED = "CommandQueued";
-}
+} // namespace AstrOsConstants
 #endif
