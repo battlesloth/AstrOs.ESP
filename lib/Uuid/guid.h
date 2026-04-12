@@ -19,8 +19,8 @@ namespace guid
         esp_fill_random(raw, 16);
 
         char buff[64];
-        sprintf(buff, "%x%x%x%x-%x%x-%x%x-%x%x-%x%x%x%x%x%x", raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6],
-                raw[7], raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]);
+        snprintf(buff, sizeof(buff), "%x%x%x%x-%x%x-%x%x-%x%x-%x%x%x%x%x%x", raw[0], raw[1], raw[2], raw[3], raw[4],
+                 raw[5], raw[6], raw[7], raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]);
         return buff;
     }
 } // namespace guid
