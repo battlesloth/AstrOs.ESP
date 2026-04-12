@@ -1,8 +1,5 @@
 #include <stdio.h>
 
-// CANARY: deliberate compile error to verify CI catches build failures.
-THIS_IS_NOT_A_VALID_TOKEN;
-
 #include <driver/rmt.h>
 #include <driver/uart.h>
 #include <esp_event.h>
