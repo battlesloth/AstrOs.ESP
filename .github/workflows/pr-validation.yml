@@ -15,13 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Jobs added in subsequent tasks:
-  #   Task 2 — messaging-purity
-  #   Task 3 — clang-format
-  #   Task 4 — native-tests
-  #   Task 5 — build (matrix over lolin_d32_pro + metro_s3)
-  noop:
+  messaging-purity:
+    name: AstrOsMessaging native-purity guard
     runs-on: ubuntu-latest
     steps:
-      - name: Placeholder
-        run: echo "scaffolding only — replaced in Task 2"
+      - uses: actions/checkout@v4
+
+      - name: Check for forbidden ESP-IDF / FreeRTOS / driver includes
+        run: |
+          set -euo pipefail
+          # The lib/AstrOsMessaging/README rule: this library is unit-tested
+          # on the native host, so it must not pull in any ESP-IDF, FreeRTOS,
+          # or low-level driver headers. Catch violations as early as possible.
+          if grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/)' lib/AstrOsMessaging/; then
+            echo "::error::lib/AstrOsMessaging contains forbidden ESP-IDF/FreeRTOS/driver includes (see lines above)."
+            echo "::error::This library must remain native-test compatible. Move ESP-specific code to a different lib."
+            exit 1
+          fi
+          echo "messaging purity OK"
