@@ -38,7 +38,7 @@ jobs:
 
           # Find the highest existing release tag for this MAJOR.MINOR
           # (exclude RC/pre-release tags).
-          LAST_RELEASE=$(git tag -l "v${MAJOR_MINOR}.*" | grep -vE '(RC|rc|alpha|beta)' | sort -V | tail -1)
+          LAST_RELEASE=$(git tag -l "v${MAJOR_MINOR}.*" | { grep -vE '(RC|rc|alpha|beta)' || true; } | sort -V | tail -1)
 
           if [ -z "$LAST_RELEASE" ]; then
             TAG="v${MAJOR_MINOR}.0"
