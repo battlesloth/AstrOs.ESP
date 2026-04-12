@@ -55,3 +55,106 @@ jobs:
 
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.env }}
+    needs: compute-tag
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: lolin_d32_pro
+            chip: esp32
+            flash_mode: dio
+            flash_freq: 40m
+            flash_size: 8MB
+            bootloader_offset: "0x1000"
+            partition_offset: "0x8000"
+            otadata_offset: "0xf000"
+            app_offset: "0x20000"
+          - env: metro_s3
+            chip: esp32s3
+            flash_mode: dio
+            flash_freq: 80m
+            flash_size: 16MB
+            bootloader_offset: "0x0"
+            partition_offset: "0x8000"
+            otadata_offset: "0xe000"
+            app_offset: "0x10000"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO core
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('platformio.ini', 'sdkconfig.lolin_d32_pro', 'sdkconfig.metro_s3', 'dependencies.lock') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.env }}-
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO and esptool
+        run: |
+          set -euo pipefail
+          pip install --upgrade platformio esptool
+          pio --version
+          esptool.py version
+
+      - name: Fetch tags so version_gen.py sees the new RC tag
+        run: git fetch --tags origin
+
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Package artifacts
+        env:
+          VERSION: ${{ needs.compute-tag.outputs.version }}
+          ENV: ${{ matrix.env }}
+          CHIP: ${{ matrix.chip }}
+          FLASH_MODE: ${{ matrix.flash_mode }}
+          FLASH_FREQ: ${{ matrix.flash_freq }}
+          FLASH_SIZE: ${{ matrix.flash_size }}
+          BOOT_OFF: ${{ matrix.bootloader_offset }}
+          PART_OFF: ${{ matrix.partition_offset }}
+          OTA_OFF: ${{ matrix.otadata_offset }}
+          APP_OFF: ${{ matrix.app_offset }}
+        run: |
+          set -euo pipefail
+          BUILD=".pio/build/${ENV}"
+          OUT="artifacts"
+          mkdir -p "${OUT}"
+
+          # Merged flash image — flashable at offset 0x0.
+          esptool.py --chip "${CHIP}" merge_bin \
+            --flash_mode "${FLASH_MODE}" \
+            --flash_freq "${FLASH_FREQ}" \
+            --flash_size "${FLASH_SIZE}" \
+            -o "${OUT}/astros-esp-${VERSION}-${ENV}-flash.bin" \
+            "${BOOT_OFF}" "${BUILD}/bootloader.bin" \
+            "${PART_OFF}" "${BUILD}/partitions.bin" \
+            "${OTA_OFF}"  "${BUILD}/ota_data_initial.bin" \
+            "${APP_OFF}"  "${BUILD}/firmware.bin"
+
+          # Raw app binary — for OTA updates.
+          cp "${BUILD}/firmware.bin" "${OUT}/astros-esp-${VERSION}-${ENV}-app.bin"
+
+          # ELF with debug symbols — for exception decoding.
+          cp "${BUILD}/firmware.elf" "${OUT}/astros-esp-${VERSION}-${ENV}.elf"
+
+          echo "Artifacts for ${ENV}:"
+          ls -lh "${OUT}"/astros-esp-*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.env }}
+          path: artifacts/
+          retention-days: 5
