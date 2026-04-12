@@ -534,7 +534,7 @@ Mark Task 6 as complete.
 
 **Goal:** Prove each of the four checks fails when its specific failure mode is introduced, and passes when nothing is wrong. The cleanest way to do this is one canary branch with four breaking commits, pushing each commit individually so each gets its own workflow run we can inspect by SHA.
 
-- [ ] **Step 1: Push the `ci/phase2-pr-validation` branch first so a real PR is open**
+- [x] **Step 1: Push the `ci/phase2-pr-validation` branch first so a real PR is open**
 
 ```bash
 git push -u origin ci/phase2-pr-validation
@@ -542,7 +542,7 @@ git push -u origin ci/phase2-pr-validation
 
 Then open a PR `ci/phase2-pr-validation` → `develop` (Task 8 covers this formally; this step just makes sure the branch exists on origin so canary diffs have something to compare against).
 
-- [ ] **Step 2: Create the canary branch from `ci/phase2-pr-validation`**
+- [x] **Step 2: Create the canary branch from `ci/phase2-pr-validation`**
 
 ```bash
 git checkout -b test/phase2-ci-canary
@@ -550,7 +550,7 @@ git checkout -b test/phase2-ci-canary
 
 This branch will be discarded — never merged.
 
-- [ ] **Step 3: Canary commit A — break messaging-purity**
+- [x] **Step 3: Canary commit A — break messaging-purity**
 
 Edit `lib/AstrOsMessaging/include/AstrOsMessaging.hpp`. Add this line near the top of the file (just inside any existing `#pragma once` or include guard):
 
@@ -573,7 +573,7 @@ Open a draft PR `test/phase2-ci-canary` → `develop` titled "Phase 2 CI canary 
 
 If `messaging-purity` does NOT fail, the grep is misconfigured — stop and debug.
 
-- [ ] **Step 4: Revert canary A and commit canary B — break clang-format**
+- [x] **Step 4: Revert canary A and commit canary B — break clang-format**
 
 ```bash
 git revert --no-edit HEAD
@@ -601,7 +601,7 @@ git push origin test/phase2-ci-canary
 
 If `clang-format` does NOT fail, either the file isn't in the diff (check `git diff origin/develop...HEAD --name-only`) or clang-format thinks the line is acceptable (try a more egregious violation).
 
-- [ ] **Step 5: Revert canary B and commit canary C — break native-tests**
+- [x] **Step 5: Revert canary B and commit canary C — break native-tests**
 
 ```bash
 git revert --no-edit HEAD
@@ -628,7 +628,7 @@ git push origin test/phase2-ci-canary
 - `clang-format`: ✅ PASS (assuming the inserted code is properly formatted; format it via local clang-format first if needed)
 - `build`: ✅ PASS (test files aren't part of the firmware build)
 
-- [ ] **Step 6: Revert canary C and commit canary D — break the build**
+- [x] **Step 6: Revert canary C and commit canary D — break the build**
 
 ```bash
 git revert --no-edit HEAD
@@ -656,7 +656,7 @@ git push origin test/phase2-ci-canary
 
 If only ONE matrix cell fails (instead of both), `fail-fast: false` is misconfigured — fix it.
 
-- [ ] **Step 7: Verify the all-checks-pass case by reverting back to clean**
+- [x] **Step 7: Verify the all-checks-pass case by reverting back to clean**
 
 ```bash
 git revert --no-edit HEAD
@@ -673,7 +673,7 @@ This push should produce a workflow run where **all four checks pass**. This is 
 
 If any check fails on the clean revert, debug before proceeding.
 
-- [ ] **Step 8: Close the canary PR without merging and delete the branch**
+- [x] **Step 8: Close the canary PR without merging and delete the branch**
 
 Close the draft PR via the GitHub UI (do NOT click Merge). Then locally:
 ```bash
@@ -684,7 +684,7 @@ git push origin --delete test/phase2-ci-canary
 
 (`-D` is required because the branch contains commits that won't be merged anywhere — this is the intended use of force-delete for a throwaway.)
 
-- [ ] **Step 9: Update plan checkboxes**
+- [x] **Step 9: Update plan checkboxes**
 
 Mark Task 7 as complete and add a one-line summary at the bottom of this plan file recording which workflow run SHAs you observed for each canary commit. Future debugging will appreciate knowing the exact runs.
 
@@ -777,3 +777,26 @@ Phase 2 is done when **all** of the following are true:
 - `esptool.py merge_bin` for flashable images
 - Any cache-warming scheduled job
 - Browser flasher and GitHub Pages (Phase 4)
+
+## Canary verification results (Task 7)
+
+Recorded 2026-04-11. Canary A and B ran against the pre-reformat codebase; C, D, and clean revert ran after the `.clang-format` calibration and full-repo reformat.
+
+| Canary | SHA | messaging-purity | clang-format | native-tests | build (both) |
+|--------|-----|-----------------|--------------|--------------|--------------|
+| A: forbidden include | `5481199` | ❌ intended | ✅ | ❌ side-effect | ✅ |
+| B: format violation | `e6e983f` | ✅ | ❌ intended | ✅ | ✅ |
+| C: failing test | `56b8f15` | ✅ | ✅ | ❌ intended | ✅ |
+| D: build break | `0b615b3` | ✅ | ✅ | ✅ | ❌ intended (both cells) |
+| Clean revert | `51bf4ee` | ✅ | ✅ | ✅ | ✅ |
+
+**Notes:**
+- Canary C initially also triggered clang-format failure (pre-reformat codebase). This exposed a `.clang-format` config/reality mismatch: Phase 1 used LLVM defaults (Attach braces) but the codebase uses Allman. Fixed by calibrating the config and running a full-repo reformat (commit `e46b482`). Canary C was re-run after the fix and clang-format passed cleanly.
+- Canary D confirmed `fail-fast: false` works: both matrix cells (`lolin_d32_pro` and `metro_s3`) reported failure independently.
+- `src/main.cpp` is NOT built by the `test` env (`platform = native`), so the Canary D build break did not affect native-tests. Confirmed.
+
+## Execution deviations from original plan
+
+1. **`.clang-format` config overhaul** — not in the original plan. Canary C exposed that the Phase 1 config didn't match the codebase. Added three commits on `ci/phase2-pr-validation`: config update (`449b213`), full-repo reformat (`e46b482`), `.git-blame-ignore-revs` (`9bf1d08`).
+2. **Missing self-contained includes** — the alphabetical include sorting exposed 3 headers with hidden order dependencies. Fixed as part of the reformat commit.
+3. **Canary branch recreated** — after the reformat, the original canary branch was stale. Recreated from the updated `ci/phase2-pr-validation` tip. Canaries A and B were not re-run (their checks don't depend on clang-format config); C and D were run fresh.
