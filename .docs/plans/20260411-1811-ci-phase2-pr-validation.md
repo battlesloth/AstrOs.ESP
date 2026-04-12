@@ -702,7 +702,7 @@ git commit -m "record Phase 2 canary verification results"
 **Files:**
 - No file changes — this task is purely about the GitHub PR.
 
-- [ ] **Step 1: Confirm branch is clean and pushed**
+- [x] **Step 1: Confirm branch is clean and pushed**
 
 ```bash
 git status
@@ -710,7 +710,7 @@ git log --oneline origin/develop..ci/phase2-pr-validation
 ```
 Expected: clean working tree, the log shows the Phase 2 commits in order (scaffold, messaging-purity, clang-format, native-tests, build, CLAUDE.md, plan updates, canary results).
 
-- [ ] **Step 2: Open the PR**
+- [x] **Step 2: Open the PR**
 
 ```bash
 gh pr create \
@@ -744,7 +744,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 3: Update plan checkboxes**
+- [x] **Step 3: Update plan checkboxes**
 
 Mark Task 8 as complete. Final plan-update commit:
 ```bash
