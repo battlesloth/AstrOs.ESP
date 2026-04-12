@@ -33,3 +33,57 @@ jobs:
             exit 1
           fi
           echo "messaging purity OK"
+
+  clang-format:
+    name: clang-format (changed files only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need both PR base and head SHAs in history for the diff below.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pinned clang-format
+        run: |
+          set -euo pipefail
+          # Pinned exactly. The PyPI 'clang-format' package is a wrapper that
+          # bundles the upstream LLVM clang-format binary. Bumping this version
+          # is intentional and PR-reviewable.
+          pip install 'clang-format==18.1.8'
+          clang-format --version
+
+      - name: Check changed C/C++ files against .clang-format
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch fires don't have a pull_request context, so fall
+          # back to checking the working tree against origin/main in that case.
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "No PR context (workflow_dispatch). Comparing HEAD against origin/main."
+            git fetch origin main --depth=1
+            BASE_SHA=$(git rev-parse origin/main)
+            HEAD_SHA=$(git rev-parse HEAD)
+          fi
+
+          changed=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- \
+            '*.c' '*.cpp' '*.h' '*.hpp')
+
+          if [ -z "$changed" ]; then
+            echo "No C/C++ files changed in this PR. Nothing to check."
+            exit 0
+          fi
+
+          echo "Files to check:"
+          echo "$changed" | sed 's/^/  - /'
+          echo
+
+          # --Werror turns format diffs into a non-zero exit, --dry-run avoids
+          # touching the working tree. xargs preserves whitespace via -d '\n'.
+          echo "$changed" | xargs -d '\n' clang-format --dry-run --Werror
