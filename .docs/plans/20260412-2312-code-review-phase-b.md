@@ -1253,7 +1253,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
 - `servoQueueTask` — task on core 1, find + at
 - `handleServoTest` — called from `interfaceResponseQueueTask` on core 1, find + at
 
-- [ ] **Step 1: Add the mutex declaration after maestroModules**
+- [x] **Step 1: Add the mutex declaration after maestroModules**
 
   In `src/main.cpp`, find the line (approximately line 109):
   ```cpp
@@ -1265,7 +1265,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
   static SemaphoreHandle_t maestroModulesMutex = NULL;
   ```
 
-- [ ] **Step 2: Create the mutex in init()**
+- [x] **Step 2: Create the mutex in init()**
 
   In `src/main.cpp`, in the `init()` function, after the queue creation block (after the `espnowQueue = xQueueCreate(...)` line at approximately line 235), add:
   ```cpp
@@ -1276,7 +1276,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
       }
   ```
 
-- [ ] **Step 3: Wrap servoMoveTimerCallback (line ~596)**
+- [x] **Step 3: Wrap servoMoveTimerCallback (line ~596)**
 
   Change:
   ```cpp
@@ -1312,7 +1312,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
   ```
   Note: 100ms timeout is used here because `servoMoveTimerCallback` runs on the esp_timer task. A long block would stall other timers. If the mutex is held (e.g., during `loadMaestroConfigs`), this cycle is safely skipped.
 
-- [ ] **Step 4: Wrap servoQueueTask maestroModules access (lines ~1164–1170)**
+- [x] **Step 4: Wrap servoQueueTask maestroModules access (lines ~1164–1170)**
 
   Change:
   ```cpp
@@ -1347,7 +1347,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
               free(msg.data);
   ```
 
-- [ ] **Step 5: Wrap handleServoTest maestroModules access (lines ~1754–1760)**
+- [x] **Step 5: Wrap handleServoTest maestroModules access (lines ~1754–1760)**
 
   Change:
   ```cpp
@@ -1380,7 +1380,7 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
           }
   ```
 
-- [ ] **Step 6: Wrap loadMaestroConfigs() — entire function body**
+- [x] **Step 6: Wrap loadMaestroConfigs() — entire function body**
 
   `loadMaestroConfigs` iterates, inserts, updates, and erases from `maestroModules`. The whole function body must run under the mutex. The function is called from `app_main` (before tasks start — no contention there) and may be called again from service queue task at runtime (where contention is possible).
 
@@ -1487,21 +1487,21 @@ The file currently uses `pthread_mutex_t` for bus serialisation. Every other syn
   }
   ```
 
-- [ ] **Step 7: Verify no unprotected maestroModules accesses remain**
+- [x] **Step 7: Verify no unprotected maestroModules accesses remain**
 
   ```bash
   grep -n 'maestroModules' /home/jeff/Source/astros/AstrOs.ESP/src/main.cpp
   ```
   Every access should now either be inside a `xSemaphoreTake(maestroModulesMutex, ...)` block or inside the `loadMaestroConfigs` function (which acquires the mutex at entry). The declaration line and mutex line are acceptable bare references.
 
-- [ ] **Step 8: Build to confirm no new warnings or errors**
+- [x] **Step 8: Build to confirm no new warnings or errors**
 
   ```bash
   ~/.platformio/penv/bin/pio run -e metro_s3 2>&1 | tail -20
   ```
   Expected: `[SUCCESS]`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
   ```bash
   cd /home/jeff/Source/astros/AstrOs.ESP
