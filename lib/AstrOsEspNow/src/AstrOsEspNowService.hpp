@@ -6,9 +6,10 @@
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <esp_err.h>
 
-// needed for QueueHandle_t, must be in this order
+// needed for QueueHandle_t and SemaphoreHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 static uint8_t broadcastMac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t nullMac[ESP_NOW_ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -39,6 +40,7 @@ private:
     bool isMasterNode;
     std::string mac;
     std::vector<espnow_peer_t> peers;
+    SemaphoreHandle_t peersMutex;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
 
