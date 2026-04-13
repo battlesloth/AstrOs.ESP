@@ -41,3 +41,9 @@ Additionally, the sender should ideally distinguish between "transient queue ful
 Not covered by Phase B (scope is thread safety on AnimationController itself, not the timer callback's dispatch logic). Candidates:
 - **Phase C** — Resilience + defensive hardening. Task C5 already addresses `animationTimerCallback` refactor (deferring heavy work off the `esp_timer` task). Dispatch-failure handling fits there.
 - **Standalone small task** before Phase C, since the safety implications don't warrant waiting on the broader timer-callback refactor.
+
+### Related — upstream null-cmd path already addressed
+
+A related case in the same callback — `getNextCommandPtr` returning `nullptr` after a mutex timeout — is handled as part of Phase B Task 3 (commit `a4f8a5b`) and a follow-up commit that re-arms the animation timer on the null-cmd early-return path. With `getNextCommandPtr` setting `scriptLoaded=false` on timeout, the re-armed timer takes the "no script loaded" else-branch on its next tick and keeps the subsystem alive for graceful recovery via future `queueScript` calls. A reboot would otherwise be required, which is undesirable because third-party hardware state on power-cycle is unpredictable — operators need the ability to dispatch recovery scripts that gently return the droid to a safe state.
+
+The dispatch-failure case (FF-1 above) should adopt the same pattern: on any `xQueueSend` failure, halt the current script via `AnimationCtrl.panicStop()` but keep the animation timer alive for recovery scripts.

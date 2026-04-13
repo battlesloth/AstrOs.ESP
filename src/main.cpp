@@ -463,7 +463,18 @@ static void animationTimerCallback(void *arg)
 
         if (cmd == nullptr)
         {
-            ESP_LOGE(TAG, "Annimation Command pointer is null");
+            // getNextCommandPtr returns nullptr only on mutex timeout, in which
+            // case it has also set scriptLoaded=false (halting the current
+            // sequence — see AnimationController.cpp for the safety rationale).
+            // Re-arm the timer so the subsystem stays alive; on the next tick
+            // scriptIsLoaded() will return false and the callback will take the
+            // else-branch below, keeping the timer running idle until a future
+            // queueScript can resume animation. Without this, a single transient
+            // mutex contention would require a device reboot to restore animation
+            // — bad, because third-party hardware may be in a non-safe state that
+            // a recovery script (not a power-cycle) needs to address.
+            ESP_LOGE(TAG, "Animation command pointer is null — script halted, timer re-armed for recovery");
+            ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 250 * 1000));
             return;
         }
 
