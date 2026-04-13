@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <atomic>
 #include <driver/rmt.h>
 #include <driver/uart.h>
 #include <esp_event.h>
@@ -37,12 +38,16 @@ static const char *TAG = AstrOsConstants::ModuleName;
 /**********************************
  * States
  **********************************/
-static int displayTimeout = 0;
-static int defaultDisplayTimeout = 10;
-static bool discoveryMode = false;
-static bool isMasterNode = false;
+static std::atomic<int> displayTimeout{0};
+static std::atomic<int> defaultDisplayTimeout{10};
+static std::atomic<bool> discoveryMode{false};
+static std::atomic<bool> isMasterNode{false};
 static uart_port_t ASTRO_PORT = UART_NUM_0;
-static std::string rank = "Padawan";
+
+static const char *currentRank()
+{
+    return isMasterNode.load() ? "Master" : "Padawan";
+}
 
 /**********************************
  * Time trackers
@@ -330,7 +335,7 @@ void init(void)
 
     AstrOs_EspNow.init(config);
     AstrOs_Display.init(i2cQueue);
-    AstrOs_Display.setDefault(rank, "", name);
+    AstrOs_Display.setDefault(currentRank(), "", name);
 }
 
 #pragma endregion
@@ -434,8 +439,8 @@ static void pollingTimerCallback(void *arg)
 
     if (!discoveryMode && displayTimeout > 0)
     {
-        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout);
-        displayTimeout -= 2;
+        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout.load());
+        displayTimeout.fetch_sub(2);
         if (displayTimeout <= 0)
         {
             AstrOs_Display.displayClear();
@@ -923,7 +928,7 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::SHOW_DISPLAY:
             {
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout;
+                displayTimeout = defaultDisplayTimeout.load();
                 break;
             }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
@@ -937,7 +942,7 @@ void serviceQueueTask(void *arg)
             {
                 discoveryMode = false;
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout;
+                displayTimeout = defaultDisplayTimeout.load();
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -1248,7 +1253,7 @@ void espnowQueueTask(void *arg)
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.displayDefault();
-    displayTimeout = defaultDisplayTimeout;
+    displayTimeout = defaultDisplayTimeout.load();
 
     queue_espnow_msg_t msg;
 
@@ -1356,16 +1361,14 @@ static void loadConfig()
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
                         isMasterNode = true;
                         ASTRO_PORT = UART_NUM_1;
-                        rank = "Master";
-                        ESP_LOGI(TAG, "%s node using UART channel 1", rank.c_str());
+                        ESP_LOGI(TAG, "%s node using UART channel 1", currentRank());
                     }
                     else
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
                         isMasterNode = false;
                         ASTRO_PORT = UART_NUM_0;
-                        rank = "Padawan";
-                        ESP_LOGI(TAG, "%s node using UART channel 0", rank.c_str());
+                        ESP_LOGI(TAG, "%s node using UART channel 0", currentRank());
                     }
                 }
             }
