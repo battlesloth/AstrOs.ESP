@@ -1,6 +1,7 @@
 #ifndef GUID_H
 #define GUID_H
 
+#include <cstdio>
 #include <esp_random.h>
 #include <string.h>
 #include <string>
