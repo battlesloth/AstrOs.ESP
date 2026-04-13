@@ -9,11 +9,14 @@
 
 static const char *TAG = "NvsManager";
 
-static bool setKeyId(char *key, uint8_t id, uint8_t startPos)
+// id is size_t (not uint8_t) so callers passing loop indices don't silently
+// narrow before the range check: a value of 256 must fail the guard, not
+// wrap to 0 and masquerade as a valid peer 0 index.
+static bool setKeyId(char *key, size_t id, uint8_t startPos)
 {
     if (id > 99)
     {
-        ESP_LOGE(TAG, "Peer index %u exceeds maximum of 99", (unsigned)id);
+        ESP_LOGE(TAG, "Peer index %zu exceeds maximum of 99", id);
         return false;
     }
     key[startPos] = '0' + (id / 10);
