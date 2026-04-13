@@ -762,7 +762,7 @@ There are 6 `portMAX_DELAY` sites. Each spin-wait loop is replaced with a single
 
 Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Replace each with a single `xSemaphoreTake` using a 1000ms timeout. Note that `pdMS_TO_TICKS` is already in scope via `<freertos/FreeRTOS.h>` (included at line 11 of the .cpp).
 
-- [ ] **Step 1: Replace getMac()**
+- [x] **Step 1: Replace getMac()**
 
   Change:
   ```cpp
@@ -814,7 +814,7 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 2: Replace getName()**
+- [x] **Step 2: Replace getName()**
 
   Change:
   ```cpp
@@ -856,7 +856,7 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 3: Replace getFingerprint()**
+- [x] **Step 3: Replace getFingerprint()**
 
   Change:
   ```cpp
@@ -898,7 +898,7 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 4: Replace updateFingerprint()**
+- [x] **Step 4: Replace updateFingerprint()**
 
   Change:
   ```cpp
@@ -935,7 +935,7 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 5: Replace updateMasterMac()**
+- [x] **Step 5: Replace updateMasterMac()**
 
   Change:
   ```cpp
@@ -972,7 +972,7 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 6: Replace getMasterMac()**
+- [x] **Step 6: Replace getMasterMac()**
 
   Change:
   ```cpp
@@ -1009,21 +1009,21 @@ Five methods use the `while (!set) { take 100ms; else delay 10ms; }` pattern. Re
   }
   ```
 
-- [ ] **Step 7: Verify no remaining spin-wait patterns**
+- [x] **Step 7: Verify no remaining spin-wait patterns**
 
   ```bash
   grep -n 'portTICK_PERIOD_MS\|while (!.*Set)' /home/jeff/Source/astros/AstrOs.ESP/lib/AstrOsEspNow/src/AstrOsEspNowService.cpp
   ```
   Expected: no matches.
 
-- [ ] **Step 8: Build to confirm no new warnings or errors**
+- [x] **Step 8: Build to confirm no new warnings or errors**
 
   ```bash
   ~/.platformio/penv/bin/pio run -e metro_s3 2>&1 | tail -20
   ```
   Expected: `[SUCCESS]`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
   ```bash
   cd /home/jeff/Source/astros/AstrOs.ESP
