@@ -137,7 +137,7 @@ std::string AstrOsEspNow::getMac()
 
     if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "getMac: failed to acquire valueMutex within 1s, returning empty");
+        ESP_LOGE(TAG, "getMac: failed to acquire valueMutex within 1s, returning empty");
         return "";
     }
 
@@ -150,7 +150,7 @@ std::string AstrOsEspNow::getName()
 {
     if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "getName: failed to acquire valueMutex within 1s, returning empty");
+        ESP_LOGE(TAG, "getName: failed to acquire valueMutex within 1s, returning empty");
         return "";
     }
 
@@ -163,7 +163,7 @@ std::string AstrOsEspNow::getFingerprint()
 {
     if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "getFingerprint: failed to acquire valueMutex within 1s, returning empty");
+        ESP_LOGE(TAG, "getFingerprint: failed to acquire valueMutex within 1s, returning empty");
         return "";
     }
 
@@ -176,7 +176,7 @@ void AstrOsEspNow::updateFingerprint(std::string fingerprint)
 {
     if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "updateFingerprint: failed to acquire valueMutex within 1s — fingerprint not updated");
+        ESP_LOGE(TAG, "updateFingerprint: failed to acquire valueMutex within 1s — fingerprint not updated");
         return;
     }
 
@@ -263,7 +263,7 @@ void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "updateMasterMac: failed to acquire masterMacMutex within 1s — master MAC not updated");
+        ESP_LOGE(TAG, "updateMasterMac: failed to acquire masterMacMutex within 1s — master MAC not updated");
         return;
     }
 
@@ -275,7 +275,7 @@ void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "getMasterMac: failed to acquire masterMacMutex within 1s — zeroing output buffer");
+        ESP_LOGE(TAG, "getMasterMac: failed to acquire masterMacMutex within 1s — zeroing output buffer");
         memset(macAddress, 0, ESP_NOW_ETH_ALEN);
         return;
     }
