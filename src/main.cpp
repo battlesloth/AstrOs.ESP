@@ -10,6 +10,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <map>
 #include <nvs_flash.h>
@@ -112,6 +113,7 @@ static SerialModule SerialChannel1;
 static SerialModule SerialChannel2;
 
 static std::map<int, MaestroModule *> maestroModules;
+static SemaphoreHandle_t maestroModulesMutex = NULL;
 
 // #define BAUD_RATE_1 (9600)
 
@@ -238,6 +240,12 @@ void init(void)
     i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
+
+    maestroModulesMutex = xSemaphoreCreateMutex();
+    if (maestroModulesMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create maestroModulesMutex");
+    }
 
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
 
@@ -609,9 +617,17 @@ static void servoMoveTimerCallback(void *arg)
 
     // ServoMod.MoveServos();
 
-    for (auto maestroMod : maestroModules)
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(100)) == pdTRUE)
     {
-        maestroMod.second->CheckServos(300);
+        for (auto maestroMod : maestroModules)
+        {
+            maestroMod.second->CheckServos(300);
+        }
+        xSemaphoreGive(maestroModulesMutex);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "servoMoveTimerCallback: maestroModulesMutex timeout — skipping cycle");
     }
 
     // get time at end of loop
@@ -1177,13 +1193,21 @@ void servoQueueTask(void *arg)
 
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
 
-            if (maestroModules.find(msg.message_id) == maestroModules.end())
+            if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
             {
-                ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
+                if (maestroModules.find(msg.message_id) == maestroModules.end())
+                {
+                    ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
+                }
+                else
+                {
+                    maestroModules.at(msg.message_id)->QueueCommand(msg.data);
+                }
+                xSemaphoreGive(maestroModulesMutex);
             }
             else
             {
-                maestroModules.at(msg.message_id)->QueueCommand(msg.data);
+                ESP_LOGW(TAG, "servoQueueTask: failed to acquire maestroModulesMutex within 1s");
             }
             free(msg.data);
         }
@@ -1393,8 +1417,13 @@ static void loadConfig()
 
 static void loadMaestroConfigs()
 {
-
     ESP_LOGI(TAG, "Loading Maestro configurations");
+
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "loadMaestroConfigs: failed to acquire maestroModulesMutex within 1s");
+        return;
+    }
 
     // get list of current maestro modules
     std::vector<int> currentModules;
@@ -1481,6 +1510,8 @@ static void loadMaestroConfigs()
     {
         maestroMod.second->LoadConfig();
     }
+
+    xSemaphoreGive(maestroModulesMutex);
 }
 
 void loadGpioConfig()
@@ -1765,13 +1796,21 @@ static void handleServoTest(astros_interface_response_t msg)
         int servo = std::stoi(parts[2]);
         int ms = std::stoi(parts[3]);
 
-        if (maestroModules.find(idx) == maestroModules.end())
+        if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
-            ESP_LOGE(TAG, "Maestro module %d not found", idx);
+            if (maestroModules.find(idx) == maestroModules.end())
+            {
+                ESP_LOGE(TAG, "Maestro module %d not found", idx);
+            }
+            else
+            {
+                maestroModules.at(idx)->SetServoPosition(servo, ms);
+            }
+            xSemaphoreGive(maestroModulesMutex);
         }
         else
         {
-            maestroModules.at(idx)->SetServoPosition(servo, ms);
+            ESP_LOGW(TAG, "handleServoTest: failed to acquire maestroModulesMutex within 1s");
         }
     }
 
