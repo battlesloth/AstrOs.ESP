@@ -398,8 +398,14 @@ static void pollingTimerCallback(void *arg)
             msg.eventType = POLL_PADAWANS;
             polling = true;
 
-            char fingerprint[37];
-            AstrOs_Storage.getControllerFingerprint(fingerprint);
+            // Zero-init so std::string(fingerprint) is always safe even if the
+            // NVS read fails (otherwise the uninitialized buffer could stringify
+            // up to the first accidental null byte, reading unknown memory).
+            char fingerprint[37] = {0};
+            if (!AstrOs_Storage.getControllerFingerprint(fingerprint))
+            {
+                ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
+            }
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint), true);
         }
         else
