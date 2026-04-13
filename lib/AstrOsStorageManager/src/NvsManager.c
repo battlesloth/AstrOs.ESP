@@ -9,15 +9,16 @@
 
 static const char *TAG = "NvsManager";
 
-static void setKeyId(char *key, uint8_t id, uint8_t startPos)
+static bool setKeyId(char *key, uint8_t id, uint8_t startPos)
 {
     if (id > 99)
     {
         ESP_LOGE(TAG, "Peer index %u exceeds maximum of 99", (unsigned)id);
-        return;
+        return false;
     }
     key[startPos] = '0' + (id / 10);
     key[startPos + 1] = '0' + (id % 10);
+    return true;
 }
 
 bool nvsSaveServiceConfig(svc_config_t config)
@@ -153,10 +154,11 @@ bool nvsClearServiceConfig()
 
     for (size_t i = 0; i < peers; i++)
     {
-        setKeyId(nameConfig, i, 2);
-        setKeyId(macConfig, i, 2);
-        setKeyId(cryptoKeyConfig, i, 2);
-        setKeyId(isPairedConfig, i, 2);
+        if (!setKeyId(nameConfig, i, 2) || !setKeyId(macConfig, i, 2) || !setKeyId(cryptoKeyConfig, i, 2) ||
+            !setKeyId(isPairedConfig, i, 2))
+        {
+            continue;
+        }
 
         err = nvs_erase_key(nvsHandle, nameConfig);
         logError(TAG, __FUNCTION__, __LINE__, err);
@@ -267,11 +269,13 @@ bool nvsSaveServoConfig(int boardId, servo_channel config)
     setConfig[0] = (boardId + '0');
     invertedConfig[0] = (boardId + '0');
 
-    setKeyId(minPosConfig, config.id, 2);
-    setKeyId(maxPosConfig, config.id, 2);
-    setKeyId(homeConfig, config.id, 2);
-    setKeyId(setConfig, config.id, 2);
-    setKeyId(invertedConfig, config.id, 2);
+    if (!setKeyId(minPosConfig, config.id, 2) || !setKeyId(maxPosConfig, config.id, 2) ||
+        !setKeyId(homeConfig, config.id, 2) || !setKeyId(setConfig, config.id, 2) ||
+        !setKeyId(invertedConfig, config.id, 2))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
 
     err = nvs_set_u16(nvsHandle, minPosConfig, config.minPos);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -352,11 +356,12 @@ bool nvsLoadServoConfig(int boardId, servo_channel *config, int arraySize)
 
     for (size_t i = 0; i < arraySize; i++)
     {
-        setKeyId(minPosConfig, i, 2);
-        setKeyId(maxPosConfig, i, 2);
-        setKeyId(homeConfig, i, 2);
-        setKeyId(setConfig, i, 2);
-        setKeyId(invertedConfig, i, 2);
+        if (!setKeyId(minPosConfig, i, 2) || !setKeyId(maxPosConfig, i, 2) ||
+            !setKeyId(homeConfig, i, 2) || !setKeyId(setConfig, i, 2) ||
+            !setKeyId(invertedConfig, i, 2))
+        {
+            continue;
+        }
 
         err = nvs_get_u16(nvsHandle, minPosConfig, &min);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -453,10 +458,12 @@ bool nvsSaveEspNowPeer(espnow_peer_t config)
 
     int i = config.id;
 
-    setKeyId(nameConfig, i, 2);
-    setKeyId(macConfig, i, 2);
-    setKeyId(cryptoKeyConfig, i, 2);
-    setKeyId(isPairedConfig, i, 2);
+    if (!setKeyId(nameConfig, i, 2) || !setKeyId(macConfig, i, 2) || !setKeyId(cryptoKeyConfig, i, 2) ||
+        !setKeyId(isPairedConfig, i, 2))
+    {
+        nvs_close(nvsHandle);
+        return false;
+    }
 
     err = nvs_set_str(nvsHandle, nameConfig, config.name);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -527,10 +534,11 @@ bool nvsSaveEspNowPeerConfigs(espnow_peer_t *config, int arraySize)
 
     for (size_t i = 0; i < peers; i++)
     {
-        setKeyId(nameConfig, i, 2);
-        setKeyId(macConfig, i, 2);
-        setKeyId(cryptoKeyConfig, i, 2);
-        setKeyId(isPairedConfig, i, 2);
+        if (!setKeyId(nameConfig, i, 2) || !setKeyId(macConfig, i, 2) || !setKeyId(cryptoKeyConfig, i, 2) ||
+            !setKeyId(isPairedConfig, i, 2))
+        {
+            continue;
+        }
 
         err = nvs_set_str(nvsHandle, nameConfig, config[i].name);
         if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -609,10 +617,11 @@ int nvsLoadEspNowPeerConfigs(espnow_peer_t *config)
 
     for (size_t i = 0; i < peers; i++)
     {
-        setKeyId(nameConfig, i, 2);
-        setKeyId(macConfig, i, 2);
-        setKeyId(cryptoKeyConfig, i, 2);
-        setKeyId(isPairedConfig, i, 2);
+        if (!setKeyId(nameConfig, i, 2) || !setKeyId(macConfig, i, 2) || !setKeyId(cryptoKeyConfig, i, 2) ||
+            !setKeyId(isPairedConfig, i, 2))
+        {
+            continue;
+        }
 
         size = 16;
         err = nvs_get_str(nvsHandle, nameConfig, name, &size);
