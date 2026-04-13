@@ -28,6 +28,8 @@ AnimationController::AnimationController()
         ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
     }
     this->queueing = false;
+    this->scriptLoaded = false;
+    this->delayTillNextEvent = 0;
 }
 
 AnimationController::~AnimationController()
