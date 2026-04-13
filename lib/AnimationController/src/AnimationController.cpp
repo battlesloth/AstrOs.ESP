@@ -23,12 +23,22 @@ AnimationController::AnimationController()
     this->queueSize = 0;
 
     this->animationMutex = xSemaphoreCreateMutex();
+    if (this->animationMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
+    }
     this->queueing = false;
 }
 
 AnimationController::~AnimationController()
 {
-    vSemaphoreDelete(this->animationMutex);
+    // Guard against a failed xSemaphoreCreateMutex() — vSemaphoreDelete(NULL)
+    // traps/asserts on most FreeRTOS configs.
+    if (this->animationMutex != NULL)
+    {
+        vSemaphoreDelete(this->animationMutex);
+        this->animationMutex = NULL;
+    }
 }
 
 void AnimationController::panicStop()
