@@ -731,7 +731,7 @@ git commit -m "document release workflow and VERSION bump process in CLAUDE.md"
 1. Merging to `main` creates an RC pre-release with correct artifacts
 2. Creating a `release/rel_1.0` branch creates a stable release with correct artifacts
 
-- [ ] **Step 1: Push `ci/phase3-rc-release` to origin and open a PR → `develop`**
+- [x] **Step 1: Push `ci/phase3-rc-release` to origin and open a PR → `develop`**
 
 ```bash
 git push -u origin ci/phase3-rc-release
@@ -742,11 +742,11 @@ gh pr create --base develop --head ci/phase3-rc-release \
 
 Wait for PR validation to pass (all four checks from Phase 2).
 
-- [ ] **Step 2: Merge Phase 3 PR to `develop`**
+- [x] **Step 2: Merge Phase 3 PR to `develop`**
 
 Merge the PR via GitHub UI or `gh pr merge`.
 
-- [ ] **Step 3: Merge `develop` → `main` to trigger the RC build**
+- [x] **Step 3: Merge `develop` → `main` to trigger the RC build**
 
 Create a PR from `develop` → `main`, merge it. This push to `main` triggers `rc-build.yml`.
 
@@ -763,7 +763,7 @@ Watch the workflow run. **Expected outcome:**
 
 Verify the pre-release exists and all 6 artifacts are downloadable.
 
-- [ ] **Step 4: Create `release/rel_1.0` branch to trigger the release build**
+- [x] **Step 4: Create `release/rel_1.0` branch to trigger the release build**
 
 ```bash
 git checkout main && git pull
@@ -778,14 +778,14 @@ This push to `release/rel_1.0` triggers `release-build.yml`. **Expected outcome:
 
 Verify the release exists, is NOT marked as pre-release, and all 6 artifacts are downloadable.
 
-- [ ] **Step 5: Verify artifact naming and download URLs**
+- [x] **Step 5: Verify artifact naming and download URLs**
 
 Check that the stable download URL pattern works:
 ```
 https://github.com/battlesloth/AstrOs.ESP/releases/download/v1.0.0/astros-esp-1.0.0-metro_s3-flash.bin
 ```
 
-- [ ] **Step 6: Bump VERSION for the next release line**
+- [x] **Step 6: Bump VERSION for the next release line**
 
 After verifying the release, open a PR on `develop` that bumps `VERSION` from `1.0.0` to `1.1.0`:
 ```bash
@@ -799,7 +799,7 @@ git push -u origin chore/bump-version-1.1.0
 
 Open a PR → `develop`, merge it. This ensures subsequent RC builds from `main` produce `v1.1.0-RC.1` (after the next develop→main merge).
 
-- [ ] **Step 7: Update plan checkboxes and record verification results**
+- [x] **Step 7: Update plan checkboxes and record verification results**
 
 Mark Task 7 as complete and add a verification summary at the bottom of this plan file. Commit and push.
 

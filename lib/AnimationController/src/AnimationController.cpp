@@ -23,10 +23,23 @@ AnimationController::AnimationController()
     this->queueSize = 0;
 
     this->animationMutex = xSemaphoreCreateMutex();
+    if (this->animationMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
+    }
     this->queueing = false;
 }
 
-AnimationController::~AnimationController() {}
+AnimationController::~AnimationController()
+{
+    // Guard against a failed xSemaphoreCreateMutex() — vSemaphoreDelete(NULL)
+    // traps/asserts on most FreeRTOS configs.
+    if (this->animationMutex != NULL)
+    {
+        vSemaphoreDelete(this->animationMutex);
+        this->animationMutex = NULL;
+    }
+}
 
 void AnimationController::panicStop()
 {
@@ -217,9 +230,9 @@ bool AnimationController::scriptIsLoaded()
     return scriptLoaded;
 }
 
-CommandTemplate *AnimationController::getNextCommandPtr()
+std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 {
-    CommandTemplate *cmd = nullptr;
+    std::unique_ptr<CommandTemplate> cmd;
     auto retrieved = false;
 
     while (!retrieved)
@@ -230,16 +243,15 @@ CommandTemplate *AnimationController::getNextCommandPtr()
             if (this->scriptEvents.empty())
             {
                 this->scriptLoaded = false;
-                cmd = new CommandTemplate(MODULE_TYPE::NONE, 0, "");
+                cmd = std::make_unique<CommandTemplate>(MODULE_TYPE::NONE, 0, "");
             }
             else if (this->scriptEvents.size() == 1)
             {
-
-                CommandTemplate *lastCmd = scriptEvents.back().GetCommandTemplatePtr();
+                auto lastCmd = scriptEvents.back().GetCommandTemplatePtr();
                 this->scriptEvents.pop_back();
 
                 this->scriptLoaded = false;
-                cmd = lastCmd;
+                cmd = std::move(lastCmd);
             }
             else
             {

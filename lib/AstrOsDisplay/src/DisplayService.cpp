@@ -53,6 +53,7 @@ void AstrOsDisplayService::displayUpdate(std::string line1, std::string line2, s
     if (xQueueSend(AstrOsDisplayService::i2cQqueue, &i2cMsg, pdMS_TO_TICKS(100)) == pdFALSE)
     {
         ESP_LOGE(TAG, "Failed to send display command to hardware queue");
+        free(i2cMsg.data);
     }
 }
 
@@ -72,6 +73,7 @@ void AstrOsDisplayService::displayClear()
     if (xQueueSend(AstrOsDisplayService::i2cQqueue, &i2cMsg, pdMS_TO_TICKS(100)) == pdFALSE)
     {
         ESP_LOGE(TAG, "Failed to send display clear command to hardware queue");
+        free(i2cMsg.data);
     }
 }
 

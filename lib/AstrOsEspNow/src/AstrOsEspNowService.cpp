@@ -260,7 +260,9 @@ bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
 
     // peer id is 0 indexed
     newPeer.id = peers.size();
-    memcpy(newPeer.name, name.c_str(), name.length() + 1);
+    size_t nameLen = std::min(name.length(), (size_t)15);
+    memcpy(newPeer.name, name.c_str(), nameLen);
+    newPeer.name[nameLen] = '\0';
     memcpy(newPeer.mac_addr, macAddress, ESP_NOW_ETH_ALEN);
     memset(newPeer.crypto_key, 0, ESP_NOW_KEY_LEN);
     newPeer.is_paired = true;

@@ -20,10 +20,9 @@ AnimationCommand::AnimationCommand(std::string val) : commandTemplate(std::move(
 
 AnimationCommand::~AnimationCommand() {}
 
-CommandTemplate *AnimationCommand::GetCommandTemplatePtr()
+std::unique_ptr<CommandTemplate> AnimationCommand::GetCommandTemplatePtr()
 {
-    CommandTemplate *ct = new CommandTemplate(commandType, module, commandTemplate);
-    return ct;
+    return std::make_unique<CommandTemplate>(commandType, module, commandTemplate);
 }
 
 void AnimationCommand::parseCommandType()

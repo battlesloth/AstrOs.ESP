@@ -4,6 +4,7 @@
 #include <AnimationCommand.hpp>
 
 #include <array>
+#include <memory>
 #include <string>
 
 // needed for QueueHandle_t, must be in this order
@@ -52,7 +53,7 @@ public:
     bool queueScript(std::string script);
     bool queueCommand(std::string command);
     bool scriptIsLoaded();
-    CommandTemplate *getNextCommandPtr();
+    std::unique_ptr<CommandTemplate> getNextCommandPtr();
     int msTillNextServoCommand();
 };
 
