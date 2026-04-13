@@ -135,86 +135,53 @@ std::string AstrOsEspNow::getMac()
         return "00:00:00:00:00:00";
     }
 
-    std::string macAddress;
-
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            macAddress = this->mac;
-            macSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "getMac: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string macAddress = this->mac;
+    xSemaphoreGive(valueMutex);
     return macAddress;
 }
 
 std::string AstrOsEspNow::getName()
 {
-    std::string name;
-
-    bool nameSet = false;
-    while (!nameSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            name = this->name;
-            nameSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "getName: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string name = this->name;
+    xSemaphoreGive(valueMutex);
     return name;
 }
 
 std::string AstrOsEspNow::getFingerprint()
 {
-    std::string fingerprint;
-
-    bool fingerprintSet = false;
-    while (!fingerprintSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            fingerprint = this->fingerprint;
-            fingerprintSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "getFingerprint: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string fingerprint = this->fingerprint;
+    xSemaphoreGive(valueMutex);
     return fingerprint;
 }
 
 void AstrOsEspNow::updateFingerprint(std::string fingerprint)
 {
-    bool fingerprintSet = false;
-    while (!fingerprintSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            this->fingerprint = fingerprint;
-            fingerprintSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "updateFingerprint: failed to acquire valueMutex within 1s — fingerprint not updated");
+        return;
     }
+
+    this->fingerprint = fingerprint;
+    xSemaphoreGive(valueMutex);
 }
 
 esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
@@ -294,38 +261,27 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
 
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-        {
-            memcpy(this->masterMac, macAddress, ESP_NOW_ETH_ALEN);
-            macSet = true;
-            xSemaphoreGive(masterMacMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "updateMasterMac: failed to acquire masterMacMutex within 1s — master MAC not updated");
+        return;
     }
+
+    memcpy(this->masterMac, macAddress, ESP_NOW_ETH_ALEN);
+    xSemaphoreGive(masterMacMutex);
 }
 
 void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
 {
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-        {
-            memcpy(macAddress, this->masterMac, ESP_NOW_ETH_ALEN);
-            macSet = true;
-            xSemaphoreGive(masterMacMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGW(TAG, "getMasterMac: failed to acquire masterMacMutex within 1s — zeroing output buffer");
+        memset(macAddress, 0, ESP_NOW_ETH_ALEN);
+        return;
     }
+
+    memcpy(macAddress, this->masterMac, ESP_NOW_ETH_ALEN);
+    xSemaphoreGive(masterMacMutex);
 }
 
 /// @brief Handle incoming messages from espnow
