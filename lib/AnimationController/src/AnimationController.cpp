@@ -27,9 +27,9 @@ AnimationController::AnimationController()
     {
         ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
     }
-    this->queueing = false;
-    this->scriptLoaded = false;
-    this->delayTillNextEvent = 0;
+    this->queueing.store(false);
+    this->scriptLoaded.store(false);
+    this->delayTillNextEvent.store(0);
 }
 
 AnimationController::~AnimationController()
@@ -52,7 +52,7 @@ void AnimationController::panicStop()
     // whether the mutex below succeeds. This is the guarantee panicStop
     // contractually provides — the droid stops moving even if queue cleanup
     // can't complete.
-    this->scriptLoaded = false;
+    this->scriptLoaded.store(false);
 
     // Acquire the mutex for the full queue cleanup. On timeout the droid is
     // still halted by the atomic above; stale queue state is harmless and
@@ -73,34 +73,34 @@ void AnimationController::panicStop()
     this->queueSize = 0;
 
     this->scriptEvents.clear();
-    this->scriptLoaded = false;
+    this->scriptLoaded.store(false);
     xSemaphoreGive(this->animationMutex);
 }
 
 bool AnimationController::queueScript(std::string scriptId)
 {
-    this->queueing = true;
+    this->queueing.store(true);
 
     ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
 
     if (queueIsFull())
     {
         ESP_LOGI(TAG, "Queue is full");
-        this->queueing = false;
+        this->queueing.store(false);
         return false;
     }
 
     if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
         ESP_LOGE(TAG, "queueScript: failed to acquire animationMutex within 5s");
-        this->queueing = false;
+        this->queueing.store(false);
         return false;
     }
 
     this->queueRear = (queueRear + 1) % queueCapacity;
     this->scriptQueue[queueRear] = scriptId;
     this->queueSize++;
-    this->queueing = false;
+    this->queueing.store(false);
     xSemaphoreGive(this->animationMutex);
 
     return true;
@@ -133,9 +133,9 @@ bool AnimationController::queueIsEmpty()
 void AnimationController::loadNextScript()
 {
 
-    if (queueIsEmpty() || this->queueing)
+    if (queueIsEmpty() || this->queueing.load())
     {
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return;
     }
 
@@ -144,7 +144,7 @@ void AnimationController::loadNextScript()
     if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
         ESP_LOGE(TAG, "loadNextScript: failed to acquire animationMutex within 5s");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return;
     }
 
@@ -161,7 +161,7 @@ void AnimationController::loadNextScript()
     if (script == "error")
     {
         ESP_LOGI(TAG, "Script not loaded");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
     }
     else
     {
@@ -175,12 +175,12 @@ void AnimationController::loadNextScript()
 bool AnimationController::scriptIsLoaded()
 {
 
-    if (!scriptLoaded && !queueIsEmpty())
+    if (!scriptLoaded.load() && !queueIsEmpty())
     {
         loadNextScript();
     }
 
-    return scriptLoaded;
+    return scriptLoaded.load();
 }
 
 std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
@@ -194,7 +194,7 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
         // can damage the droid. Setting scriptLoaded=false stops the callback from
         // retrieving any further commands; a new queueScript is required to resume.
         ESP_LOGE(TAG, "getNextCommandPtr: mutex timeout — halting script to prevent partial sequence execution");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return nullptr;
     }
 
@@ -202,7 +202,7 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 
     if (this->scriptEvents.empty())
     {
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         cmd = std::make_unique<CommandTemplate>(MODULE_TYPE::NONE, 0, "");
     }
     else if (this->scriptEvents.size() == 1)
@@ -210,18 +210,14 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
         auto lastCmd = scriptEvents.back().GetCommandTemplatePtr();
         this->scriptEvents.pop_back();
 
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         cmd = std::move(lastCmd);
     }
     else
     {
-        this->delayTillNextEvent = scriptEvents.back().duration;
-
+        const int duration = scriptEvents.back().duration;
         // 10 milliseconds minimum between events
-        if (this->delayTillNextEvent < 10)
-        {
-            this->delayTillNextEvent = 10;
-        }
+        this->delayTillNextEvent.store(duration < 10 ? 10 : duration);
 
         cmd = scriptEvents.back().GetCommandTemplatePtr();
         this->scriptEvents.pop_back();
@@ -233,7 +229,7 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 
 int AnimationController::msTillNextServoCommand()
 {
-    return this->delayTillNextEvent;
+    return this->delayTillNextEvent.load();
 }
 
 void AnimationController::parseScript(std::string script)
@@ -244,7 +240,7 @@ void AnimationController::parseScript(std::string script)
         // scriptLoaded=false so the caller (loadNextScript) and subsequent
         // timer callbacks do not attempt to dispatch from invalid state.
         ESP_LOGE(TAG, "parseScript: mutex timeout — script not loaded, scriptLoaded=false");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return;
     }
 
@@ -270,6 +266,6 @@ void AnimationController::parseScript(std::string script)
     // parseScript owns the scriptLoaded flag: only mark the script as loaded
     // when events are actually populated and the mutex was held throughout.
     // loadNextScript no longer sets scriptLoaded after calling us.
-    this->scriptLoaded = true;
+    this->scriptLoaded.store(true);
     xSemaphoreGive(this->animationMutex);
 }

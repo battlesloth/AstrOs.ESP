@@ -4,6 +4,7 @@
 #include <AstrOsUtility_ESP.h>
 
 #include <algorithm>
+#include <array>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -442,7 +443,7 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
 
     std::string macStr = AstrOsStringUtils::macToString(src);
 
-    std::string padewanName;
+    std::string padawanName;
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
@@ -458,23 +459,23 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
                            { return AstrOsStringUtils::macToString(p.mac_addr) == macStr; });
     if (it != this->peers.end())
     {
-        padewanName = it->name;
+        padawanName = it->name;
     }
     else
     {
         switch (s)
         {
         case 0:
-            padewanName = "Ashoka";
+            padawanName = "Ashoka";
             break;
         case 1:
-            padewanName = "Grogu";
+            padawanName = "Grogu";
             break;
         case 2:
-            padewanName = "Anakin";
+            padawanName = "Anakin";
             break;
         case 3:
-            padewanName = "Obi-Wan";
+            padawanName = "Obi-Wan";
             break;
         default:
             break;
@@ -484,7 +485,7 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
     xSemaphoreGive(this->peersMutex);
 
     astros_espnow_data_t data =
-        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
+        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padawanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))

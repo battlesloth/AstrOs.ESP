@@ -264,7 +264,7 @@ void init(void)
 
     serial_config_t serialConf1;
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         serialConf1.isMaster = true;
         serialConf1.defaultBaudRate = ASTROS_INTEFACE_BAUD_RATE;
@@ -329,7 +329,7 @@ void init(void)
     astros_espnow_config_t config = {.masterMac = svcConfig.masterMacAddress,
                                      .name = name,
                                      .fingerprint = fingerprint,
-                                     .isMaster = isMasterNode,
+                                     .isMaster = isMasterNode.load(),
                                      .peers = peerList,
                                      .peerCount = peerCount,
                                      .serviceQueue = serviceQueue,
@@ -403,8 +403,14 @@ static void pollingTimerCallback(void *arg)
     lastHeartBeat = now;
     ESP_LOGI(TAG, "Heartbeat, %d milliseconds since last", seconds);
 
+    // Snapshot atomics once per branch — avoid re-reading across the two
+    // checks (which could observe different values if another task writes
+    // between loads) and make the atomicity explicit at each callsite.
+    const bool master = isMasterNode.load();
+    const bool discovery = discoveryMode.load();
+
     // only send register requests during discovery mode
-    if (isMasterNode && !discoveryMode)
+    if (master && !discovery)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -435,7 +441,7 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
-    else if (!isMasterNode && discoveryMode)
+    else if (!master && discovery)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -448,11 +454,17 @@ static void pollingTimerCallback(void *arg)
         }
     }
 
-    if (!discoveryMode && displayTimeout > 0)
+    if (!discovery && displayTimeout.load() > 0)
     {
-        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout.load());
-        displayTimeout.fetch_sub(2);
-        if (displayTimeout <= 0)
+        // Use fetch_sub's returned prior value to derive the post-decrement
+        // value: a separate .load() after fetch_sub would race with the
+        // writers at displayTimeout = defaultDisplayTimeout.load() elsewhere
+        // and could mask a decrement that just crossed zero (or trigger a
+        // spurious clear).
+        const int previous = displayTimeout.fetch_sub(2);
+        const int remaining = previous - 2;
+        ESP_LOGD(TAG, "Display Timeout: %d", remaining);
+        if (remaining <= 0)
         {
             AstrOs_Display.displayClear();
         }
@@ -693,7 +705,7 @@ void buttonListenerTask(void *arg)
                 else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(MEDIUM_PRESS_THRESHOLD_MS))
                 {
                     queue_svc_cmd_t cmd;
-                    if (discoveryMode)
+                    if (discoveryMode.load())
                     {
                         cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
                     }
@@ -711,7 +723,7 @@ void buttonListenerTask(void *arg)
 
                     ESP_LOGI(TAG, "Discovery Switch Sent");
                 }
-                else if (!discoveryMode)
+                else if (!discoveryMode.load())
                 {
                     queue_svc_cmd_t cmd;
                     cmd.cmd = SERVICE_COMMAND::SHOW_DISPLAY;
@@ -971,21 +983,21 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::SHOW_DISPLAY:
             {
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout.load();
+                displayTimeout.store(defaultDisplayTimeout.load());
                 break;
             }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
             {
-                discoveryMode = true;
+                discoveryMode.store(true);
                 AstrOs_Display.displayUpdate("Discovery", "Mode On");
                 ESP_LOGI(TAG, "Discovery mode on");
                 break;
             }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF:
             {
-                discoveryMode = false;
+                discoveryMode.store(false);
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout.load();
+                displayTimeout.store(defaultDisplayTimeout.load());
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -1304,7 +1316,7 @@ void espnowQueueTask(void *arg)
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.displayDefault();
-    displayTimeout = defaultDisplayTimeout.load();
+    displayTimeout.store(defaultDisplayTimeout.load());
 
     queue_espnow_msg_t msg;
 
@@ -1353,7 +1365,7 @@ void espnowQueueTask(void *arg)
                     ESP_LOGD(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     // only handle broadcast messages in discovery mode
-                    if (!discoveryMode)
+                    if (!discoveryMode.load())
                     {
                         break;
                     }
@@ -1410,14 +1422,14 @@ static void loadConfig()
                     if (parts[1].find("true") != std::string::npos)
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
-                        isMasterNode = true;
+                        isMasterNode.store(true);
                         ASTRO_PORT = UART_NUM_1;
                         ESP_LOGI(TAG, "%s node using UART channel 1", currentRank());
                     }
                     else
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
-                        isMasterNode = false;
+                        isMasterNode.store(false);
                         ASTRO_PORT = UART_NUM_0;
                         ESP_LOGI(TAG, "%s node using UART channel 0", currentRank());
                     }
@@ -1461,7 +1473,7 @@ static void loadMaestroConfigs()
         if (maestroModules.find(cfg.idx) != maestroModules.end())
         {
             // only allow modules to use uart 1 if this is not a master node
-            if (cfg.uartChannel == 1 && isMasterNode)
+            if (cfg.uartChannel == 1 && isMasterNode.load())
             {
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
                 continue; // skip invalid configurations
@@ -1485,7 +1497,7 @@ static void loadMaestroConfigs()
         else
         {
             // if the module is not loaded, create a new one
-            if (cfg.uartChannel == 1 && isMasterNode)
+            if (cfg.uartChannel == 1 && isMasterNode.load())
             {
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
                 continue; // skip invalid configurations
@@ -1686,7 +1698,7 @@ static void handleSetConfig(astros_interface_response_t msg)
         ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
 
@@ -1715,7 +1727,7 @@ static void handleSaveScript(astros_interface_response_t msg)
         success = AstrOs_Storage.saveFile("scripts/" + parts[0], parts[1]);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
 
@@ -1745,7 +1757,7 @@ static void handleRunSctipt(astros_interface_response_t msg)
         success = AnimationCtrl.queueScript(parts[0]);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::RUN_SCRIPT_ACK : AstrOsSerialMessageType::RUN_SCRIPT_NAK;
 
@@ -1780,7 +1792,7 @@ static void handleFormatSD(std::string id)
         AstrOs_Storage.saveFile("config.txt", cfig);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::FORMAT_SD_ACK : AstrOsSerialMessageType::FORMAT_SD_NAK;
 
@@ -1827,7 +1839,7 @@ static void handleServoTest(astros_interface_response_t msg)
         }
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         AstrOs_SerialMsgHandler.sendBasicAckNakResponse(AstrOsSerialMessageType::SERVO_TEST_ACK, msg.originationMsgId,
                                                         AstrOs_EspNow.getMac(), "master", "SERVO_TEST");
