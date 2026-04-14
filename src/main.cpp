@@ -1466,12 +1466,21 @@ static void loadMaestroConfigs()
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
     ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
 
-    // Phase 1: mutate the map under maestroModulesMutex and snapshot the
-    // resulting set of shared_ptrs. We deliberately do NOT call LoadConfig()
-    // here — it enqueues UART traffic via HomeServos() and reads NVS, and
-    // holding the map mutex across that work would stall servoQueueTask and
-    // repeatedly trip the 100ms timeout in servoMoveTimerCallback.
+    // Phase 1: structural map mutation under maestroModulesMutex only. We
+    // record pending UpdateConfig calls against existing modules instead of
+    // applying them inline — UpdateConfig() spin-waits on each module's own
+    // mutex, and LoadConfig() does NVS reads + HomeServos() UART traffic.
+    // Running either under the map mutex would stall servoQueueTask and trip
+    // the 100ms timeout in servoMoveTimerCallback repeatedly.
+    struct PendingUpdate
+    {
+        std::shared_ptr<MaestroModule> module;
+        QueueHandle_t queue;
+        int baudrate;
+    };
+    std::vector<PendingUpdate> pendingUpdates;
     std::vector<std::shared_ptr<MaestroModule>> toInitialize;
+
     if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
         ESP_LOGE(TAG, "loadMaestroConfigs: failed to acquire maestroModulesMutex within 1s");
@@ -1490,10 +1499,11 @@ static void loadMaestroConfigs()
 
     for (auto &cfg : maestroConfigs)
     {
-        // if the module is already loaded, update it and remove from the list
-        if (maestroModules.find(cfg.idx) != maestroModules.end())
+        auto existing = maestroModules.find(cfg.idx);
+        if (existing != maestroModules.end())
         {
-            // only allow modules to use uart 1 if this is not a master node
+            // Module already present — record a pending UpdateConfig call to
+            // apply outside the map lock. The map entry itself doesn't change.
             if (cfg.uartChannel == 1 && isMasterNode.load())
             {
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
@@ -1501,11 +1511,11 @@ static void loadMaestroConfigs()
             }
             else if (cfg.uartChannel == 1)
             {
-                maestroModules[cfg.idx]->UpdateConfig(serialCh1Queue, cfg.baudrate);
+                pendingUpdates.push_back({existing->second, serialCh1Queue, cfg.baudrate});
             }
             else if (cfg.uartChannel == 2)
             {
-                maestroModules[cfg.idx]->UpdateConfig(serialCh2Queue, cfg.baudrate);
+                pendingUpdates.push_back({existing->second, serialCh2Queue, cfg.baudrate});
             }
             else
             {
@@ -1559,9 +1569,18 @@ static void loadMaestroConfigs()
 
     xSemaphoreGive(maestroModulesMutex);
 
-    // Phase 2: initialize each module outside the map mutex. shared_ptr
-    // ownership keeps each module alive for the duration of LoadConfig()
-    // even if a subsequent reload removes the entry from the map.
+    // Phase 2: apply recorded UpdateConfig calls outside the map mutex. Each
+    // call may spin on the per-module mutex, but doing so no longer blocks
+    // the container. shared_ptr ownership keeps the module alive even if a
+    // concurrent reload removes its map entry in between.
+    for (auto &pending : pendingUpdates)
+    {
+        pending.module->UpdateConfig(pending.queue, pending.baudrate);
+    }
+
+    // Phase 3: initialize each module (NVS read + HomeServos) outside the
+    // map mutex. UpdateConfig has already landed above so LoadConfig sees
+    // the intended queue/baud.
     for (auto &maestroMod : toInitialize)
     {
         maestroMod->LoadConfig();
