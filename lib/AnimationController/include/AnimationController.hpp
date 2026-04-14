@@ -4,6 +4,7 @@
 #include <AnimationCommand.hpp>
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -27,7 +28,7 @@ private:
     SemaphoreHandle_t animationMutex;
 
     // script queue
-    bool queueing;
+    std::atomic<bool> queueing;
     int queueFront;
     int queueRear;
     int queueSize;
@@ -35,8 +36,8 @@ private:
     std::array<std::string, QUEUE_CAPACITY> scriptQueue;
 
     // script
-    bool scriptLoaded;
-    int delayTillNextEvent;
+    std::atomic<bool> scriptLoaded;
+    std::atomic<int> delayTillNextEvent;
     std::vector<AnimationCommand> scriptEvents;
 
     // functions

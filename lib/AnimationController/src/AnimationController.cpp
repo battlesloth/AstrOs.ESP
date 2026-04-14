@@ -27,7 +27,9 @@ AnimationController::AnimationController()
     {
         ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
     }
-    this->queueing = false;
+    this->queueing.store(false);
+    this->scriptLoaded.store(false);
+    this->delayTillNextEvent.store(0);
 }
 
 AnimationController::~AnimationController()
@@ -44,84 +46,84 @@ AnimationController::~AnimationController()
 void AnimationController::panicStop()
 {
     ESP_LOGI(TAG, "Panicing!");
-    auto cleared = false;
 
-    while (!cleared)
+    // CRITICAL SAFETY: signal stop immediately via atomic so the animation
+    // timer callback halts command dispatch on its next tick, regardless of
+    // whether the mutex below succeeds. This is the guarantee panicStop
+    // contractually provides — the droid stops moving even if queue cleanup
+    // can't complete.
+    this->scriptLoaded.store(false);
+
+    // Acquire the mutex for the full queue cleanup. On timeout the droid is
+    // still halted by the atomic above; stale queue state is harmless and
+    // will be cleared on the next successful queueScript.
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            for (auto &script : this->scriptQueue)
-            {
-                script = "";
-            }
-            this->queueFront = 0;
-            this->queueRear = -1;
-            this->queueSize = 0;
-
-            this->scriptEvents.clear();
-            this->scriptLoaded = false;
-            cleared = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "panicStop: mutex timeout — scriptLoaded is false so motion is halted, "
+                      "but script queue was not cleared (will be cleared on next queueScript)");
+        return;
     }
-    // TODO
+
+    for (auto &script : this->scriptQueue)
+    {
+        script = "";
+    }
+    this->queueFront = 0;
+    this->queueRear = -1;
+    this->queueSize = 0;
+
+    this->scriptEvents.clear();
+    this->scriptLoaded.store(false);
+    xSemaphoreGive(this->animationMutex);
 }
 
 bool AnimationController::queueScript(std::string scriptId)
 {
-    this->queueing = true;
+    this->queueing.store(true);
 
     ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
+
+    // Take the mutex before checking fullness: queueSize is mutated under this
+    // mutex by loadNextScript()/panicStop(), and the check-then-push sequence
+    // must be atomic to prevent overwriting an unread slot in scriptQueue when
+    // a concurrent caller fills the last position between the check and the
+    // acquire.
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "queueScript: failed to acquire animationMutex within 5s");
+        this->queueing.store(false);
+        return false;
+    }
 
     if (queueIsFull())
     {
         ESP_LOGI(TAG, "Queue is full");
+        xSemaphoreGive(this->animationMutex);
+        this->queueing.store(false);
         return false;
     }
 
-    while (this->queueing)
-    {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            this->queueRear = (queueRear + 1) % queueCapacity;
-
-            this->scriptQueue[queueRear] = scriptId;
-
-            this->queueSize++;
-            this->queueing = false;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
+    this->queueRear = (queueRear + 1) % queueCapacity;
+    this->scriptQueue[queueRear] = scriptId;
+    this->queueSize++;
+    this->queueing.store(false);
+    xSemaphoreGive(this->animationMutex);
 
     return true;
 }
 
 bool AnimationController::queueCommand(std::string command)
 {
-    auto queued = false;
-    while (!queued)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            AnimationCommand cmd = AnimationCommand(command);
-            this->scriptEvents.push_back(cmd);
-            queued = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "queueCommand: failed to acquire animationMutex within 5s");
+        return false;
     }
-    return false;
+
+    AnimationCommand cmd = AnimationCommand(command);
+    this->scriptEvents.push_back(cmd);
+    xSemaphoreGive(this->animationMutex);
+    return true;
 }
 
 bool AnimationController::queueIsFull()
@@ -136,196 +138,154 @@ bool AnimationController::queueIsEmpty()
 
 void AnimationController::loadNextScript()
 {
-
-    if (queueIsEmpty() || this->queueing)
+    // queueing stays outside the mutex on purpose: it's an atomic hint used as
+    // a pre-mutex backoff signal so readers skip an in-progress push without
+    // contending on the lock. The empty-check and the dequeue must move inside
+    // the mutex because queueSize/queueFront/queueRear are only consistent
+    // under animationMutex.
+    if (this->queueing.load())
     {
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return;
     }
 
-    std::string script = "error";
-    auto retrieved = false;
-
-    while (!retrieved)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            ESP_LOGI(TAG, "Loading script %s", this->scriptQueue[this->queueFront].c_str());
-
-            std::string path = "scripts/" + this->scriptQueue[this->queueFront];
-
-            script = AstrOs_Storage.readFile(path);
-
-            this->queueFront = (this->queueFront + 1) % this->queueCapacity;
-            this->queueSize--;
-
-            retrieved = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "loadNextScript: failed to acquire animationMutex within 5s");
+        this->scriptLoaded.store(false);
+        return;
     }
+
+    if (queueIsEmpty())
+    {
+        this->scriptLoaded.store(false);
+        xSemaphoreGive(this->animationMutex);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Loading script %s", this->scriptQueue[this->queueFront].c_str());
+
+    std::string path = "scripts/" + this->scriptQueue[this->queueFront];
+
+    std::string script = AstrOs_Storage.readFile(path);
+
+    this->queueFront = (this->queueFront + 1) % this->queueCapacity;
+    this->queueSize--;
+    xSemaphoreGive(this->animationMutex);
 
     if (script == "error")
     {
         ESP_LOGI(TAG, "Script not loaded");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
     }
     else
     {
+        // parseScript owns the scriptLoaded flag: it sets true on successful
+        // population (inside its mutex block) and false on mutex timeout.
+        // Do not override here.
         AnimationController::parseScript(script);
-        this->scriptLoaded = true;
     }
-    // LoadFromMemory(scriptQueue[queueFront]);
-
-    /*****************************************
-     * Test script
-     *****************************************/
-    // if (strncmp(scriptQueue[queueFront], "#start", strlen("#home")) == 0){
-    //     servoScript[0].setValues(Spinner, Start, 0, 0, 500);
-    //     servoScript[1].setValues(Lifter, Start, 0, 0, 500);
-    //     servoEvents = 2;
-    // }
-    // if (strncmp(scriptQueue[queueFront], "#home", strlen("#home")) == 0){
-    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-    //     servoScript[1].setValues(Lifter, Home, 0, 0, 2000);
-    //     servoEvents = 2;
-    // }
-    // if (strncmp(scriptQueue[queueFront], "#stow", strlen("#stow")) == 0){
-    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-    //     servoScript[1].setValues(Lifter, Position, -15, 0, 2000);
-    //     servoEvents = 2;
-    // }
-    // else if (strncmp(scriptQueue[queueFront], "#deploy", strlen("#deploy")) == 0) {
-    //     servoScript[0].setValues(Lifter, Position, 780, 0, 1000);
-    //     servoEvents = 1;
-    // }
-    // else if (strncmp(scriptQueue[queueFront], "#sneaky", strlen("#sneaky")) == 0) {
-    //     servoScript[0].setValues(Lifter, Position, 780, 100, 12000);
-    //     servoScript[1].setValues(Lifter, Position, 350, 100, 6000);
-    //     servoScript[2].setValues(Lifter, Position, 690, 100, 4000);
-    //     servoScript[3].setValues(Spinner, Position, -350, 700, 5000);
-    //     servoScript[4].setValues(Spinner, Position, 700, 2000, 3000);
-    //     servoScript[5].setValues(Lifter, Position, 790, 100, 2000);
-    //     servoScript[6].setValues(Spinner, Position, 350, 400, 5000);
-    //     servoScript[7].setValues(Spinner, Home, 0, 0, 1000);
-    //     servoScript[8].setValues(Lifter, Position, -15, 200, 12000);
-    //     servoEvents = 9;
-    // }
-    /*****************************************
-     * End Test Script
-     *****************************************/
 }
 
 bool AnimationController::scriptIsLoaded()
 {
-
-    if (!scriptLoaded && !queueIsEmpty())
+    // No pre-check on queueIsEmpty() here: that read would be outside the
+    // mutex and race with queueSize mutations. loadNextScript() now performs
+    // the empty-check under animationMutex and returns a no-op when the queue
+    // is genuinely empty, so calling it unconditionally when no script is
+    // loaded is both correct and only costs one extra mutex take per idle
+    // animation tick.
+    if (!scriptLoaded.load())
     {
         loadNextScript();
     }
 
-    return scriptLoaded;
+    return scriptLoaded.load();
 }
 
 std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 {
-    std::unique_ptr<CommandTemplate> cmd;
-    auto retrieved = false;
-
-    while (!retrieved)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-
-            if (this->scriptEvents.empty())
-            {
-                this->scriptLoaded = false;
-                cmd = std::make_unique<CommandTemplate>(MODULE_TYPE::NONE, 0, "");
-            }
-            else if (this->scriptEvents.size() == 1)
-            {
-                auto lastCmd = scriptEvents.back().GetCommandTemplatePtr();
-                this->scriptEvents.pop_back();
-
-                this->scriptLoaded = false;
-                cmd = std::move(lastCmd);
-            }
-            else
-            {
-                this->delayTillNextEvent = scriptEvents.back().duration;
-
-                // 10 milliseconds minimum between events?
-                if (this->delayTillNextEvent < 10)
-                {
-                    this->delayTillNextEvent = 10;
-                }
-
-                cmd = scriptEvents.back().GetCommandTemplatePtr();
-                this->scriptEvents.pop_back();
-            }
-            retrieved = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        // SAFETY: halt the animation sequence on mutex timeout. If we just returned
+        // nullptr, the next timer tick would call us again and — if the mutex had
+        // cleared — dispatch the NEXT command, silently skipping the one we missed.
+        // For sequenced operations (e.g. "open panel then extend greeblie") that
+        // can damage the droid. Setting scriptLoaded=false stops the callback from
+        // retrieving any further commands; a new queueScript is required to resume.
+        ESP_LOGE(TAG, "getNextCommandPtr: mutex timeout — halting script to prevent partial sequence execution");
+        this->scriptLoaded.store(false);
+        return nullptr;
     }
 
+    std::unique_ptr<CommandTemplate> cmd;
+
+    if (this->scriptEvents.empty())
+    {
+        this->scriptLoaded.store(false);
+        cmd = std::make_unique<CommandTemplate>(MODULE_TYPE::NONE, 0, "");
+    }
+    else if (this->scriptEvents.size() == 1)
+    {
+        auto lastCmd = scriptEvents.back().GetCommandTemplatePtr();
+        this->scriptEvents.pop_back();
+
+        this->scriptLoaded.store(false);
+        cmd = std::move(lastCmd);
+    }
+    else
+    {
+        const int duration = scriptEvents.back().duration;
+        // 10 milliseconds minimum between events
+        this->delayTillNextEvent.store(duration < 10 ? 10 : duration);
+
+        cmd = scriptEvents.back().GetCommandTemplatePtr();
+        this->scriptEvents.pop_back();
+    }
+
+    xSemaphoreGive(this->animationMutex);
     return cmd;
 }
 
 int AnimationController::msTillNextServoCommand()
 {
-    return this->delayTillNextEvent;
+    return this->delayTillNextEvent.load();
 }
 
 void AnimationController::parseScript(std::string script)
 {
-    auto parsed = false;
-
-    while (!parsed)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            this->scriptEvents.clear();
-
-            auto parts = AstrOsStringUtils::splitString(script, ';');
-
-            /* auto start = 0U;
-             auto end = script.find(";");
-             while (end != std::string::npos)
-             {
-                 AnimationCommand cmd = AnimationCommand(script.substr(start, end - start));
-                 this->scriptEvents.push_back(cmd);
-                 start = end + 1;
-                 end = script.find(";", start);
-             }
-             */
-
-            for (auto part : parts)
-            {
-                if (part.empty())
-                {
-                    continue;
-                }
-                AnimationCommand cmd = AnimationCommand(part);
-                this->scriptEvents.push_back(cmd);
-            }
-
-            std::reverse(this->scriptEvents.begin(), this->scriptEvents.end());
-
-            ESP_LOGI(TAG, "Loaded: %s", script.c_str());
-            ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
-            parsed = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        // SAFETY: on mutex timeout scriptEvents is stale/empty. Force
+        // scriptLoaded=false so the caller (loadNextScript) and subsequent
+        // timer callbacks do not attempt to dispatch from invalid state.
+        ESP_LOGE(TAG, "parseScript: mutex timeout — script not loaded, scriptLoaded=false");
+        this->scriptLoaded.store(false);
+        return;
     }
+
+    this->scriptEvents.clear();
+
+    auto parts = AstrOsStringUtils::splitString(script, ';');
+
+    for (auto part : parts)
+    {
+        if (part.empty())
+        {
+            continue;
+        }
+        AnimationCommand cmd = AnimationCommand(part);
+        this->scriptEvents.push_back(cmd);
+    }
+
+    std::reverse(this->scriptEvents.begin(), this->scriptEvents.end());
+
+    ESP_LOGI(TAG, "Loaded: %s", script.c_str());
+    ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
+
+    // parseScript owns the scriptLoaded flag: only mark the script as loaded
+    // when events are actually populated and the mutex was held throughout.
+    // loadNextScript no longer sets scriptLoaded after calling us.
+    this->scriptLoaded.store(true);
+    xSemaphoreGive(this->animationMutex);
 }

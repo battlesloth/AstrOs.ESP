@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <atomic>
 #include <driver/rmt.h>
 #include <driver/uart.h>
 #include <esp_event.h>
@@ -9,10 +10,13 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <map>
+#include <memory>
 #include <nvs_flash.h>
 #include <string.h>
+#include <vector>
 
 #include <AnimationCommand.hpp>
 #include <AnimationController.hpp>
@@ -37,12 +41,16 @@ static const char *TAG = AstrOsConstants::ModuleName;
 /**********************************
  * States
  **********************************/
-static int displayTimeout = 0;
-static int defaultDisplayTimeout = 10;
-static bool discoveryMode = false;
-static bool isMasterNode = false;
+static std::atomic<int> displayTimeout{0};
+static std::atomic<int> defaultDisplayTimeout{10};
+static std::atomic<bool> discoveryMode{false};
+static std::atomic<bool> isMasterNode{false};
 static uart_port_t ASTRO_PORT = UART_NUM_0;
-static std::string rank = "Padawan";
+
+static const char *currentRank()
+{
+    return isMasterNode.load() ? "Master" : "Padawan";
+}
 
 /**********************************
  * Time trackers
@@ -106,7 +114,8 @@ static esp_timer_handle_t servoMoveTimer;
 static SerialModule SerialChannel1;
 static SerialModule SerialChannel2;
 
-static std::map<int, MaestroModule *> maestroModules;
+static std::map<int, std::shared_ptr<MaestroModule>> maestroModules;
+static SemaphoreHandle_t maestroModulesMutex = NULL;
 
 // #define BAUD_RATE_1 (9600)
 
@@ -234,6 +243,13 @@ void init(void)
     gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
+    maestroModulesMutex = xSemaphoreCreateMutex();
+    if (maestroModulesMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create maestroModulesMutex — aborting init");
+        abort();
+    }
+
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
 
     loadConfig();
@@ -248,7 +264,7 @@ void init(void)
 
     serial_config_t serialConf1;
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         serialConf1.isMaster = true;
         serialConf1.defaultBaudRate = ASTROS_INTEFACE_BAUD_RATE;
@@ -313,7 +329,7 @@ void init(void)
     astros_espnow_config_t config = {.masterMac = svcConfig.masterMacAddress,
                                      .name = name,
                                      .fingerprint = fingerprint,
-                                     .isMaster = isMasterNode,
+                                     .isMaster = isMasterNode.load(),
                                      .peers = peerList,
                                      .peerCount = peerCount,
                                      .serviceQueue = serviceQueue,
@@ -330,7 +346,7 @@ void init(void)
 
     AstrOs_EspNow.init(config);
     AstrOs_Display.init(i2cQueue);
-    AstrOs_Display.setDefault(rank, "", name);
+    AstrOs_Display.setDefault(currentRank(), "", name);
 }
 
 #pragma endregion
@@ -387,8 +403,14 @@ static void pollingTimerCallback(void *arg)
     lastHeartBeat = now;
     ESP_LOGI(TAG, "Heartbeat, %d milliseconds since last", seconds);
 
+    // Snapshot atomics once per branch — avoid re-reading across the two
+    // checks (which could observe different values if another task writes
+    // between loads) and make the atomicity explicit at each callsite.
+    const bool master = isMasterNode.load();
+    const bool discovery = discoveryMode.load();
+
     // only send register requests during discovery mode
-    if (isMasterNode && !discoveryMode)
+    if (master && !discovery)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -419,7 +441,7 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
-    else if (!isMasterNode && discoveryMode)
+    else if (!master && discovery)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -432,11 +454,17 @@ static void pollingTimerCallback(void *arg)
         }
     }
 
-    if (!discoveryMode && displayTimeout > 0)
+    if (!discovery && displayTimeout.load() > 0)
     {
-        ESP_LOGD(TAG, "Display Timeout: %d", displayTimeout);
-        displayTimeout -= 2;
-        if (displayTimeout <= 0)
+        // Use fetch_sub's returned prior value to derive the post-decrement
+        // value: a separate .load() after fetch_sub would race with the
+        // writers at displayTimeout = defaultDisplayTimeout.load() elsewhere
+        // and could mask a decrement that just crossed zero (or trigger a
+        // spurious clear).
+        const int previous = displayTimeout.fetch_sub(2);
+        const int remaining = previous - 2;
+        ESP_LOGD(TAG, "Display Timeout: %d", remaining);
+        if (remaining <= 0)
         {
             AstrOs_Display.displayClear();
         }
@@ -458,7 +486,18 @@ static void animationTimerCallback(void *arg)
 
         if (cmd == nullptr)
         {
-            ESP_LOGE(TAG, "Annimation Command pointer is null");
+            // getNextCommandPtr returns nullptr only on mutex timeout, in which
+            // case it has also set scriptLoaded=false (halting the current
+            // sequence — see AnimationController.cpp for the safety rationale).
+            // Re-arm the timer so the subsystem stays alive; on the next tick
+            // scriptIsLoaded() will return false and the callback will take the
+            // else-branch below, keeping the timer running idle until a future
+            // queueScript can resume animation. Without this, a single transient
+            // mutex contention would require a device reboot to restore animation
+            // — bad, because third-party hardware may be in a non-safe state that
+            // a recovery script (not a power-cycle) needs to address.
+            ESP_LOGE(TAG, "Animation command pointer is null — script halted, timer re-armed for recovery");
+            ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 250 * 1000));
             return;
         }
 
@@ -593,9 +632,30 @@ static void servoMoveTimerCallback(void *arg)
 
     // ServoMod.MoveServos();
 
-    for (auto maestroMod : maestroModules)
+    // Snapshot module handles under the mutex, then release it before calling
+    // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
+    // which spins on a per-module mutex. Holding maestroModulesMutex across
+    // that would block the esp_timer task and any other caller of the map.
+    // shared_ptr ownership keeps each module alive for the duration of the
+    // snapshot even if loadMaestroConfigs removes it concurrently.
+    std::vector<std::shared_ptr<MaestroModule>> snapshot;
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(100)) == pdTRUE)
     {
-        maestroMod.second->CheckServos(300);
+        snapshot.reserve(maestroModules.size());
+        for (const auto &entry : maestroModules)
+        {
+            snapshot.push_back(entry.second);
+        }
+        xSemaphoreGive(maestroModulesMutex);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "servoMoveTimerCallback: maestroModulesMutex timeout — skipping cycle");
+    }
+
+    for (auto &maestroMod : snapshot)
+    {
+        maestroMod->CheckServos(300);
     }
 
     // get time at end of loop
@@ -645,7 +705,7 @@ void buttonListenerTask(void *arg)
                 else if ((xTaskGetTickCount() - buttonStartTime) > pdMS_TO_TICKS(MEDIUM_PRESS_THRESHOLD_MS))
                 {
                     queue_svc_cmd_t cmd;
-                    if (discoveryMode)
+                    if (discoveryMode.load())
                     {
                         cmd.cmd = SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF;
                     }
@@ -663,7 +723,7 @@ void buttonListenerTask(void *arg)
 
                     ESP_LOGI(TAG, "Discovery Switch Sent");
                 }
-                else if (!discoveryMode)
+                else if (!discoveryMode.load())
                 {
                     queue_svc_cmd_t cmd;
                     cmd.cmd = SERVICE_COMMAND::SHOW_DISPLAY;
@@ -923,21 +983,21 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::SHOW_DISPLAY:
             {
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout;
+                displayTimeout.store(defaultDisplayTimeout.load());
                 break;
             }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_ON:
             {
-                discoveryMode = true;
+                discoveryMode.store(true);
                 AstrOs_Display.displayUpdate("Discovery", "Mode On");
                 ESP_LOGI(TAG, "Discovery mode on");
                 break;
             }
             case SERVICE_COMMAND::ESPNOW_DISCOVERY_MODE_OFF:
             {
-                discoveryMode = false;
+                discoveryMode.store(false);
                 AstrOs_Display.displayDefault();
-                displayTimeout = defaultDisplayTimeout;
+                displayTimeout.store(defaultDisplayTimeout.load());
                 ESP_LOGI(TAG, "Discovery mode off");
                 break;
             }
@@ -1161,13 +1221,35 @@ void servoQueueTask(void *arg)
 
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
 
-            if (maestroModules.find(msg.message_id) == maestroModules.end())
+            // Snapshot the target module under maestroModulesMutex, then
+            // release before calling QueueCommand(): QueueCommand ultimately
+            // calls sendQueueMsg() which spins on a per-module mutex and
+            // blocks on queue sends. Holding the map mutex across that would
+            // stall loadMaestroConfigs() and other callers of the map. The
+            // shared_ptr keeps the module alive for the duration of the call
+            // even if a concurrent config reload removes it from the map.
+            std::shared_ptr<MaestroModule> target;
+            if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
             {
-                ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
+                auto it = maestroModules.find(msg.message_id);
+                if (it == maestroModules.end())
+                {
+                    ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
+                }
+                else
+                {
+                    target = it->second;
+                }
+                xSemaphoreGive(maestroModulesMutex);
             }
             else
             {
-                maestroModules.at(msg.message_id)->QueueCommand(msg.data);
+                ESP_LOGW(TAG, "servoQueueTask: failed to acquire maestroModulesMutex within 1s");
+            }
+
+            if (target)
+            {
+                target->QueueCommand(msg.data);
             }
             free(msg.data);
         }
@@ -1248,7 +1330,7 @@ void espnowQueueTask(void *arg)
     ESP_LOGI(TAG, "ESP-NOW Queue started");
 
     AstrOs_Display.displayDefault();
-    displayTimeout = defaultDisplayTimeout;
+    displayTimeout.store(defaultDisplayTimeout.load());
 
     queue_espnow_msg_t msg;
 
@@ -1297,7 +1379,7 @@ void espnowQueueTask(void *arg)
                     ESP_LOGD(TAG, "Received broadcast data from: " MACSTR ", len: %d", MAC2STR(msg.src), msg.data_len);
 
                     // only handle broadcast messages in discovery mode
-                    if (!discoveryMode)
+                    if (!discoveryMode.load())
                     {
                         break;
                     }
@@ -1354,18 +1436,16 @@ static void loadConfig()
                     if (parts[1].find("true") != std::string::npos)
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
-                        isMasterNode = true;
+                        isMasterNode.store(true);
                         ASTRO_PORT = UART_NUM_1;
-                        rank = "Master";
-                        ESP_LOGI(TAG, "%s node using UART channel 1", rank.c_str());
+                        ESP_LOGI(TAG, "%s node using UART channel 1", currentRank());
                     }
                     else
                     {
                         ESP_LOGI(TAG, "isMasterNode: %s", parts[1].c_str());
-                        isMasterNode = false;
+                        isMasterNode.store(false);
                         ASTRO_PORT = UART_NUM_0;
-                        rank = "Padawan";
-                        ESP_LOGI(TAG, "%s node using UART channel 0", rank.c_str());
+                        ESP_LOGI(TAG, "%s node using UART channel 0", currentRank());
                     }
                 }
             }
@@ -1379,41 +1459,63 @@ static void loadConfig()
 
 static void loadMaestroConfigs()
 {
-
     ESP_LOGI(TAG, "Loading Maestro configurations");
+
+    // Storage read happens outside the map mutex — it only touches NVS, not
+    // the map, and keeping it outside shortens the critical section.
+    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
+    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
+
+    // Phase 1: structural map mutation under maestroModulesMutex only. We
+    // record pending UpdateConfig calls against existing modules instead of
+    // applying them inline — UpdateConfig() spin-waits on each module's own
+    // mutex, and LoadConfig() does NVS reads + HomeServos() UART traffic.
+    // Running either under the map mutex would stall servoQueueTask and trip
+    // the 100ms timeout in servoMoveTimerCallback repeatedly.
+    struct PendingUpdate
+    {
+        std::shared_ptr<MaestroModule> module;
+        QueueHandle_t queue;
+        int baudrate;
+    };
+    std::vector<PendingUpdate> pendingUpdates;
+    std::vector<std::shared_ptr<MaestroModule>> toInitialize;
+
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "loadMaestroConfigs: failed to acquire maestroModulesMutex within 1s");
+        return;
+    }
 
     // get list of current maestro modules
     std::vector<int> currentModules;
-    for (auto maestroMod : maestroModules)
+    currentModules.reserve(maestroModules.size());
+    for (const auto &entry : maestroModules)
     {
-        currentModules.push_back(maestroMod.first);
+        currentModules.push_back(entry.first);
     }
 
     ESP_LOGI(TAG, "Current Maestro module count: %d", currentModules.size());
 
-    // load maestro configurations from storage
-    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
-
-    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
-
     for (auto &cfg : maestroConfigs)
     {
-        // if the module is already loaded, update it and remove from the list
-        if (maestroModules.find(cfg.idx) != maestroModules.end())
+        auto existing = maestroModules.find(cfg.idx);
+        if (existing != maestroModules.end())
         {
-            // only allow modules to use uart 1 if this is not a master node
-            if (cfg.uartChannel == 1 && isMasterNode)
+            // Module already present — record a pending UpdateConfig call to
+            // apply outside the map lock. The map entry itself doesn't change.
+            if (cfg.uartChannel == 1 && isMasterNode.load())
             {
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
                 continue; // skip invalid configurations
             }
             else if (cfg.uartChannel == 1)
             {
-                maestroModules[cfg.idx]->UpdateConfig(serialCh1Queue, cfg.baudrate);
+                pendingUpdates.push_back({existing->second, serialCh1Queue, cfg.baudrate});
             }
             else if (cfg.uartChannel == 2)
             {
-                maestroModules[cfg.idx]->UpdateConfig(serialCh2Queue, cfg.baudrate);
+                pendingUpdates.push_back({existing->second, serialCh2Queue, cfg.baudrate});
             }
             else
             {
@@ -1426,20 +1528,18 @@ static void loadMaestroConfigs()
         else
         {
             // if the module is not loaded, create a new one
-            if (cfg.uartChannel == 1 && isMasterNode)
+            if (cfg.uartChannel == 1 && isMasterNode.load())
             {
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
                 continue; // skip invalid configurations
             }
             if (cfg.uartChannel == 1)
             {
-                MaestroModule *maestroMod = new MaestroModule(serialCh1Queue, cfg.idx, cfg.baudrate);
-                maestroModules[cfg.idx] = maestroMod;
+                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh1Queue, cfg.idx, cfg.baudrate);
             }
             else if (cfg.uartChannel == 2)
             {
-                MaestroModule *maestroMod = new MaestroModule(serialCh2Queue, cfg.idx, cfg.baudrate);
-                maestroModules[cfg.idx] = maestroMod;
+                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh2Queue, cfg.idx, cfg.baudrate);
             }
             else
             {
@@ -1455,17 +1555,35 @@ static void loadMaestroConfigs()
         ESP_LOGI(TAG, "Removing Maestro module: %d", idx);
         if (maestroModules.find(idx) != maestroModules.end())
         {
-            delete maestroModules[idx];
             maestroModules.erase(idx);
         }
     }
 
     ESP_LOGI(TAG, "Maestro module count: %d", maestroModules.size());
 
-    // load servo configurations from storage
-    for (auto maestroMod : maestroModules)
+    toInitialize.reserve(maestroModules.size());
+    for (const auto &entry : maestroModules)
     {
-        maestroMod.second->LoadConfig();
+        toInitialize.push_back(entry.second);
+    }
+
+    xSemaphoreGive(maestroModulesMutex);
+
+    // Phase 2: apply recorded UpdateConfig calls outside the map mutex. Each
+    // call may spin on the per-module mutex, but doing so no longer blocks
+    // the container. shared_ptr ownership keeps the module alive even if a
+    // concurrent reload removes its map entry in between.
+    for (auto &pending : pendingUpdates)
+    {
+        pending.module->UpdateConfig(pending.queue, pending.baudrate);
+    }
+
+    // Phase 3: initialize each module (NVS read + HomeServos) outside the
+    // map mutex. UpdateConfig has already landed above so LoadConfig sees
+    // the intended queue/baud.
+    for (auto &maestroMod : toInitialize)
+    {
+        maestroMod->LoadConfig();
     }
 }
 
@@ -1628,7 +1746,7 @@ static void handleSetConfig(astros_interface_response_t msg)
         ESP_LOGE(TAG, "Failed to set config: %s", msg.message);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_CONFIG_ACK : AstrOsSerialMessageType::DEPLOY_CONFIG_NAK;
 
@@ -1657,7 +1775,7 @@ static void handleSaveScript(astros_interface_response_t msg)
         success = AstrOs_Storage.saveFile("scripts/" + parts[0], parts[1]);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::DEPLOY_SCRIPT_ACK : AstrOsSerialMessageType::DEPLOY_SCRIPT_NAK;
 
@@ -1687,7 +1805,7 @@ static void handleRunSctipt(astros_interface_response_t msg)
         success = AnimationCtrl.queueScript(parts[0]);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::RUN_SCRIPT_ACK : AstrOsSerialMessageType::RUN_SCRIPT_NAK;
 
@@ -1722,7 +1840,7 @@ static void handleFormatSD(std::string id)
         AstrOs_Storage.saveFile("config.txt", cfig);
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         auto ackNak = success ? AstrOsSerialMessageType::FORMAT_SD_ACK : AstrOsSerialMessageType::FORMAT_SD_NAK;
 
@@ -1751,17 +1869,38 @@ static void handleServoTest(astros_interface_response_t msg)
         int servo = std::stoi(parts[2]);
         int ms = std::stoi(parts[3]);
 
-        if (maestroModules.find(idx) == maestroModules.end())
+        // Snapshot the target module under maestroModulesMutex, then release
+        // before calling SetServoPosition(): that path reaches sendQueueMsg()
+        // which spins on a per-module mutex and blocks on queue sends.
+        // Holding the map mutex across it would stall loadMaestroConfigs()
+        // and other callers. The shared_ptr keeps the module alive for the
+        // call even if a concurrent config reload removes it from the map.
+        std::shared_ptr<MaestroModule> target;
+        if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
-            ESP_LOGE(TAG, "Maestro module %d not found", idx);
+            auto it = maestroModules.find(idx);
+            if (it == maestroModules.end())
+            {
+                ESP_LOGE(TAG, "Maestro module %d not found", idx);
+            }
+            else
+            {
+                target = it->second;
+            }
+            xSemaphoreGive(maestroModulesMutex);
         }
         else
         {
-            maestroModules.at(idx)->SetServoPosition(servo, ms);
+            ESP_LOGW(TAG, "handleServoTest: failed to acquire maestroModulesMutex within 1s");
+        }
+
+        if (target)
+        {
+            target->SetServoPosition(servo, ms);
         }
     }
 
-    if (isMasterNode)
+    if (isMasterNode.load())
     {
         AstrOs_SerialMsgHandler.sendBasicAckNakResponse(AstrOsSerialMessageType::SERVO_TEST_ACK, msg.originationMsgId,
                                                         AstrOs_EspNow.getMac(), "master", "SERVO_TEST");
