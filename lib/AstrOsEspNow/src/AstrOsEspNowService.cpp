@@ -236,7 +236,7 @@ bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
         return false;
     }
 
-    if (peers.size() > 10)
+    if (peers.size() >= 10)
     {
         xSemaphoreGive(this->peersMutex);
         ESP_LOGE(TAG, "Peer cache is full");
@@ -1193,7 +1193,7 @@ bool AstrOsEspNow::findPeer(std::string peerMac)
     {
         auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
 
-        if (memcmp(pMac.c_str(), peerMac.c_str(), peerMac.size()) == 0)
+        if (pMac == peerMac)
         {
             xSemaphoreGive(this->peersMutex);
             return true;
@@ -1216,7 +1216,7 @@ bool AstrOsEspNow::isValidPollPeer(std::string peerMac)
     {
         auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
 
-        if (memcmp(pMac.c_str(), peerMac.c_str(), ESP_NOW_ETH_ALEN) == 0)
+        if (pMac == peerMac)
         {
             p.pollAckThisCycle = true;
             xSemaphoreGive(this->peersMutex);

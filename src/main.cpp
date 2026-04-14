@@ -13,8 +13,10 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <map>
+#include <memory>
 #include <nvs_flash.h>
 #include <string.h>
+#include <vector>
 
 #include <AnimationCommand.hpp>
 #include <AnimationController.hpp>
@@ -112,7 +114,7 @@ static esp_timer_handle_t servoMoveTimer;
 static SerialModule SerialChannel1;
 static SerialModule SerialChannel2;
 
-static std::map<int, MaestroModule *> maestroModules;
+static std::map<int, std::shared_ptr<MaestroModule>> maestroModules;
 static SemaphoreHandle_t maestroModulesMutex = NULL;
 
 // #define BAUD_RATE_1 (9600)
@@ -244,7 +246,8 @@ void init(void)
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
     {
-        ESP_LOGE(TAG, "Failed to create maestroModulesMutex");
+        ESP_LOGE(TAG, "Failed to create maestroModulesMutex — aborting init");
+        abort();
     }
 
     ESP_ERROR_CHECK(AstrOs_Storage.Init());
@@ -617,17 +620,30 @@ static void servoMoveTimerCallback(void *arg)
 
     // ServoMod.MoveServos();
 
+    // Snapshot module handles under the mutex, then release it before calling
+    // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
+    // which spins on a per-module mutex. Holding maestroModulesMutex across
+    // that would block the esp_timer task and any other caller of the map.
+    // shared_ptr ownership keeps each module alive for the duration of the
+    // snapshot even if loadMaestroConfigs removes it concurrently.
+    std::vector<std::shared_ptr<MaestroModule>> snapshot;
     if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(100)) == pdTRUE)
     {
-        for (auto maestroMod : maestroModules)
+        snapshot.reserve(maestroModules.size());
+        for (const auto &entry : maestroModules)
         {
-            maestroMod.second->CheckServos(300);
+            snapshot.push_back(entry.second);
         }
         xSemaphoreGive(maestroModulesMutex);
     }
     else
     {
         ESP_LOGW(TAG, "servoMoveTimerCallback: maestroModulesMutex timeout — skipping cycle");
+    }
+
+    for (auto &maestroMod : snapshot)
+    {
+        maestroMod->CheckServos(300);
     }
 
     // get time at end of loop
@@ -1476,13 +1492,11 @@ static void loadMaestroConfigs()
             }
             if (cfg.uartChannel == 1)
             {
-                MaestroModule *maestroMod = new MaestroModule(serialCh1Queue, cfg.idx, cfg.baudrate);
-                maestroModules[cfg.idx] = maestroMod;
+                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh1Queue, cfg.idx, cfg.baudrate);
             }
             else if (cfg.uartChannel == 2)
             {
-                MaestroModule *maestroMod = new MaestroModule(serialCh2Queue, cfg.idx, cfg.baudrate);
-                maestroModules[cfg.idx] = maestroMod;
+                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh2Queue, cfg.idx, cfg.baudrate);
             }
             else
             {
@@ -1498,7 +1512,6 @@ static void loadMaestroConfigs()
         ESP_LOGI(TAG, "Removing Maestro module: %d", idx);
         if (maestroModules.find(idx) != maestroModules.end())
         {
-            delete maestroModules[idx];
             maestroModules.erase(idx);
         }
     }

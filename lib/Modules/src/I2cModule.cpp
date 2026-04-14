@@ -129,12 +129,16 @@ void I2cModule::writeSsd1306(int line, std::string value)
         len = value.length() + spaces;
     }
 
-    char *c = const_cast<char *>(ss.str().c_str());
+    // Bind to a named local: ss.str() returns a temporary std::string whose
+    // buffer is destroyed at the end of the full expression, so capturing its
+    // c_str() into a raw pointer would dangle before ssd1306_display_text
+    // dereferenced it.
+    std::string text = ss.str();
 
     if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         ssd1306_clear_line(&oled, line, false);
-        ssd1306_display_text(&oled, line, c, len, false);
+        ssd1306_display_text(&oled, line, const_cast<char *>(text.c_str()), len, false);
         xSemaphoreGive(i2cMutex);
     }
     else
