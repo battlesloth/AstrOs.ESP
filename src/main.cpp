@@ -1221,21 +1221,35 @@ void servoQueueTask(void *arg)
 
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
 
+            // Snapshot the target module under maestroModulesMutex, then
+            // release before calling QueueCommand(): QueueCommand ultimately
+            // calls sendQueueMsg() which spins on a per-module mutex and
+            // blocks on queue sends. Holding the map mutex across that would
+            // stall loadMaestroConfigs() and other callers of the map. The
+            // shared_ptr keeps the module alive for the duration of the call
+            // even if a concurrent config reload removes it from the map.
+            std::shared_ptr<MaestroModule> target;
             if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
             {
-                if (maestroModules.find(msg.message_id) == maestroModules.end())
+                auto it = maestroModules.find(msg.message_id);
+                if (it == maestroModules.end())
                 {
                     ESP_LOGE(TAG, "Maestro module %d not found", msg.message_id);
                 }
                 else
                 {
-                    maestroModules.at(msg.message_id)->QueueCommand(msg.data);
+                    target = it->second;
                 }
                 xSemaphoreGive(maestroModulesMutex);
             }
             else
             {
                 ESP_LOGW(TAG, "servoQueueTask: failed to acquire maestroModulesMutex within 1s");
+            }
+
+            if (target)
+            {
+                target->QueueCommand(msg.data);
             }
             free(msg.data);
         }
@@ -1447,6 +1461,17 @@ static void loadMaestroConfigs()
 {
     ESP_LOGI(TAG, "Loading Maestro configurations");
 
+    // Storage read happens outside the map mutex — it only touches NVS, not
+    // the map, and keeping it outside shortens the critical section.
+    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
+    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
+
+    // Phase 1: mutate the map under maestroModulesMutex and snapshot the
+    // resulting set of shared_ptrs. We deliberately do NOT call LoadConfig()
+    // here — it enqueues UART traffic via HomeServos() and reads NVS, and
+    // holding the map mutex across that work would stall servoQueueTask and
+    // repeatedly trip the 100ms timeout in servoMoveTimerCallback.
+    std::vector<std::shared_ptr<MaestroModule>> toInitialize;
     if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
         ESP_LOGE(TAG, "loadMaestroConfigs: failed to acquire maestroModulesMutex within 1s");
@@ -1455,17 +1480,13 @@ static void loadMaestroConfigs()
 
     // get list of current maestro modules
     std::vector<int> currentModules;
-    for (auto maestroMod : maestroModules)
+    currentModules.reserve(maestroModules.size());
+    for (const auto &entry : maestroModules)
     {
-        currentModules.push_back(maestroMod.first);
+        currentModules.push_back(entry.first);
     }
 
     ESP_LOGI(TAG, "Current Maestro module count: %d", currentModules.size());
-
-    // load maestro configurations from storage
-    auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
-
-    ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
 
     for (auto &cfg : maestroConfigs)
     {
@@ -1530,13 +1551,21 @@ static void loadMaestroConfigs()
 
     ESP_LOGI(TAG, "Maestro module count: %d", maestroModules.size());
 
-    // load servo configurations from storage
-    for (auto maestroMod : maestroModules)
+    toInitialize.reserve(maestroModules.size());
+    for (const auto &entry : maestroModules)
     {
-        maestroMod.second->LoadConfig();
+        toInitialize.push_back(entry.second);
     }
 
     xSemaphoreGive(maestroModulesMutex);
+
+    // Phase 2: initialize each module outside the map mutex. shared_ptr
+    // ownership keeps each module alive for the duration of LoadConfig()
+    // even if a subsequent reload removes the entry from the map.
+    for (auto &maestroMod : toInitialize)
+    {
+        maestroMod->LoadConfig();
+    }
 }
 
 void loadGpioConfig()
@@ -1821,21 +1850,34 @@ static void handleServoTest(astros_interface_response_t msg)
         int servo = std::stoi(parts[2]);
         int ms = std::stoi(parts[3]);
 
+        // Snapshot the target module under maestroModulesMutex, then release
+        // before calling SetServoPosition(): that path reaches sendQueueMsg()
+        // which spins on a per-module mutex and blocks on queue sends.
+        // Holding the map mutex across it would stall loadMaestroConfigs()
+        // and other callers. The shared_ptr keeps the module alive for the
+        // call even if a concurrent config reload removes it from the map.
+        std::shared_ptr<MaestroModule> target;
         if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
-            if (maestroModules.find(idx) == maestroModules.end())
+            auto it = maestroModules.find(idx);
+            if (it == maestroModules.end())
             {
                 ESP_LOGE(TAG, "Maestro module %d not found", idx);
             }
             else
             {
-                maestroModules.at(idx)->SetServoPosition(servo, ms);
+                target = it->second;
             }
             xSemaphoreGive(maestroModulesMutex);
         }
         else
         {
             ESP_LOGW(TAG, "handleServoTest: failed to acquire maestroModulesMutex within 1s");
+        }
+
+        if (target)
+        {
+            target->SetServoPosition(servo, ms);
         }
     }
 

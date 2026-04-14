@@ -83,16 +83,22 @@ bool AnimationController::queueScript(std::string scriptId)
 
     ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
 
-    if (queueIsFull())
+    // Take the mutex before checking fullness: queueSize is mutated under this
+    // mutex by loadNextScript()/panicStop(), and the check-then-push sequence
+    // must be atomic to prevent overwriting an unread slot in scriptQueue when
+    // a concurrent caller fills the last position between the check and the
+    // acquire.
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        ESP_LOGI(TAG, "Queue is full");
+        ESP_LOGE(TAG, "queueScript: failed to acquire animationMutex within 5s");
         this->queueing.store(false);
         return false;
     }
 
-    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+    if (queueIsFull())
     {
-        ESP_LOGE(TAG, "queueScript: failed to acquire animationMutex within 5s");
+        ESP_LOGI(TAG, "Queue is full");
+        xSemaphoreGive(this->animationMutex);
         this->queueing.store(false);
         return false;
     }
@@ -132,14 +138,16 @@ bool AnimationController::queueIsEmpty()
 
 void AnimationController::loadNextScript()
 {
-
-    if (queueIsEmpty() || this->queueing.load())
+    // queueing stays outside the mutex on purpose: it's an atomic hint used as
+    // a pre-mutex backoff signal so readers skip an in-progress push without
+    // contending on the lock. The empty-check and the dequeue must move inside
+    // the mutex because queueSize/queueFront/queueRear are only consistent
+    // under animationMutex.
+    if (this->queueing.load())
     {
         this->scriptLoaded.store(false);
         return;
     }
-
-    std::string script = "error";
 
     if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
@@ -148,11 +156,18 @@ void AnimationController::loadNextScript()
         return;
     }
 
+    if (queueIsEmpty())
+    {
+        this->scriptLoaded.store(false);
+        xSemaphoreGive(this->animationMutex);
+        return;
+    }
+
     ESP_LOGI(TAG, "Loading script %s", this->scriptQueue[this->queueFront].c_str());
 
     std::string path = "scripts/" + this->scriptQueue[this->queueFront];
 
-    script = AstrOs_Storage.readFile(path);
+    std::string script = AstrOs_Storage.readFile(path);
 
     this->queueFront = (this->queueFront + 1) % this->queueCapacity;
     this->queueSize--;
@@ -174,8 +189,13 @@ void AnimationController::loadNextScript()
 
 bool AnimationController::scriptIsLoaded()
 {
-
-    if (!scriptLoaded.load() && !queueIsEmpty())
+    // No pre-check on queueIsEmpty() here: that read would be outside the
+    // mutex and race with queueSize mutations. loadNextScript() now performs
+    // the empty-check under animationMutex and returns a no-op when the queue
+    // is genuinely empty, so calling it unconditionally when no script is
+    // loaded is both correct and only costs one extra mutex take per idle
+    // animation tick.
+    if (!scriptLoaded.load())
     {
         loadNextScript();
     }
