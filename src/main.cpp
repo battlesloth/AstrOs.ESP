@@ -233,14 +233,16 @@ void init(void)
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
 
+    // Dispatch queues sized for fan-in from animationTimerCallback + producer bursts.
+    // Control queues stay at QUEUE_LENGTH (5) since they carry low-rate coordination.
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
     interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
-    serialCh1Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
-    serialCh2Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
-    servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    serialCh1Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
+    serialCh2Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
+    servoQueue = xQueueCreate(20, sizeof(queue_msg_t));
+    i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
+    gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
     maestroModulesMutex = xSemaphoreCreateMutex();
