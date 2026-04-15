@@ -43,7 +43,9 @@ esp_err_t I2cMaster::Init(gpio_num_t sda, gpio_num_t scl)
 
 bool I2cMaster::DeviceExists(uint8_t addr)
 {
-    esp_err_t res = ESP_OK;
+    // Initialized to a failure sentinel so a mutex timeout below
+    // isn't misreported as "device present".
+    esp_err_t res = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -56,12 +58,17 @@ bool I2cMaster::DeviceExists(uint8_t addr)
         i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "DeviceExists: bus mutex timeout for addr 0x%02x", addr);
+    }
+
     return res == ESP_OK;
 }
 
 bool I2cMaster::WriteByte(uint8_t addr, uint8_t registerAddr, uint8_t byte)
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -75,6 +82,10 @@ bool I2cMaster::WriteByte(uint8_t addr, uint8_t registerAddr, uint8_t byte)
         i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "WriteByte: bus mutex timeout for addr 0x%02x", addr);
+    }
 
     if (err != ESP_OK)
     {
@@ -86,7 +97,7 @@ bool I2cMaster::WriteByte(uint8_t addr, uint8_t registerAddr, uint8_t byte)
 
 bool I2cMaster::WriteWord(uint8_t addr, uint8_t registerAddr, uint16_t word)
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -102,6 +113,10 @@ bool I2cMaster::WriteWord(uint8_t addr, uint8_t registerAddr, uint16_t word)
 
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "WriteWord: bus mutex timeout for addr 0x%02x", addr);
+    }
 
     if (err != ESP_OK)
     {
@@ -114,7 +129,7 @@ bool I2cMaster::WriteWord(uint8_t addr, uint8_t registerAddr, uint16_t word)
 bool I2cMaster::WriteTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t word1, uint16_t word2)
 {
 
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -133,6 +148,10 @@ bool I2cMaster::WriteTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t word1
 
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "WriteTwoWords: bus mutex timeout for addr 0x%02x", addr);
+    }
 
     if (err != ESP_OK)
     {
@@ -144,7 +163,7 @@ bool I2cMaster::WriteTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t word1
 
 bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -179,6 +198,10 @@ bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
 
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "ReadByte: bus mutex timeout for addr 0x%02x", addr);
+    }
 
     if (err != ESP_OK)
     {
@@ -190,7 +213,7 @@ bool I2cMaster::ReadByte(uint8_t addr, uint8_t registerAddr, uint8_t *data)
 
 bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -230,6 +253,10 @@ bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
 
         xSemaphoreGive(i2cBusMutext);
     }
+    else
+    {
+        ESP_LOGW("I2C", "ReadWord: bus mutex timeout for addr 0x%02x", addr);
+    }
 
     if (err != ESP_OK)
     {
@@ -241,7 +268,7 @@ bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
 
 bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1, uint16_t *data2)
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = ESP_ERR_TIMEOUT;
 
     if (xSemaphoreTake(i2cBusMutext, pdMS_TO_TICKS(SEMAPHORE_TIMEOUT)) == pdTRUE)
     {
@@ -298,6 +325,10 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
         *data2 = (buffer1 << 8) | buffer2;
 
         xSemaphoreGive(i2cBusMutext);
+    }
+    else
+    {
+        ESP_LOGW("I2C", "ReadTwoWords: bus mutex timeout for addr 0x%02x", addr);
     }
 
     if (err != ESP_OK)

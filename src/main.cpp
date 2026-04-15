@@ -98,6 +98,7 @@ static esp_timer_handle_t servoMoveTimer;
 // memory visibility we need without a mutex on the hot paths.
 static std::atomic<uint32_t> astrosRxOverflowCount{0};
 static std::atomic<uint32_t> espnowMallocFailureCount{0};
+static std::atomic<uint32_t> dispatchMallocFailureCount{0};
 
 #define SERVO_MOVE_INTERVAL 500 // 500ms
 
@@ -477,9 +478,12 @@ static void maintenanceTimerCallback(void *arg)
 
     uint32_t rxOverflow = astrosRxOverflowCount.load(std::memory_order_relaxed);
     uint32_t espnowMallocFail = espnowMallocFailureCount.load(std::memory_order_relaxed);
-    if (rxOverflow != 0 || espnowMallocFail != 0)
+    uint32_t dispatchMallocFail = dispatchMallocFailureCount.load(std::memory_order_relaxed);
+    if (rxOverflow != 0 || espnowMallocFail != 0 || dispatchMallocFail != 0)
     {
-        ESP_LOGW(TAG, "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32, rxOverflow, espnowMallocFail);
+        ESP_LOGW(TAG,
+                 "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32 " dispatch-malloc-fail=%" PRIu32,
+                 rxOverflow, espnowMallocFail, dispatchMallocFail);
     }
 }
 
@@ -557,6 +561,12 @@ void animationDispatchTask(void *arg)
                     queue_serial_msg_t serialMsg;
                     serialMsg.message_id = 0;
                     serialMsg.data = (uint8_t *)malloc(formatted.size() + 1);
+                    if (serialMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc serial dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
                     memcpy(serialMsg.data, formatted.c_str(), formatted.size());
                     serialMsg.data[formatted.size()] = '\0';
 
@@ -589,6 +599,12 @@ void animationDispatchTask(void *arg)
                     queue_msg_t servoMsg;
                     servoMsg.message_id = module;
                     servoMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (servoMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc servo dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
                     memcpy(servoMsg.data, val.c_str(), val.size());
                     servoMsg.data[val.size()] = '\0';
 
@@ -605,6 +621,12 @@ void animationDispatchTask(void *arg)
                     queue_msg_t i2cMsg;
                     i2cMsg.message_id = 0;
                     i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (i2cMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc i2c dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
                     memcpy(i2cMsg.data, val.c_str(), val.size());
                     i2cMsg.data[val.size()] = '\0';
 
@@ -620,6 +642,12 @@ void animationDispatchTask(void *arg)
                     ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
                     queue_msg_t gpioMsg;
                     gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (gpioMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc gpio dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
                     memcpy(gpioMsg.data, val.c_str(), val.size());
                     gpioMsg.data[val.size()] = '\0';
 
@@ -873,6 +901,12 @@ void interfaceResponseQueueTask(void *arg)
                 queue_svc_cmd_t cmd;
                 cmd.cmd = SERVICE_COMMAND::FORMAT_SD;
                 cmd.data = (uint8_t *)malloc(id.size() + 1); // dummy data
+                if (cmd.data == NULL)
+                {
+                    ESP_LOGE(TAG, "Malloc FORMAT_SD command data fail");
+                    dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
                 memccpy(cmd.data, id.c_str(), 0, id.size());
                 cmd.data[id.size()] = '\0';
                 cmd.dataSize = id.size() + 1;
@@ -1040,6 +1074,12 @@ void serviceQueueTask(void *arg)
                 queue_msg_t serialMsg;
                 serialMsg.message_id = 1;
                 serialMsg.data = (uint8_t *)malloc(msg.dataSize + 1);
+                if (serialMsg.data == NULL)
+                {
+                    ESP_LOGE(TAG, "Malloc ASTROS_INTERFACE_MESSAGE data fail");
+                    dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
                 memcpy(serialMsg.data, msg.data, msg.dataSize);
                 serialMsg.data[msg.dataSize] = '\n';
                 serialMsg.dataSize = msg.dataSize + 1;
