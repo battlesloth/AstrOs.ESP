@@ -52,28 +52,31 @@ bool AstrOsStorageManager::isPathSafe(const std::string &path)
 {
     if (path.empty())
     {
-        ESP_LOGE(TAG, "isPathSafe: empty path rejected");
+        ESP_LOGW(TAG, "isPathSafe: empty path rejected");
         return false;
     }
     if (path[0] == '/')
     {
-        ESP_LOGE(TAG, "isPathSafe: absolute path rejected: %s", path.c_str());
+        ESP_LOGW(TAG, "isPathSafe: absolute path rejected: %s", path.c_str());
         return false;
     }
+    // Conservative: rejects any path containing ".." as a substring, not just
+    // at component boundaries. False positives are benign given current naming
+    // conventions.
     if (path.find("..") != std::string::npos)
     {
-        ESP_LOGE(TAG, "isPathSafe: traversal component rejected: %s", path.c_str());
+        ESP_LOGW(TAG, "isPathSafe: traversal component rejected: %s", path.c_str());
         return false;
     }
     if (path.find("//") != std::string::npos)
     {
-        ESP_LOGE(TAG, "isPathSafe: double-slash rejected: %s", path.c_str());
+        ESP_LOGW(TAG, "isPathSafe: double-slash rejected: %s", path.c_str());
         return false;
     }
     constexpr size_t MAX_PATH_LEN = 128;
     if (path.size() > MAX_PATH_LEN)
     {
-        ESP_LOGE(TAG, "isPathSafe: path too long (%zu > %zu): %s", path.size(), MAX_PATH_LEN, path.c_str());
+        ESP_LOGW(TAG, "isPathSafe: path too long (%zu > %zu): %.40s...", path.size(), MAX_PATH_LEN, path.c_str());
         return false;
     }
     return true;
@@ -544,6 +547,9 @@ esp_err_t AstrOsStorageManager::formatSdCard()
         if (mkdir(folder, 0777) != 0 && errno != EEXIST)
         {
             ESP_LOGE(TAG, "Failed to create folder %s: errno=%d (%s)", folder, errno, strerror(errno));
+            // Card is formatted at this point; mkdir failure leaves it without
+            // the expected directory structure. Return ESP_FAIL so the caller
+            // can request a retry.
             return ESP_FAIL;
         }
     }
