@@ -196,7 +196,7 @@ void app_main()
     init();
 
     // core 1
-    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 4096, (void *)serviceQueue, 5, NULL, 1);
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
     xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue,
