@@ -53,6 +53,7 @@ bool I2cMaster::DeviceExists(uint8_t addr)
         i2c_master_stop(cmd);
 
         res = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10 / portTICK_PERIOD_MS);
+        i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
     return res == ESP_OK;
@@ -206,9 +207,6 @@ bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
             xSemaphoreGive(i2cBusMutext);
             return false;
         }
-        cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-
         uint8_t buffer1;
         uint8_t buffer2;
 
@@ -230,7 +228,6 @@ bool I2cMaster::ReadWord(uint8_t addr, uint8_t registerAddr, uint16_t *data)
 
         *data = (buffer1 << 8) | buffer2;
 
-        i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
 
@@ -261,9 +258,6 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
             xSemaphoreGive(i2cBusMutext);
             return false;
         }
-        cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-
         uint8_t buffer1;
         uint8_t buffer2;
 
@@ -303,7 +297,6 @@ bool I2cMaster::ReadTwoWords(uint8_t addr, uint8_t registerAddr, uint16_t *data1
 
         *data2 = (buffer1 << 8) | buffer2;
 
-        i2c_cmd_link_delete(cmd);
         xSemaphoreGive(i2cBusMutext);
     }
 
