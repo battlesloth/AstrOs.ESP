@@ -16,6 +16,7 @@ private:
     bool saveGpioConfig(std::string config);
     esp_err_t mountSdCard();
     std::string setFilePath(std::string filename);
+    static bool isPathSafe(const std::string &path);
     bool saveFileSd(std::string filename, std::string data);
     bool deleteFileSd(std::string filename);
     bool fileExistsSd(std::string filename);
@@ -58,7 +59,7 @@ public:
 
     std::vector<std::string> listFiles(std::string folder);
 
-    bool formatSdCard();
+    esp_err_t formatSdCard();
 };
 
 extern AstrOsStorageManager AstrOs_Storage;

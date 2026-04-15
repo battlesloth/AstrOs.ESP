@@ -1852,7 +1852,13 @@ static void handleFormatSD(std::string id)
 {
     auto cfig = AstrOs_Storage.readFile("config.txt");
 
-    auto success = AstrOs_Storage.formatSdCard();
+    esp_err_t formatErr = AstrOs_Storage.formatSdCard();
+    bool success = (formatErr == ESP_OK);
+
+    if (!success)
+    {
+        ESP_LOGE(TAG, "formatSdCard failed: %s", esp_err_to_name(formatErr));
+    }
 
     if (cfig != "error")
     {
