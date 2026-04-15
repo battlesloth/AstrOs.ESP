@@ -152,7 +152,7 @@ public:
     {
         auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
         std::string output(size + 1, '\0');
-        std::sprintf(&output[0], format.c_str(), std::forward<Args>(args)...);
+        std::snprintf(&output[0], size + 1, format.c_str(), std::forward<Args>(args)...);
         return output;
     }
 };
