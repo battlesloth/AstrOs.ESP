@@ -641,6 +641,7 @@ void animationDispatchTask(void *arg)
                 {
                     ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
                     queue_msg_t gpioMsg;
+                    gpioMsg.message_id = 0;
                     gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
                     if (gpioMsg.data == NULL)
                     {

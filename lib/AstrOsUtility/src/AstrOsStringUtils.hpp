@@ -155,8 +155,9 @@ public:
         {
             return std::string();
         }
-        std::string output(static_cast<size_t>(size), '\0');
+        std::string output(static_cast<size_t>(size) + 1, '\0');
         std::snprintf(&output[0], static_cast<size_t>(size) + 1, format.c_str(), std::forward<Args>(args)...);
+        output.resize(static_cast<size_t>(size));
         return output;
     }
 };
