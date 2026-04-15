@@ -150,9 +150,14 @@ public:
 
     template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)
     {
-        auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
-        std::string output(size + 1, '\0');
-        std::sprintf(&output[0], format.c_str(), std::forward<Args>(args)...);
+        int size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
+        if (size < 0)
+        {
+            return std::string();
+        }
+        std::string output(static_cast<size_t>(size) + 1, '\0');
+        std::snprintf(&output[0], static_cast<size_t>(size) + 1, format.c_str(), std::forward<Args>(args)...);
+        output.resize(static_cast<size_t>(size));
         return output;
     }
 };

@@ -4,10 +4,12 @@
 #include <AstrOsUtility_ESP.h>
 #include <NvsManager.h>
 
+#include <errno.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <string>
 #include <vector>
@@ -45,6 +47,40 @@ static const char *TAG = "StorageManager";
 static sdmmc_card_t *card;
 
 AstrOsStorageManager AstrOs_Storage;
+
+bool AstrOsStorageManager::isPathSafe(const std::string &path)
+{
+    if (path.empty())
+    {
+        ESP_LOGW(TAG, "isPathSafe: empty path rejected");
+        return false;
+    }
+    if (path[0] == '/')
+    {
+        ESP_LOGW(TAG, "isPathSafe: absolute path rejected: %s", path.c_str());
+        return false;
+    }
+    // Conservative: rejects any path containing ".." as a substring, not just
+    // at component boundaries. False positives are benign given current naming
+    // conventions.
+    if (path.find("..") != std::string::npos)
+    {
+        ESP_LOGW(TAG, "isPathSafe: traversal component rejected: %s", path.c_str());
+        return false;
+    }
+    if (path.find("//") != std::string::npos)
+    {
+        ESP_LOGW(TAG, "isPathSafe: double-slash rejected: %s", path.c_str());
+        return false;
+    }
+    constexpr size_t MAX_PATH_LEN = 128;
+    if (path.size() > MAX_PATH_LEN)
+    {
+        ESP_LOGW(TAG, "isPathSafe: path too long (%zu > %zu): %.40s...", path.size(), MAX_PATH_LEN, path.c_str());
+        return false;
+    }
+    return true;
+}
 
 AstrOsStorageManager::AstrOsStorageManager() {}
 AstrOsStorageManager::~AstrOsStorageManager()
@@ -408,7 +444,10 @@ int AstrOsStorageManager::loadEspNowPeerConfigs(espnow_peer_t *config)
 
 bool AstrOsStorageManager::saveFile(std::string filename, std::string data)
 {
-
+    if (!isPathSafe(filename))
+    {
+        return false;
+    }
 #ifdef USE_SPIFFS
     return AstrOsStorageManager::saveFileSpiffs(filename, data);
 #else
@@ -418,7 +457,10 @@ bool AstrOsStorageManager::saveFile(std::string filename, std::string data)
 
 bool AstrOsStorageManager::deleteFile(std::string filename)
 {
-
+    if (!isPathSafe(filename))
+    {
+        return false;
+    }
 #ifdef USE_SPIFFS
     return AstrOsStorageManager::deleteFileSpiffs(filename);
 #else
@@ -428,7 +470,10 @@ bool AstrOsStorageManager::deleteFile(std::string filename)
 
 std::string AstrOsStorageManager::readFile(std::string filename)
 {
-
+    if (!isPathSafe(filename))
+    {
+        return "error";
+    }
 #ifdef USE_SPIFFS
     return AstrOsStorageManager::readFileSpiffs(filename);
 #else
@@ -438,7 +483,10 @@ std::string AstrOsStorageManager::readFile(std::string filename)
 
 bool AstrOsStorageManager::fileExists(std::string filename)
 {
-
+    if (!isPathSafe(filename))
+    {
+        return false;
+    }
 #ifdef USE_SPIFFS
     return AstrOsStorageManager::fileExistsSpiffs(filename);
 #else
@@ -448,6 +496,10 @@ bool AstrOsStorageManager::fileExists(std::string filename)
 
 std::vector<std::string> AstrOsStorageManager::listFiles(std::string folder)
 {
+    if (!isPathSafe(folder))
+    {
+        return {};
+    }
 #ifdef USE_SPIFFS
     return AstrOsStorageManager::listFilesSpiffs(folder);
 #else
@@ -458,26 +510,31 @@ std::vector<std::string> AstrOsStorageManager::listFiles(std::string folder)
 #pragma endregion ESP - NOW
 #pragma region SD CARD
 
-bool AstrOsStorageManager::formatSdCard()
+esp_err_t AstrOsStorageManager::formatSdCard()
 {
     char drv[3] = {'0', ':', 0};
     const size_t workbuf_size = 4096;
     void *workbuf = NULL;
     ESP_LOGI(TAG, "Formatting the SD card");
 
+    if (card == nullptr)
+    {
+        ESP_LOGE(TAG, "Error formatting SD card: card not mounted");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     size_t allocation_unit_size = 16 * 1024;
 
     workbuf = ff_memalloc(workbuf_size);
     if (workbuf == NULL)
     {
-        ESP_LOGE(TAG, "Error formatting SD card: ESP_ERR_NO_MEM");
-        return false;
+        ESP_LOGE(TAG, "Error formatting SD card: work-buffer allocation failed");
+        return ESP_ERR_NO_MEM;
     }
 
     size_t alloc_unit_size = esp_vfs_fat_get_allocation_unit_size(card->csd.sector_size, allocation_unit_size);
 
     MKFS_PARM param;
-
     param.fmt = FM_ANY;
     param.au_size = alloc_unit_size;
 
@@ -485,18 +542,26 @@ bool AstrOsStorageManager::formatSdCard()
     if (res != FR_OK)
     {
         ESP_LOGE(TAG, "Error formatting SD card: f_mkfs failed (%d)", res);
-        return false;
+        free(workbuf);
+        return ESP_FAIL;
     }
 
     free(workbuf);
 
-    mkdir(SCRIPTS_FOLDER, 0777);
-    mkdir(MAESTRO_FOLDER, 0777);
-    mkdir(GPIO_FOLDER, 0777);
+    for (const char *folder : {SCRIPTS_FOLDER, MAESTRO_FOLDER, GPIO_FOLDER})
+    {
+        if (mkdir(folder, 0777) != 0 && errno != EEXIST)
+        {
+            ESP_LOGE(TAG, "Failed to create folder %s: errno=%d (%s)", folder, errno, strerror(errno));
+            // Card is formatted at this point; mkdir failure leaves it without
+            // the expected directory structure. Return ESP_FAIL so the caller
+            // can request a retry.
+            return ESP_FAIL;
+        }
+    }
 
     ESP_LOGI(TAG, "Successfully formatted the SD card");
-
-    return true;
+    return ESP_OK;
 }
 
 esp_err_t AstrOsStorageManager::mountSdCard()

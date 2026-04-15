@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include <atomic>
+#include <cinttypes>
 #include <driver/rmt.h>
 #include <driver/uart.h>
 #include <esp_event.h>
@@ -89,8 +90,15 @@ static esp_timer_handle_t pollingTimer;
 static bool polling = false;
 
 static esp_timer_handle_t maintenanceTimer;
-static esp_timer_handle_t animationTimer;
 static esp_timer_handle_t servoMoveTimer;
+
+// Silent-error counters — incremented from cross-task contexts (Wi-Fi driver task
+// for espnowRecvCallback, astrosRxTask on core 0). Read from maintenanceTimerCallback
+// (esp_timer task). std::atomic<uint32_t> is single-word on ESP32 and provides the
+// memory visibility we need without a mutex on the hot paths.
+static std::atomic<uint32_t> astrosRxOverflowCount{0};
+static std::atomic<uint32_t> espnowMallocFailureCount{0};
+static std::atomic<uint32_t> dispatchMallocFailureCount{0};
 
 #define SERVO_MOVE_INTERVAL 500 // 500ms
 
@@ -147,7 +155,6 @@ static void loadGpioConfig();
 // timers
 static void initTimers(void);
 static void pollingTimerCallback(void *arg);
-static void animationTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 static void servoMoveTimerCallback(void *arg);
 
@@ -164,6 +171,7 @@ void astrosRxTask(void *arg);
 void serviceQueueTask(void *arg);
 void interfaceResponseQueueTask(void *arg);
 void animationQueueTask(void *arg);
+void animationDispatchTask(void *arg);
 void serialCh1QueueTask(void *arg);
 void serialCh2QueueTask(void *arg);
 void servoQueueTask(void *arg);
@@ -196,9 +204,10 @@ void app_main()
     init();
 
     // core 1
-    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 2048, (void *)serviceQueue, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 4096, (void *)serviceQueue, 5, NULL, 1);
     xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
+    xTaskCreatePinnedToCore(&animationDispatchTask, "animation_dispatch_task", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue,
                             10, NULL, 1);
     xTaskCreatePinnedToCore(&serialCh1QueueTask, "serial_ch1_queue_task", 4096, (void *)serialCh1Queue, 9, NULL, 1);
@@ -233,14 +242,16 @@ void init(void)
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
 
+    // Dispatch queues sized for fan-in from the animation dispatch path + producer bursts.
+    // Control queues stay at QUEUE_LENGTH (5) since they carry low-rate coordination.
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
     interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
-    serialCh1Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
-    serialCh2Queue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_serial_msg_t));
-    servoQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    i2cQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
-    gpioQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_msg_t));
+    serialCh1Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
+    serialCh2Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
+    servoQueue = xQueueCreate(20, sizeof(queue_msg_t));
+    i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
+    gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
 
     maestroModulesMutex = xSemaphoreCreateMutex();
@@ -360,12 +371,6 @@ static void initTimers(void)
                                                 .name = "polling",
                                                 .skip_unhandled_events = true};
 
-    const esp_timer_create_args_t aTimerArgs = {.callback = &animationTimerCallback,
-                                                .arg = NULL,
-                                                .dispatch_method = ESP_TIMER_TASK,
-                                                .name = "animation",
-                                                .skip_unhandled_events = true};
-
     const esp_timer_create_args_t mTimerArgs = {.callback = &maintenanceTimerCallback,
                                                 .arg = NULL,
                                                 .dispatch_method = ESP_TIMER_TASK,
@@ -382,10 +387,6 @@ static void initTimers(void)
     ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(pollingTimer, 2 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started polling timer");
-
-    ESP_ERROR_CHECK(esp_timer_create(&aTimerArgs, &animationTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 5 * 1000 * 1000));
-    ESP_LOGI("init_timer", "Started animation timer");
 
     ESP_ERROR_CHECK(esp_timer_create(&mTimerArgs, &maintenanceTimer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
@@ -474,154 +475,215 @@ static void pollingTimerCallback(void *arg)
 static void maintenanceTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "RAM left %lu", esp_get_free_heap_size());
+
+    uint32_t rxOverflow = astrosRxOverflowCount.load(std::memory_order_relaxed);
+    uint32_t espnowMallocFail = espnowMallocFailureCount.load(std::memory_order_relaxed);
+    uint32_t dispatchMallocFail = dispatchMallocFailureCount.load(std::memory_order_relaxed);
+    if (rxOverflow != 0 || espnowMallocFail != 0 || dispatchMallocFail != 0)
+    {
+        ESP_LOGW(TAG,
+                 "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32 " dispatch-malloc-fail=%" PRIu32,
+                 rxOverflow, espnowMallocFail, dispatchMallocFail);
+    }
 }
 
-static void animationTimerCallback(void *arg)
+void animationDispatchTask(void *arg)
 {
-    esp_timer_stop(animationTimer);
+    constexpr uint32_t MIN_WAKE_MS = 10;
+    constexpr uint32_t IDLE_WAKE_MS = 250;
 
-    if (AnimationCtrl.scriptIsLoaded())
+    while (1)
     {
-        auto cmd = AnimationCtrl.getNextCommandPtr();
-
-        if (cmd == nullptr)
+        auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+        if (highWaterMark < 500)
         {
-            // getNextCommandPtr returns nullptr only on mutex timeout, in which
-            // case it has also set scriptLoaded=false (halting the current
-            // sequence — see AnimationController.cpp for the safety rationale).
-            // Re-arm the timer so the subsystem stays alive; on the next tick
-            // scriptIsLoaded() will return false and the callback will take the
-            // else-branch below, keeping the timer running idle until a future
-            // queueScript can resume animation. Without this, a single transient
-            // mutex contention would require a device reboot to restore animation
-            // — bad, because third-party hardware may be in a non-safe state that
-            // a recovery script (not a power-cycle) needs to address.
-            ESP_LOGE(TAG, "Animation command pointer is null — script halted, timer re-armed for recovery");
-            ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 250 * 1000));
-            return;
+            ESP_LOGW(TAG, "Animation Dispatch Stack HWM: %d", highWaterMark);
         }
 
-        MODULE_TYPE ct = cmd->type;
-        std::string val = cmd->val;
-        int module = cmd->module;
+        uint32_t nextDelayMs = IDLE_WAKE_MS;
 
-        switch (ct)
+        if (AnimationCtrl.scriptIsLoaded())
         {
-        case MODULE_TYPE::NONE:
-        {
-            ESP_LOGI(TAG, "NONE command queued, assume buffer?");
-            break;
-        }
-        case MODULE_TYPE::KANGAROO:
-        case MODULE_TYPE::GENERIC_SERIAL:
-        {
-            ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
+            auto cmd = AnimationCtrl.getNextCommandPtr();
 
-            // replace any occurances of \n with actual new line character
-            std::string formatted;
-            for (size_t i = 0; i < val.size(); i++)
+            if (cmd == nullptr)
             {
-                if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'n')
-                {
-                    formatted += '\n';
-                    i++; // skip the 'n'
-                }
-                else if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'r')
-                {
-                    formatted += '\r';
-                    i++; // skip the 'r'
-                }
-                else
-                {
-                    formatted += val[i];
-                }
-            }
-
-            queue_serial_msg_t serialMsg;
-            serialMsg.message_id = 0;
-            serialMsg.data = (uint8_t *)malloc(formatted.size() + 1);
-            memcpy(serialMsg.data, formatted.c_str(), formatted.size());
-            serialMsg.data[formatted.size()] = '\0';
-
-            if (module == 1)
-            {
-                if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-                {
-                    ESP_LOGW(TAG, "Send serial queue fail");
-                    free(serialMsg.data);
-                }
-            }
-            else if (module == 2)
-            {
-                if (xQueueSend(serialCh2Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-                {
-                    ESP_LOGW(TAG, "Send serial queue fail");
-                    free(serialMsg.data);
-                }
+                // getNextCommandPtr returns nullptr only on mutex timeout, in which
+                // case it has also set scriptLoaded=false (halting the current
+                // sequence — see AnimationController.cpp for the safety rationale).
+                // We loop normally; on the next iteration scriptIsLoaded() returns
+                // false and we take the idle wake interval until a future queueScript
+                // resumes animation. Without this, a single transient mutex
+                // contention would require a device reboot to restore animation
+                // — bad, because third-party hardware may be in a non-safe state
+                // that a recovery script (not a power-cycle) needs to address.
+                ESP_LOGE(TAG, "Animation command pointer is null — script halted, dispatch task idling for recovery");
+                nextDelayMs = IDLE_WAKE_MS;
             }
             else
             {
-                ESP_LOGE(TAG, "Invalid serial module %d", module);
-                free(serialMsg.data);
+                MODULE_TYPE ct = cmd->type;
+                std::string val = cmd->val;
+                int module = cmd->module;
+
+                switch (ct)
+                {
+                case MODULE_TYPE::NONE:
+                {
+                    ESP_LOGI(TAG, "NONE command queued, assume buffer?");
+                    break;
+                }
+                case MODULE_TYPE::KANGAROO:
+                case MODULE_TYPE::GENERIC_SERIAL:
+                {
+                    ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
+
+                    // replace any occurances of \n with actual new line character
+                    std::string formatted;
+                    for (size_t i = 0; i < val.size(); i++)
+                    {
+                        if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'n')
+                        {
+                            formatted += '\n';
+                            i++; // skip the 'n'
+                        }
+                        else if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'r')
+                        {
+                            formatted += '\r';
+                            i++; // skip the 'r'
+                        }
+                        else
+                        {
+                            formatted += val[i];
+                        }
+                    }
+
+                    queue_serial_msg_t serialMsg;
+                    serialMsg.message_id = 0;
+                    serialMsg.data = (uint8_t *)malloc(formatted.size() + 1);
+                    if (serialMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc serial dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    memcpy(serialMsg.data, formatted.c_str(), formatted.size());
+                    serialMsg.data[formatted.size()] = '\0';
+
+                    if (module == 1)
+                    {
+                        if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                        {
+                            ESP_LOGW(TAG, "Send serial queue fail");
+                            free(serialMsg.data);
+                        }
+                    }
+                    else if (module == 2)
+                    {
+                        if (xQueueSend(serialCh2Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                        {
+                            ESP_LOGW(TAG, "Send serial queue fail");
+                            free(serialMsg.data);
+                        }
+                    }
+                    else
+                    {
+                        ESP_LOGE(TAG, "Invalid serial module %d", module);
+                        free(serialMsg.data);
+                    }
+                    break;
+                }
+                case MODULE_TYPE::MAESTRO:
+                {
+                    ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
+                    queue_msg_t servoMsg;
+                    servoMsg.message_id = module;
+                    servoMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (servoMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc servo dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    memcpy(servoMsg.data, val.c_str(), val.size());
+                    servoMsg.data[val.size()] = '\0';
+
+                    if (xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send servo queue fail");
+                        free(servoMsg.data);
+                    }
+                    break;
+                }
+                case MODULE_TYPE::I2C:
+                {
+                    ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
+                    queue_msg_t i2cMsg;
+                    i2cMsg.message_id = 0;
+                    i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (i2cMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc i2c dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    memcpy(i2cMsg.data, val.c_str(), val.size());
+                    i2cMsg.data[val.size()] = '\0';
+
+                    if (xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send i2c queue fail");
+                        free(i2cMsg.data);
+                    }
+                    break;
+                }
+                case MODULE_TYPE::GPIO:
+                {
+                    ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
+                    queue_msg_t gpioMsg;
+                    gpioMsg.message_id = 0;
+                    gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
+                    if (gpioMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc gpio dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    memcpy(gpioMsg.data, val.c_str(), val.size());
+                    gpioMsg.data[val.size()] = '\0';
+
+                    if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send gpio queue fail");
+                        free(gpioMsg.data);
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+
+                // AnimationController already clamps its return value to a small
+                // minimum, but keep a local floor in case that contract changes.
+                // msTillNextServoCommand returns signed int; guard against a
+                // negative sentinel wrapping to ~4 billion ms (~49 days) on the
+                // unsigned cast.
+                int rawDelay = AnimationCtrl.msTillNextServoCommand();
+                uint32_t scriptDelay =
+                    (rawDelay < static_cast<int>(MIN_WAKE_MS)) ? MIN_WAKE_MS : static_cast<uint32_t>(rawDelay);
+                nextDelayMs = scriptDelay;
             }
-            break;
         }
-        case MODULE_TYPE::MAESTRO:
+        else
         {
-            ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
-            queue_msg_t servoMsg;
-            servoMsg.message_id = module;
-            servoMsg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(servoMsg.data, val.c_str(), val.size());
-            servoMsg.data[val.size()] = '\0';
-
-            if (xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-            {
-                ESP_LOGW(TAG, "Send servo queue fail");
-                free(servoMsg.data);
-            }
-            break;
-        }
-        case MODULE_TYPE::I2C:
-        {
-            ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
-            queue_msg_t i2cMsg;
-            i2cMsg.message_id = 0;
-            i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(i2cMsg.data, val.c_str(), val.size());
-            i2cMsg.data[val.size()] = '\0';
-
-            if (xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-            {
-                ESP_LOGW(TAG, "Send i2c queue fail");
-                free(i2cMsg.data);
-            }
-            break;
-        }
-        case MODULE_TYPE::GPIO:
-        {
-            ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
-            queue_msg_t gpioMsg;
-            gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
-            memcpy(gpioMsg.data, val.c_str(), val.size());
-            gpioMsg.data[val.size()] = '\0';
-
-            if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
-            {
-                ESP_LOGW(TAG, "Send gpio queue fail");
-                free(gpioMsg.data);
-            }
-            break;
-        }
-        default:
-            break;
+            nextDelayMs = IDLE_WAKE_MS;
         }
 
-        ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, AnimationCtrl.msTillNextServoCommand() * 1000));
-    }
-    else
-    {
-        ESP_ERROR_CHECK(esp_timer_start_once(animationTimer, 250 * 1000));
+        // vTaskDelay (not vTaskDelayUntil): script delays are data-driven and
+        // variable. The pre-refactor esp_timer_start_once(delay * 1000) scheduled
+        // each re-arm relative to now; vTaskDelay preserves that contract, while
+        // vTaskDelayUntil would produce catch-up bursts after long scripted waits.
+        vTaskDelay(pdMS_TO_TICKS(nextDelayMs));
     }
 }
 
@@ -840,6 +902,12 @@ void interfaceResponseQueueTask(void *arg)
                 queue_svc_cmd_t cmd;
                 cmd.cmd = SERVICE_COMMAND::FORMAT_SD;
                 cmd.data = (uint8_t *)malloc(id.size() + 1); // dummy data
+                if (cmd.data == NULL)
+                {
+                    ESP_LOGE(TAG, "Malloc FORMAT_SD command data fail");
+                    dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
                 memccpy(cmd.data, id.c_str(), 0, id.size());
                 cmd.data[id.size()] = '\0';
                 cmd.dataSize = id.size() + 1;
@@ -944,6 +1012,7 @@ void astrosRxTask(void *arg)
                     if (bufferIndex >= bufferLength)
                     {
                         ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
                     }
                 }
@@ -1006,6 +1075,12 @@ void serviceQueueTask(void *arg)
                 queue_msg_t serialMsg;
                 serialMsg.message_id = 1;
                 serialMsg.data = (uint8_t *)malloc(msg.dataSize + 1);
+                if (serialMsg.data == NULL)
+                {
+                    ESP_LOGE(TAG, "Malloc ASTROS_INTERFACE_MESSAGE data fail");
+                    dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
                 memcpy(serialMsg.data, msg.data, msg.dataSize);
                 serialMsg.data[msg.dataSize] = '\n';
                 serialMsg.dataSize = msg.dataSize + 1;
@@ -1651,6 +1726,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     if (msg.data == NULL)
     {
         ESP_LOGE(TAG, "Malloc receive data fail");
+        espnowMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     memcpy(msg.data, data, len);
@@ -1833,7 +1909,13 @@ static void handleFormatSD(std::string id)
 {
     auto cfig = AstrOs_Storage.readFile("config.txt");
 
-    auto success = AstrOs_Storage.formatSdCard();
+    esp_err_t formatErr = AstrOs_Storage.formatSdCard();
+    bool success = (formatErr == ESP_OK);
+
+    if (!success)
+    {
+        ESP_LOGE(TAG, "formatSdCard failed: %s", esp_err_to_name(formatErr));
+    }
 
     if (cfig != "error")
     {
