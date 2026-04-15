@@ -120,6 +120,11 @@ Run these after all Phase C commits land, before merging:
 3. OLED display updates during an active animation (shows timeout / countdown as expected).
 4. Fresh peer registration from the web UI.
 5. Panic-stop → queueScript recovery cycle.
+6. **Concurrent storage-reject + active animation.** While a long script is actively playing (30+ s), deploy a script with a path-traversal name (`../malicious.scr`) from the web UI. Confirm:
+   - The deploy NAKs (storage layer rejects) without perturbing the running animation.
+   - Dispatch cadence of the running script stays within its normal ±10 ms envelope.
+   - No `Animation Dispatch Stack HWM:` warnings triggered by the concurrent storage activity.
+   - The `isPathSafe: ... rejected` log line appears at level W (not E).
 
 **Expected:** All behavior matches pre-Phase-C reference baseline. No new error logs, no heap decline over 10 minutes of mixed activity.
 

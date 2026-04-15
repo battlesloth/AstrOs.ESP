@@ -636,8 +636,13 @@ void animationDispatchTask(void *arg)
 
                 // AnimationController already clamps its return value to a small
                 // minimum, but keep a local floor in case that contract changes.
-                uint32_t scriptDelay = AnimationCtrl.msTillNextServoCommand();
-                nextDelayMs = (scriptDelay < MIN_WAKE_MS) ? MIN_WAKE_MS : scriptDelay;
+                // msTillNextServoCommand returns signed int; guard against a
+                // negative sentinel wrapping to ~4 billion ms (~49 days) on the
+                // unsigned cast.
+                int rawDelay = AnimationCtrl.msTillNextServoCommand();
+                uint32_t scriptDelay =
+                    (rawDelay < static_cast<int>(MIN_WAKE_MS)) ? MIN_WAKE_MS : static_cast<uint32_t>(rawDelay);
+                nextDelayMs = scriptDelay;
             }
         }
         else

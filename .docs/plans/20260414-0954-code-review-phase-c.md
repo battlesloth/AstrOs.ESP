@@ -80,7 +80,6 @@ Replace the timer + callback entirely with a dedicated FreeRTOS task:
 - **Loop shape:**
 
   ```cpp
-  TickType_t lastWake = xTaskGetTickCount();
   while (true) {
       // Body of the former animationTimerCallback — minus esp_timer_start_once.
       // Reads AnimationCtrl.scriptIsLoaded(), calls getNextCommandPtr(),
@@ -89,11 +88,11 @@ Replace the timer + callback entirely with a dedicated FreeRTOS task:
 
       uint32_t delayMs = AnimationCtrl.msTillNextServoCommand();
       if (delayMs < 10) delayMs = 10;   // minimum wake interval; matches idle-poll granularity
-      vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(delayMs));
+      vTaskDelay(pdMS_TO_TICKS(delayMs));
   }
   ```
 
-- **`vTaskDelayUntil`** is deliberate: it schedules against an absolute last-wake timestamp, so the dispatch cadence doesn't drift by the command-build duration each iteration.
+- **`vTaskDelay`** (not `vTaskDelayUntil`) is deliberate: script delays are data-driven and variable, and the pre-refactor `esp_timer_start_once(delay * 1000)` scheduled each re-arm relative to *now*. `vTaskDelay` preserves that contract. `vTaskDelayUntil`'s absolute-wake semantics would cause catch-up bursts after a long scripted pause (e.g., a 5 s wait followed by 100 ms intervals) — after the long delay `lastWake` is far in the past, and subsequent small delays compute wake times that have already elapsed, so `vTaskDelayUntil` returns immediately and fires commands back-to-back. That is not what the old code did. **History:** an earlier draft of this spec chose `vTaskDelayUntil` for "cadence stability," but code-review caught the regression; the committed implementation uses `vTaskDelay`.
 - **Idle state** (no script loaded): the loop still runs, reads `scriptIsLoaded() == false`, takes the else branch, and sleeps on a minimum wake interval. Matches current callback behavior for the null-cmd recovery path from Phase B.
 - **Startup:** spawn `animationDispatchTask` in `setup()` alongside the other task creations. Remove the `esp_timer_create` + `esp_timer_start_once` calls for the animation timer.
 - **Shutdown:** `vTaskDelete` on the task handle if teardown is ever needed (not used today, listed for completeness).
@@ -109,13 +108,13 @@ Considered keeping `esp_timer` + adding a dispatch queue + new task (tick-enqueu
 Tradeoffs accepted:
 
 - `vTaskDelay` resolution is 1 ms at `CONFIG_FREERTOS_HZ=1000`; `esp_timer` is microsecond-resolution. Not material for animation delays in the 10+ ms range.
-- The task is blocked in `vTaskDelayUntil` rather than `xQueueReceive`, so an external "wake immediately" pre-emption would need `xTaskNotify`. Not needed today; can be added later if required.
+- The task is blocked in `vTaskDelay` rather than `xQueueReceive`, so an external "wake immediately" pre-emption would need `xTaskNotify`. Not needed today; can be added later if required.
 
 ### Risk
 
 Medium — animation dispatch timing is safety-relevant; any cadence regression is observable during real-world playback. Mitigated by:
 
-- `vTaskDelayUntil` honors absolute cadence.
+- `vTaskDelay` preserves the pre-refactor relative-from-now scheduling contract.
 - Ownership / malloc / free semantics carry over verbatim from the current callback — no new allocation sites or frees.
 - Panic-stop latency is bounded by one `delayMs` cycle, same as today's `esp_timer_start_once` pattern — no regression vs. current behavior.
 
