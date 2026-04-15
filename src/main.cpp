@@ -485,7 +485,6 @@ static void maintenanceTimerCallback(void *arg)
 
 void animationDispatchTask(void *arg)
 {
-    TickType_t lastWake = xTaskGetTickCount();
     constexpr uint32_t MIN_WAKE_MS = 10;
     constexpr uint32_t IDLE_WAKE_MS = 250;
 
@@ -542,12 +541,12 @@ void animationDispatchTask(void *arg)
                         if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'n')
                         {
                             formatted += '\n';
-                            i++;
+                            i++; // skip the 'n'
                         }
                         else if (val[i] == '\\' && i + 1 < val.size() && val[i + 1] == 'r')
                         {
                             formatted += '\r';
-                            i++;
+                            i++; // skip the 'r'
                         }
                         else
                         {
@@ -635,6 +634,8 @@ void animationDispatchTask(void *arg)
                     break;
                 }
 
+                // AnimationController already clamps its return value to a small
+                // minimum, but keep a local floor in case that contract changes.
                 uint32_t scriptDelay = AnimationCtrl.msTillNextServoCommand();
                 nextDelayMs = (scriptDelay < MIN_WAKE_MS) ? MIN_WAKE_MS : scriptDelay;
             }
@@ -644,7 +645,11 @@ void animationDispatchTask(void *arg)
             nextDelayMs = IDLE_WAKE_MS;
         }
 
-        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(nextDelayMs));
+        // vTaskDelay (not vTaskDelayUntil): script delays are data-driven and
+        // variable. The pre-refactor esp_timer_start_once(delay * 1000) scheduled
+        // each re-arm relative to now; vTaskDelay preserves that contract, while
+        // vTaskDelayUntil would produce catch-up bursts after long scripted waits.
+        vTaskDelay(pdMS_TO_TICKS(nextDelayMs));
     }
 }
 
