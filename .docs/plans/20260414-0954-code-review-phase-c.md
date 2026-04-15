@@ -28,7 +28,7 @@ Two classes of items from the code review are **explicitly deferred out of Phase
 | 3 | P1 #13 | I2C `i2c_cmd_link_delete` on all early-return paths | `lib/I2cMaster/src/I2cMaster.cpp` |
 | 4 | P2 #20 | `button_listener_task` stack: 2048 → 4096 | `src/main.cpp` |
 | 5 | P2 #22 + #23 + #24 + #26 | `AstrOsStorageManager` error hardening | `lib/AstrOsStorageManager/src/AstrOsStorageManager.cpp` |
-| 6 | P3 #28 | `guid.h` `sprintf` → `snprintf` | `lib/Uuid/guid.h` |
+| 6 | P3 #28 | `stringFormat` `std::sprintf` → `std::snprintf` | `lib/AstrOsUtility/src/AstrOsStringUtils.hpp` |
 | 7 | P3 #29 | Silent-error counters exposed via the 10 s maintenance log | `src/main.cpp` |
 | 8 | — | QA test plan | `.docs/qa/code-review-phase-c.md` |
 
@@ -129,17 +129,27 @@ QA plan includes timing observation via log timestamps, panic-stop mid-script, a
 
 ### Problem
 
-`lib/I2cMaster/src/I2cMaster.cpp` uses the legacy ESP-IDF 4.x API pattern: `i2c_cmd_handle_t cmd = i2c_cmd_link_create()`, chain operations, `i2c_master_cmd_begin(cmd)`, `i2c_cmd_link_delete(cmd)`. On error paths that return early, `i2c_cmd_link_delete(cmd)` is skipped and the handle (plus its linked operations) leaks.
+`lib/I2cMaster/src/I2cMaster.cpp` uses the legacy ESP-IDF 4.x API pattern: `i2c_cmd_handle_t cmd = i2c_cmd_link_create()`, chain operations, `i2c_master_cmd_begin(cmd)`, `i2c_cmd_link_delete(cmd)`. An inspection of the file surfaced three distinct problems, more severe than the original review described:
+
+1. **`DeviceExists` (line 50)** — `cmd` is created but `i2c_cmd_link_delete(cmd)` is never called. Leaks on every I2C device-detection call (peer bringup, bus scan).
+2. **`ReadWord` (lines 209–215)** — `cmd` is re-assigned (line 215) without deleting the handle produced by the previous `i2c_cmd_link_create()` (line 209). Then at line 233 the code calls `i2c_cmd_link_delete(cmd)` a second time on a handle already deleted at line 222 → **double-free / use-after-free**.
+3. **`ReadTwoWords` (lines 264–270 and 306)** — identical pattern to `ReadWord`: a leaked `cmd` followed by a double-delete.
+
+Early-return paths in these functions also skip `i2c_cmd_link_delete` on the current handle, which is the originally reviewed issue.
 
 ### Design
 
-Audit every `i2c_cmd_link_create` call site in the file. For each, enumerate every early-return branch and ensure:
+Fix the three concrete bugs above, then audit the remaining `i2c_cmd_link_create` call sites for early-return paths that skip delete.
 
-1. `i2c_cmd_link_delete(cmd)` runs before the return.
-2. `xSemaphoreGive(i2cBusMutext)` runs before the return.
-3. Order: delete handle → give semaphore → return. Consistent across every call site.
+1. **`DeviceExists`** — add `i2c_cmd_link_delete(cmd)` before `xSemaphoreGive`.
+2. **`ReadWord`** — remove the stray double-create on lines 209–210; keep only the `cmd = i2c_cmd_link_create()` at line 215 (which becomes the second handle). Remove the duplicate `i2c_cmd_link_delete(cmd)` at line 233.
+3. **`ReadTwoWords`** — identical shape: remove the stray create at 264–265 and the duplicate delete at line 306.
 
-If the branch count is high at any single site (say 3+ early returns in one function), introduce a small stack-local RAII wrapper whose destructor calls `i2c_cmd_link_delete`. Only introduce the wrapper if it simplifies — plain cleanup is preferred when branch counts are low.
+For every other function with an `i2c_cmd_link_create`, confirm each early-return branch has `i2c_cmd_link_delete(cmd)` + `xSemaphoreGive(i2cBusMutext)` before returning, in that order.
+
+No RAII wrapper is introduced — the branch count per function after the fixes above is 1–2 early returns, within the "plain cleanup is clearer" threshold from the spec.
+
+**Note:** Lines 318+ of `I2cMaster.cpp` are wrapped in `/* ... */` — an incomplete migration to the new ESP-IDF 5.x `i2c_master_bus_*` API. This Phase C work does not touch the commented-out code.
 
 ### Risk
 
@@ -226,23 +236,34 @@ Low-to-medium. 5d is a signature change with a single call site (tracked in lock
 
 ---
 
-## Task 6 — GUID `sprintf` → `snprintf`
+## Task 6 — `stringFormat` `std::sprintf` → `std::snprintf`
 
 ### Problem
 
-`lib/Uuid/guid.h` uses `sprintf(buf, fmt, ...)` with a 64-byte stack buffer. The current format fits; this is pure defense against a future format-string edit.
+On inspection, `lib/Uuid/guid.h` already uses `snprintf` (review item #28 was stale). The remaining `std::sprintf` in the codebase is at `lib/AstrOsUtility/src/AstrOsStringUtils.hpp:155` in the `stringFormat` template:
+
+```cpp
+template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args) {
+    auto size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);
+    std::string output(size + 1, '\0');
+    std::sprintf(&output[0], format.c_str(), std::forward<Args>(args)...);
+    return output;
+}
+```
+
+Although the preceding `std::snprintf(nullptr, 0, ...)` computes the exact needed size, using `std::sprintf` here is still a defense-in-depth issue — if `size` or `output` is ever mis-computed by a future edit, `sprintf` gives no bounds protection.
 
 ### Design
 
-Replace `sprintf(buf, ...)` with `snprintf(buf, sizeof(buf), ...)`. One-line change.
+Replace `std::sprintf(&output[0], format.c_str(), ...)` with `std::snprintf(&output[0], size + 1, format.c_str(), ...)`. One-line change.
 
 ### Risk
 
-Zero.
+Zero. Semantics unchanged when the existing `size` is correct; a safety net when it is not.
 
 ### Verification
 
-Covered by any existing test that exercises GUID generation.
+Build both board environments and run native tests (`stringFormat` is used across `lib/AstrOsMessaging`, which has native test coverage).
 
 ---
 
