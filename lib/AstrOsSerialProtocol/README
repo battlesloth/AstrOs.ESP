@@ -1,0 +1,26 @@
+AstrOsSerialProtocol
+====================
+
+Pure, native-testable decoder for the serial protocol spoken between the
+master node and the AstrOs web interface. Accepts the validated message
+fields (type, msgId, payload) and produces a DecodeResult containing
+zero-or-more DecodedCommand entries plus any DecodeReject records for
+malformed controller sub-strings.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+Skipped controller sub-strings are reported via DecodeResult::rejects
+rather than a logger. The ESP-side caller (AstrOsSerialMsgHandler)
+re-emits each reject as ESP_LOGW at the boundary. No logger injection
+is required here.

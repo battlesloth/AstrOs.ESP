@@ -65,17 +65,34 @@ The actual behavior lives in `lib/`. When tracing a feature, start at `main.cpp`
 
 ### Library layout (what each thing owns)
 
-- **`lib/AstrOsMessaging`** — wire-format serializers/parsers for messages exchanged over serial and ESP-NOW. **Must stay free of ESP-IDF/FreeRTOS includes** (see its `README`) because it is unit-tested on the native host. Treat this as a hard rule: no `freertos/*`, no `esp_*`, no `driver/*` in this lib.
-- **`lib/AstrOsEspNow`** — ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv.
-- **`lib/AstrOsSerialMsgHandler`** — owns the UART protocol handler that bridges the serial interface queue and the interface-response queue.
-- **`lib/AnimationController`** — loads scripts, computes the next command, pushes commands onto the hardware queues. Uses a FreeRTOS mutex (`animationMutex`) around `scriptEvents`.
-- **`lib/AstrOsStorageManager`** — NVS for config + FAT/SD for scripts. Exposes the `AstrOs_Storage` singleton. Peer configs, service config (name, master MAC, fingerprint), and controller fingerprint live here.
-- **`lib/Modules`** — hardware abstractions: `SerialModule`, `I2cModule`, `GpioModule`, `MaestroModule`. Each one owns a queue-consumer loop for its hardware.
-- **`lib/Pca9685`** — PCA9685 servo driver sitting on top of `I2cMaster`. Two boards expected at `0x40` and `0x41`.
-- **`lib/I2cMaster`** — serialises bus access with a FreeRTOS semaphore (1000 ms timeout). Uses the legacy ESP-IDF I²C API.
-- **`lib/AstrOsDisplay`** — SSD1306 OLED rendering. Talks to hardware by pushing `queue_msg_t` entries into the `i2cQueue`.
-- **`lib/SoftwareSerial`, `lib/Uuid`, `lib/AstrOsUtility*`** — support libs.
-- **`components/ssd1306`, `components/mdns`** — ESP-IDF components (not PlatformIO libs). Kept here rather than as `idf_component.yml` dependencies.
+Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles under `[env:test]`), **MIXED** (algorithmic logic plus ESP-IDF/FreeRTOS wiring), or **HARDWARE-ONLY** (driver code that can only build on-target).
+
+| Lib | Class | Summary |
+|---|---|---|
+| `lib/AstrOsMessaging` | PURE | Wire-format serializers/parsers for serial + ESP-NOW. |
+| `lib/AstrOsSerialProtocol` | PURE | Decodes validated UART messages into `DecodedCommand` / `DecodeReject` records. |
+| `lib/AstrOsUtility` | PURE | String, path (`AstrOsPathUtils`), servo, and file utilities. |
+| `lib/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
+| `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
+| `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
+| `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. |
+| `lib/AnimationController` | MIXED | Loads scripts, computes the next command, pushes commands onto hardware queues. Uses a FreeRTOS mutex (`animationMutex`) around `scriptEvents`. |
+| `lib/AstrOsStorageManager` | MIXED | NVS for config + FAT/SD for scripts. Exposes `AstrOs_Storage` singleton. Peer configs, service config, controller fingerprint. |
+| `lib/Modules` | MIXED | Hardware abstractions: `SerialModule`, `I2cModule`, `GpioModule`, `MaestroModule`. Each owns a queue-consumer loop. |
+| `lib/AstrOsDisplay` | MIXED | SSD1306 OLED rendering. Pushes `queue_msg_t` entries into the `i2cQueue`. |
+| `lib/Pca9685` | HARDWARE-ONLY | PCA9685 servo driver on top of `I2cMaster`. Two boards at `0x40`/`0x41`. |
+| `lib/I2cMaster` | HARDWARE-ONLY | Serialises bus access with a FreeRTOS semaphore (1000 ms timeout). Legacy ESP-IDF I²C API. |
+| `lib/SoftwareSerial`, `lib/Uuid` | HARDWARE-ONLY | Support libs. |
+| `components/ssd1306`, `components/mdns` | — | ESP-IDF components (not PlatformIO libs). Kept here rather than as `idf_component.yml` dependencies. |
+
+### Adding a new extracted (PURE) lib
+
+When pulling pure logic out of a MIXED lib, follow this pattern (piloted on `AstrOsSerialProtocol`):
+
+1. **Create the lib directory** with `include/`, `src/`, and a `README` stating the purity rule and listing the forbidden include prefixes.
+2. **Register it with the CI purity guard** — append the path to the `PURE_LIBS` array in `.github/workflows/pr-validation.yml` (`native-purity` job).
+3. **Prefer rich return values over logger injection** — return a struct describing what happened (e.g., `{ commands, rejects }` or `{ valid, reason }`) and let the MIXED caller log at the boundary with `ESP_LOGW`/`ESP_LOGE`. Only reach for `lib/AstrOsLogging`'s `AstrOsLogger` struct when diagnostics truly must live next to the logic (tight loops, complex internal state).
+4. **Add native tests** under `test/test_native/` — the `[env:test]` target auto-discovers them.
 
 ### Runtime roles: master vs padawan
 
