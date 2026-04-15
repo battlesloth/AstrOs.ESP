@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include <atomic>
+#include <cinttypes>
 #include <driver/rmt.h>
 #include <driver/uart.h>
 #include <esp_event.h>
@@ -91,6 +92,13 @@ static bool polling = false;
 static esp_timer_handle_t maintenanceTimer;
 static esp_timer_handle_t animationTimer;
 static esp_timer_handle_t servoMoveTimer;
+
+// Silent-error counters — incremented from cross-task contexts (Wi-Fi driver task
+// for espnowRecvCallback, astrosRxTask on core 0). Read from maintenanceTimerCallback
+// (esp_timer task). std::atomic<uint32_t> is single-word on ESP32 and provides the
+// memory visibility we need without a mutex on the hot paths.
+static std::atomic<uint32_t> astrosRxOverflowCount{0};
+static std::atomic<uint32_t> espnowMallocFailureCount{0};
 
 #define SERVO_MOVE_INTERVAL 500 // 500ms
 
@@ -476,6 +484,13 @@ static void pollingTimerCallback(void *arg)
 static void maintenanceTimerCallback(void *arg)
 {
     ESP_LOGI(TAG, "RAM left %lu", esp_get_free_heap_size());
+
+    uint32_t rxOverflow = astrosRxOverflowCount.load(std::memory_order_relaxed);
+    uint32_t espnowMallocFail = espnowMallocFailureCount.load(std::memory_order_relaxed);
+    if (rxOverflow != 0 || espnowMallocFail != 0)
+    {
+        ESP_LOGW(TAG, "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32, rxOverflow, espnowMallocFail);
+    }
 }
 
 static void animationTimerCallback(void *arg)
@@ -946,6 +961,7 @@ void astrosRxTask(void *arg)
                     if (bufferIndex >= bufferLength)
                     {
                         ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
                     }
                 }
@@ -1653,6 +1669,7 @@ static void espnowRecvCallback(const esp_now_recv_info_t *recv_info, const uint8
     if (msg.data == NULL)
     {
         ESP_LOGE(TAG, "Malloc receive data fail");
+        espnowMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     memcpy(msg.data, data, len);
