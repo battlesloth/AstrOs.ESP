@@ -1,0 +1,31 @@
+AstrOsLogging
+=============
+
+Logger abstraction used by PURE libs (those compiled under `[env:test]` with
+`platform = native`). This library MUST remain free of ESP-IDF and FreeRTOS
+includes. Specifically, do not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+The purity rule is enforced by the CI purity guard in
+`.github/workflows/pr-validation.yml`.
+
+Usage
+-----
+
+Pure libs that need to log diagnostics accept an optional `AstrOsLogger`
+struct of function pointers. A default-constructed `AstrOsLogger` has all
+null pointers, so `astros_log_*` calls become no-ops on the native host.
+
+On-target code wires the logger through the ESP adapter in
+`lib/AstrOsUtility_ESP/include/AstrOsLoggerEsp.h` (`makeEspLogger()`), which
+forwards each level to `esp_log_writev()`.
+
+Preferred error-channel pattern
+-------------------------------
+
+When a pure lib can surface an error as data, prefer a rich return value
+(e.g. `{ valid, reason, ... }`) over invoking the logger. Reserve the logger
+for lines that truly must live next to the logic (tight loops, complex
+internal state, troubleshooting-only messages). See `AstrOsSerialProtocol`
+for an example of the rich-return pattern.

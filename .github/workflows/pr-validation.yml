@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  messaging-purity:
-    name: AstrOsMessaging native-purity guard
+  native-purity:
+    name: Native-purity guard for PURE libs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,15 +24,35 @@ jobs:
       - name: Check for forbidden ESP-IDF / FreeRTOS / driver includes
         run: |
           set -euo pipefail
-          # The lib/AstrOsMessaging/README rule: this library is unit-tested
-          # on the native host, so it must not pull in any ESP-IDF, FreeRTOS,
-          # or low-level driver headers. Catch violations as early as possible.
-          if grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/)' lib/AstrOsMessaging/; then
-            echo "::error::lib/AstrOsMessaging contains forbidden ESP-IDF/FreeRTOS/driver includes (see lines above)."
-            echo "::error::This library must remain native-test compatible. Move ESP-specific code to a different lib."
+          # PURE libs are unit-tested on the native host under [env:test], so
+          # they must not pull in any ESP-IDF, FreeRTOS, or low-level driver
+          # headers. To add a new PURE lib: append its path here AND state the
+          # purity rule in the lib's README. Catch violations as early as
+          # possible — broken purity shows up at `pio test -e test` time
+          # otherwise, which is a much noisier failure mode.
+          PURE_LIBS=(
+            lib/AstrOsMessaging
+            lib/AstrOsUtility
+            lib/AstrOsLogging
+          )
+          PATTERN='#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)'
+          status=0
+          for path in "${PURE_LIBS[@]}"; do
+            if [ ! -d "$path" ]; then
+              echo "::error::PURE lib path not found: $path"
+              status=1
+              continue
+            fi
+            if grep -rEn "$PATTERN" "$path"; then
+              echo "::error::$path contains forbidden ESP-IDF/FreeRTOS/driver includes (see lines above)."
+              status=1
+            fi
+          done
+          if [ "$status" -ne 0 ]; then
+            echo "::error::PURE libs must remain native-test compatible. Move ESP-specific code to a different lib."
             exit 1
           fi
-          echo "messaging purity OK"
+          echo "PURE lib purity OK"
 
   clang-format:
     name: clang-format (changed files only)

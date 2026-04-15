@@ -1,4 +1,5 @@
 #include <AstrOsEspNowUtility.h>
+#include <AstrOsPathUtils.hpp>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
@@ -48,39 +49,22 @@ static sdmmc_card_t *card;
 
 AstrOsStorageManager AstrOs_Storage;
 
-bool AstrOsStorageManager::isPathSafe(const std::string &path)
+namespace
 {
-    if (path.empty())
+    // Boundary helper: delegates to the pure check and emits the
+    // QA-documented ESP_LOGW line when the path is rejected. Keeps log
+    // output bit-compatible with the pre-extraction implementation.
+    bool isPathSafeAndLog(const std::string &path)
     {
-        ESP_LOGW(TAG, "isPathSafe: empty path rejected");
-        return false;
+        std::string reason;
+        if (!AstrOsPathUtils::isPathSafe(path, reason))
+        {
+            ESP_LOGW(TAG, "isPathSafe: %s", reason.c_str());
+            return false;
+        }
+        return true;
     }
-    if (path[0] == '/')
-    {
-        ESP_LOGW(TAG, "isPathSafe: absolute path rejected: %s", path.c_str());
-        return false;
-    }
-    // Conservative: rejects any path containing ".." as a substring, not just
-    // at component boundaries. False positives are benign given current naming
-    // conventions.
-    if (path.find("..") != std::string::npos)
-    {
-        ESP_LOGW(TAG, "isPathSafe: traversal component rejected: %s", path.c_str());
-        return false;
-    }
-    if (path.find("//") != std::string::npos)
-    {
-        ESP_LOGW(TAG, "isPathSafe: double-slash rejected: %s", path.c_str());
-        return false;
-    }
-    constexpr size_t MAX_PATH_LEN = 128;
-    if (path.size() > MAX_PATH_LEN)
-    {
-        ESP_LOGW(TAG, "isPathSafe: path too long (%zu > %zu): %.40s...", path.size(), MAX_PATH_LEN, path.c_str());
-        return false;
-    }
-    return true;
-}
+} // namespace
 
 AstrOsStorageManager::AstrOsStorageManager() {}
 AstrOsStorageManager::~AstrOsStorageManager()
@@ -444,7 +428,7 @@ int AstrOsStorageManager::loadEspNowPeerConfigs(espnow_peer_t *config)
 
 bool AstrOsStorageManager::saveFile(std::string filename, std::string data)
 {
-    if (!isPathSafe(filename))
+    if (!isPathSafeAndLog(filename))
     {
         return false;
     }
@@ -457,7 +441,7 @@ bool AstrOsStorageManager::saveFile(std::string filename, std::string data)
 
 bool AstrOsStorageManager::deleteFile(std::string filename)
 {
-    if (!isPathSafe(filename))
+    if (!isPathSafeAndLog(filename))
     {
         return false;
     }
@@ -470,7 +454,7 @@ bool AstrOsStorageManager::deleteFile(std::string filename)
 
 std::string AstrOsStorageManager::readFile(std::string filename)
 {
-    if (!isPathSafe(filename))
+    if (!isPathSafeAndLog(filename))
     {
         return "error";
     }
@@ -483,7 +467,7 @@ std::string AstrOsStorageManager::readFile(std::string filename)
 
 bool AstrOsStorageManager::fileExists(std::string filename)
 {
-    if (!isPathSafe(filename))
+    if (!isPathSafeAndLog(filename))
     {
         return false;
     }
@@ -496,7 +480,7 @@ bool AstrOsStorageManager::fileExists(std::string filename)
 
 std::vector<std::string> AstrOsStorageManager::listFiles(std::string folder)
 {
-    if (!isPathSafe(folder))
+    if (!isPathSafeAndLog(folder))
     {
         return {};
     }
