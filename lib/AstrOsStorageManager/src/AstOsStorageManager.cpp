@@ -517,6 +517,12 @@ esp_err_t AstrOsStorageManager::formatSdCard()
     void *workbuf = NULL;
     ESP_LOGI(TAG, "Formatting the SD card");
 
+    if (card == nullptr)
+    {
+        ESP_LOGE(TAG, "Error formatting SD card: card not mounted");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     size_t allocation_unit_size = 16 * 1024;
 
     workbuf = ff_memalloc(workbuf_size);
