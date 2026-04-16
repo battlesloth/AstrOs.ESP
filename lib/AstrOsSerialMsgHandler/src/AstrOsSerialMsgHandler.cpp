@@ -53,7 +53,9 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
 
     for (const auto &rej : decoded.rejects)
     {
-        ESP_LOGW(TAG, "Invalid %s: %s", AstrOsSerialProtocol::describeRejectReason(rej.reason), rej.entry.c_str());
+        ESP_LOGE(TAG, "Rejected controller record (%s) for message type %d: %s",
+                 AstrOsSerialProtocol::describeRejectReason(rej.reason), static_cast<int>(validation.type),
+                 rej.entry.c_str());
     }
 }
 
