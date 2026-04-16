@@ -71,6 +71,41 @@ TEST(AnimationCommands, AnimationCommandParsesSerialTemplate)
     EXPECT_EQ(0, cmd.module);
 }
 
+// ---------------- AnimationCommand malformed input ----------------
+
+TEST(AnimationCommands, AnimationCommandNoDelimitersSetsSafeDefaults)
+{
+    AnimationCommand cmd("garbage");
+    EXPECT_EQ(MODULE_TYPE::NONE, cmd.commandType);
+    EXPECT_EQ(0, cmd.duration);
+    EXPECT_EQ(0, cmd.module);
+}
+
+TEST(AnimationCommands, AnimationCommandNonNumericFieldsSetsSafeDefaults)
+{
+    AnimationCommand cmd("abc|def|ghi");
+    EXPECT_EQ(MODULE_TYPE::NONE, cmd.commandType);
+    EXPECT_EQ(0, cmd.duration);
+    EXPECT_EQ(0, cmd.module);
+}
+
+TEST(AnimationCommands, AnimationCommandEmptyStringSetsSafeDefaults)
+{
+    AnimationCommand cmd("");
+    EXPECT_EQ(MODULE_TYPE::NONE, cmd.commandType);
+    EXPECT_EQ(0, cmd.duration);
+    EXPECT_EQ(0, cmd.module);
+}
+
+TEST(AnimationCommands, AnimationCommandPartialNumericUsesWhatItCan)
+{
+    // "5" is valid, "abc" and "xyz" are not
+    AnimationCommand cmd("5|abc|xyz");
+    EXPECT_EQ(MODULE_TYPE::GPIO, cmd.commandType);
+    EXPECT_EQ(0, cmd.duration);
+    EXPECT_EQ(0, cmd.module);
+}
+
 // ---------------- CommandTemplate ----------------
 
 TEST(AnimationCommands, GetCommandTemplatePtrReturnsCorrectFields)

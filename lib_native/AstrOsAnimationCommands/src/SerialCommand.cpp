@@ -65,7 +65,7 @@ std::string SerialCommand::ToKangarooCommand()
         return AstrOsStringUtils::stringFormat("%d,s%d%c", this->ch, this->spd, '\n');
     case KangarooAction::POSITION:
     {
-        if (SerialCommand::spd > 0)
+        if (this->spd > 0)
         {
             return AstrOsStringUtils::stringFormat("%d,p%d s%d%c", this->ch, this->pos, this->spd, '\n');
         }
@@ -78,7 +78,7 @@ std::string SerialCommand::ToKangarooCommand()
         return AstrOsStringUtils::stringFormat("%d,si%d%c", this->ch, this->spd, '\n');
     case KangarooAction::POSITION_INCREMENTAL:
     {
-        if (SerialCommand::spd > 0)
+        if (this->spd > 0)
         {
             return AstrOsStringUtils::stringFormat("%d,pi%d s%d%c", this->ch, this->pos, this->spd, '\n');
         }

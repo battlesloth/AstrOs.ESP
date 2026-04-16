@@ -1,5 +1,6 @@
 #include "AnimationCommand.hpp"
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,9 +27,25 @@ std::unique_ptr<CommandTemplate> AnimationCommand::GetCommandTemplatePtr()
 void AnimationCommand::parseCommandType()
 {
     str_vec_t script = AnimationCommand::splitTemplate();
-    this->commandType = static_cast<MODULE_TYPE>(std::stoi(script.at(0)));
-    this->duration = std::stoi(script.at(1));
-    this->module = std::stoi(script.at(2));
+
+    if (script.size() < 3)
+    {
+        this->commandType = MODULE_TYPE::NONE;
+        this->duration = 0;
+        this->module = 0;
+        return;
+    }
+
+    char *end = nullptr;
+
+    long typeVal = std::strtol(script[0].c_str(), &end, 10);
+    this->commandType = (end != script[0].c_str()) ? static_cast<MODULE_TYPE>(typeVal) : MODULE_TYPE::NONE;
+
+    long durVal = std::strtol(script[1].c_str(), &end, 10);
+    this->duration = (end != script[1].c_str()) ? static_cast<int>(durVal) : 0;
+
+    long modVal = std::strtol(script[2].c_str(), &end, 10);
+    this->module = (end != script[2].c_str()) ? static_cast<int>(modVal) : 0;
 }
 
 str_vec_t AnimationCommand::splitTemplate()
