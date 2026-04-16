@@ -157,14 +157,14 @@ Foundation + one pilot extraction. ~8 tasks total, at the CLAUDE.md scope-guard 
 
 ## Task checklist
 
-- [ ] Task 1: Create `lib/AstrOsLogging` pure lib + README
-- [ ] Task 2: Create `lib/AstrOsUtility_ESP` logger adapter
-- [ ] Task 3: Extend CI purity guard over a lib list
-- [ ] Task 4: Extract `isPathSafe` into `lib/AstrOsUtility` + native test
-- [ ] Task 5: Create `lib/AstrOsSerialProtocol` pure lib
-- [ ] Task 6: Rewrite `AstrOsSerialMsgHandler` as thin adapter
-- [ ] Task 7: Add native tests for `AstrOsSerialProtocol`
-- [ ] Task 8: Update CLAUDE.md with classification + "Adding a new extracted lib" blurb
+- [x] Task 1: Create `lib/AstrOsLogging` pure lib + README
+- [x] Task 2: Create `lib/AstrOsUtility_ESP` logger adapter
+- [x] Task 3: Extend CI purity guard over a lib list
+- [x] Task 4: Extract `isPathSafe` into `lib/AstrOsUtility` + native test
+- [x] Task 5: Create `lib/AstrOsSerialProtocol` pure lib
+- [x] Task 6: Rewrite `AstrOsSerialMsgHandler` as thin adapter
+- [x] Task 7: Add native tests for `AstrOsSerialProtocol`
+- [x] Task 8: Update CLAUDE.md with classification + "Adding a new extracted lib" blurb
 
 ## What's explicitly not in this plan
 
