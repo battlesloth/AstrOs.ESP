@@ -87,6 +87,8 @@ bool AnimationController::queueCommand(std::string command)
 
     AnimationCommand cmd = AnimationCommand(command);
     this->scriptEvents.push_back(cmd);
+    this->scriptLoaded.store(true);
+    this->delayTillNextEvent.store(0);
     xSemaphoreGive(this->animationMutex);
     return true;
 }
