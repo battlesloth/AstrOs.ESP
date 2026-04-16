@@ -5,7 +5,7 @@ Version resolver for AstrOs.ESP firmware builds.
 Runs as a PlatformIO pre-build hook (wired from platformio.ini via
 `extra_scripts = pre:scripts/version_gen.py`) AND as a standalone CLI
 script (`python3 scripts/version_gen.py`). Both entry points produce
-the same output: lib/AstrOsUtility/src/version_generated.hpp.
+the same output: lib_native/AstrOsUtility/src/version_generated.hpp.
 
 Version resolution rules (see .docs/plans/20260411-0905-ci-pipeline-design.md):
 
@@ -48,7 +48,7 @@ except NameError:
     REPO_ROOT = Path(__file__).resolve().parent.parent
 
 VERSION_FILE = REPO_ROOT / "VERSION"
-OUTPUT_FILE = REPO_ROOT / "lib" / "AstrOsUtility" / "src" / "version_generated.hpp"
+OUTPUT_FILE = REPO_ROOT / "lib_native" / "AstrOsUtility" / "src" / "version_generated.hpp"
 
 
 def _run(cmd: list[str], default: str = "") -> str:
