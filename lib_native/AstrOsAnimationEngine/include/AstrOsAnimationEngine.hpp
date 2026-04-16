@@ -35,14 +35,10 @@ namespace AstrOsAnimationEngine
 // adapter wraps all operations with a mutex.
 template <size_t Capacity> class ScriptQueue
 {
+    static_assert(Capacity > 0, "ScriptQueue capacity must be greater than zero");
+
 public:
-    ScriptQueue() : front_(0), rear_(-1), size_(0)
-    {
-        for (auto &s : items_)
-        {
-            s = "";
-        }
-    }
+    ScriptQueue() : front_(0), size_(0) {}
 
     bool push(const std::string &id)
     {
@@ -50,8 +46,8 @@ public:
         {
             return false;
         }
-        rear_ = (rear_ + 1) % static_cast<int>(Capacity);
-        items_[rear_] = id;
+        size_t writePos = (front_ + size_) % Capacity;
+        items_[writePos] = id;
         size_++;
         return true;
     }
@@ -64,7 +60,7 @@ public:
         }
         std::string result = items_[front_];
         items_[front_] = "";
-        front_ = (front_ + 1) % static_cast<int>(Capacity);
+        front_ = (front_ + 1) % Capacity;
         size_--;
         return result;
     }
@@ -75,9 +71,9 @@ public:
     }
     bool isFull() const
     {
-        return size_ == static_cast<int>(Capacity);
+        return size_ == Capacity;
     }
-    int size() const
+    size_t size() const
     {
         return size_;
     }
@@ -89,15 +85,13 @@ public:
             s = "";
         }
         front_ = 0;
-        rear_ = -1;
         size_ = 0;
     }
 
 private:
-    std::array<std::string, Capacity> items_;
-    int front_;
-    int rear_;
-    int size_;
+    std::array<std::string, Capacity> items_{};
+    size_t front_;
+    size_t size_;
 };
 
 #endif
