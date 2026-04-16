@@ -75,6 +75,9 @@ typedef struct
 typedef struct
 {
     std::string msgId;
+    // Payload group (everything after GROUP_SEPARATOR). Empty when the
+    // validated message carries no payload, e.g. REGISTRATION_SYNC.
+    std::string payload;
     AstrOsSerialMessageType type;
     bool valid;
 } astros_serial_msg_validation_t;

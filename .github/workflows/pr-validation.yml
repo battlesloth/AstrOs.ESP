@@ -34,6 +34,7 @@ jobs:
             lib/AstrOsMessaging
             lib/AstrOsUtility
             lib/AstrOsLogging
+            lib/AstrOsSerialProtocol
           )
           PATTERN='#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)'
           status=0

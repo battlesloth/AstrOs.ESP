@@ -8,18 +8,16 @@ namespace AstrOsSerialProtocol
     {
         constexpr const char *kBroadcastMac = "00:00:00:00:00:00";
 
-        // Pulls the payload group out of a validated serial message. The
-        // wire format is `header GS payload`; `validateSerialMsg` has
-        // already confirmed the header is well-formed, so parts[1] is the
-        // payload group.
-        std::vector<std::string> extractControllers(const std::string &message)
+        // Splits the validated payload group on RECORD_SEPARATOR to
+        // produce one entry per controller record. The payload has
+        // already been separated from the header by validateSerialMsg.
+        std::vector<std::string> extractControllers(const std::string &payload)
         {
-            auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
-            if (parts.size() < 2)
+            if (payload.empty())
             {
                 return {};
             }
-            return AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
+            return AstrOsStringUtils::splitString(payload, RECORD_SEPARATOR);
         }
 
         void appendCommand(DecodeResult &result, AstrOsInterfaceResponseType responseType, const std::string &msgId,
@@ -51,9 +49,9 @@ namespace AstrOsSerialProtocol
             appendCommand(result, AstrOsInterfaceResponseType::REGISTRATION_SYNC, msgId, "", "", "");
         }
 
-        void decodeDeployConfig(DecodeResult &result, const std::string &msgId, const std::string &message)
+        void decodeDeployConfig(DecodeResult &result, const std::string &msgId, const std::string &payload)
         {
-            for (const auto &controller : extractControllers(message))
+            for (const auto &controller : extractControllers(payload))
             {
                 auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
                 if (msgParts.size() != 3)
@@ -69,9 +67,9 @@ namespace AstrOsSerialProtocol
             }
         }
 
-        void decodeDeployScript(DecodeResult &result, const std::string &msgId, const std::string &message)
+        void decodeDeployScript(DecodeResult &result, const std::string &msgId, const std::string &payload)
         {
-            for (const auto &controller : extractControllers(message))
+            for (const auto &controller : extractControllers(payload))
             {
                 auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
                 if (msgParts.size() != 4)
@@ -89,9 +87,9 @@ namespace AstrOsSerialProtocol
         }
 
         void decodeBasicCommand(DecodeResult &result, AstrOsSerialMessageType type, const std::string &msgId,
-                                const std::string &message)
+                                const std::string &payload)
         {
-            for (const auto &controller : extractControllers(message))
+            for (const auto &controller : extractControllers(payload))
             {
                 auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
 
@@ -167,12 +165,20 @@ namespace AstrOsSerialProtocol
         }
     }
 
-    DecodeResult decodeSerialMessage(AstrOsSerialMessageType type, const std::string &msgId, const std::string &message,
-                                     bool isMaster)
+    DecodeResult decodeSerialMessage(AstrOsSerialMessageType type, const std::string &msgId, const std::string &payload)
     {
-        (void)isMaster; // retained for future per-role branching; DEPLOY_* and
-                        // basic commands infer role from the per-controller mac.
         DecodeResult result;
+
+        // Every type except REGISTRATION_SYNC expects a non-empty payload
+        // group. Without one, the per-controller decoders would silently
+        // produce zero commands and zero rejects — surfacing a reject here
+        // keeps the boundary caller informed.
+        if (payload.empty() && type != AstrOsSerialMessageType::REGISTRATION_SYNC &&
+            type != AstrOsSerialMessageType::UNKNOWN)
+        {
+            appendReject(result, "", DecodeRejectReason::EMPTY_PAYLOAD);
+            return result;
+        }
 
         switch (type)
         {
@@ -180,20 +186,20 @@ namespace AstrOsSerialProtocol
             decodeRegistrationSync(result, msgId);
             break;
         case AstrOsSerialMessageType::DEPLOY_CONFIG:
-            decodeDeployConfig(result, msgId, message);
+            decodeDeployConfig(result, msgId, payload);
             break;
         case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-            decodeDeployScript(result, msgId, message);
+            decodeDeployScript(result, msgId, payload);
             break;
         case AstrOsSerialMessageType::RUN_SCRIPT:
         case AstrOsSerialMessageType::PANIC_STOP:
         case AstrOsSerialMessageType::FORMAT_SD:
         case AstrOsSerialMessageType::RUN_COMMAND:
         case AstrOsSerialMessageType::SERVO_TEST:
-            decodeBasicCommand(result, type, msgId, message);
+            decodeBasicCommand(result, type, msgId, payload);
             break;
         default:
-            appendReject(result, message, DecodeRejectReason::UNKNOWN_TYPE);
+            appendReject(result, payload, DecodeRejectReason::UNKNOWN_TYPE);
             break;
         }
 
@@ -212,6 +218,8 @@ namespace AstrOsSerialProtocol
             return "empty value";
         case DecodeRejectReason::UNKNOWN_TYPE:
             return "unknown message type";
+        case DecodeRejectReason::EMPTY_PAYLOAD:
+            return "empty payload";
         }
         return "unknown";
     }

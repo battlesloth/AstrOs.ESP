@@ -44,8 +44,7 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
     // The pure decoder owns all of the field splitting and
     // per-controller validation. Everything ESP-specific (queue handoff,
     // logging) stays here at the boundary.
-    auto decoded =
-        AstrOsSerialProtocol::decodeSerialMessage(validation.type, validation.msgId, message, /*isMaster*/ true);
+    auto decoded = AstrOsSerialProtocol::decodeSerialMessage(validation.type, validation.msgId, validation.payload);
 
     for (const auto &cmd : decoded.commands)
     {

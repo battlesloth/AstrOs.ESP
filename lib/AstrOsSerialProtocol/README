@@ -2,10 +2,11 @@ AstrOsSerialProtocol
 ====================
 
 Pure, native-testable decoder for the serial protocol spoken between the
-master node and the AstrOs web interface. Accepts the validated message
-fields (type, msgId, payload) and produces a DecodeResult containing
-zero-or-more DecodedCommand entries plus any DecodeReject records for
-malformed controller sub-strings.
+master node and the AstrOs web interface. Takes the three fields populated
+by AstrOsSerialMessageService::validateSerialMsg — `type`, `msgId`, and the
+payload group (everything after GROUP_SEPARATOR) — and produces a
+DecodeResult containing zero-or-more DecodedCommand entries plus any
+DecodeReject records for malformed controller sub-strings.
 
 Purity rule
 -----------

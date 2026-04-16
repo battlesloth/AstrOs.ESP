@@ -9,17 +9,9 @@
 
 namespace
 {
-    // decodeSerialMessage only looks at the payload group (parts[1] after a
-    // split on GROUP_SEPARATOR), so the header contents are irrelevant for
-    // these tests. Prepend a single GROUP_SEPARATOR to keep the split happy.
-    std::string wrapPayload(const std::string &payload)
-    {
-        std::string out;
-        out += GROUP_SEPARATOR;
-        out += payload;
-        return out;
-    }
-
+    // decodeSerialMessage takes the already-extracted payload group
+    // (RECORD_SEPARATOR-joined controller records). These helpers build
+    // that payload directly — no header, no GROUP_SEPARATOR prefix.
     std::string joinUnits(std::initializer_list<std::string> parts)
     {
         std::stringstream ss;
@@ -94,8 +86,7 @@ TEST(SerialProtocol, MapResponseTypePadawanRegistrationIsUnknown)
 
 TEST(SerialProtocol, RegistrationSyncProducesBroadcastCommand)
 {
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::REGISTRATION_SYNC, "mid", "", true);
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::REGISTRATION_SYNC, "mid", "");
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_TRUE(result.rejects.empty());
@@ -112,8 +103,7 @@ TEST(SerialProtocol, RegistrationSyncPadawanStillProducesRegistrationSync)
 {
     // Matches the handleRegistrationSync quirk: the hardcoded SET bypasses
     // the padawan lookup which would otherwise return UNKNOWN.
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::REGISTRATION_SYNC, "mid", "", false);
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::REGISTRATION_SYNC, "mid", "");
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_EQ(AstrOsInterfaceResponseType::REGISTRATION_SYNC, result.commands[0].responseType);
@@ -123,9 +113,8 @@ TEST(SerialProtocol, RegistrationSyncPadawanStillProducesRegistrationSync)
 
 TEST(SerialProtocol, DeployConfigBroadcastMacMapsToSetConfig)
 {
-    const std::string payload = wrapPayload(joinUnits({"00:00:00:00:00:00", "master", "CFG_DATA"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload, true);
+    const std::string payload = joinUnits({"00:00:00:00:00:00", "master", "CFG_DATA"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_TRUE(result.rejects.empty());
@@ -139,9 +128,8 @@ TEST(SerialProtocol, DeployConfigBroadcastMacMapsToSetConfig)
 
 TEST(SerialProtocol, DeployConfigSpecificMacMapsToSendConfig)
 {
-    const std::string payload = wrapPayload(joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "CFG_DATA"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload, true);
+    const std::string payload = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "CFG_DATA"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_TRUE(result.rejects.empty());
@@ -155,9 +143,8 @@ TEST(SerialProtocol, DeployConfigSpecificMacMapsToSendConfig)
 TEST(SerialProtocol, DeployConfigWrongPartCountRejects)
 {
     // Only 2 parts instead of 3.
-    const std::string payload = wrapPayload(joinUnits({"AA:BB:CC:DD:EE:FF", "padawan"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload, true);
+    const std::string payload = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", payload);
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -169,9 +156,8 @@ TEST(SerialProtocol, DeployConfigWrongPartCountRejects)
 TEST(SerialProtocol, DeployScriptReconstructsScriptPayload)
 {
     // Per handler: script = msgParts[2] + UNIT_SEPARATOR + msgParts[3].
-    const std::string payload = wrapPayload(joinUnits({"00:00:00:00:00:00", "master", "scriptId", "scriptBody"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload, true);
+    const std::string payload = joinUnits({"00:00:00:00:00:00", "master", "scriptId", "scriptBody"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_TRUE(result.rejects.empty());
@@ -185,9 +171,8 @@ TEST(SerialProtocol, DeployScriptReconstructsScriptPayload)
 
 TEST(SerialProtocol, DeployScriptSpecificMacRoutesToSendScript)
 {
-    const std::string payload = wrapPayload(joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "scriptId", "scriptBody"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload, true);
+    const std::string payload = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "scriptId", "scriptBody"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size());
     EXPECT_EQ(AstrOsInterfaceResponseType::SEND_SCRIPT, result.commands[0].responseType);
@@ -197,9 +182,8 @@ TEST(SerialProtocol, DeployScriptSpecificMacRoutesToSendScript)
 TEST(SerialProtocol, DeployScriptWrongPartCountRejects)
 {
     // 3 parts instead of 4 — malformed script entry.
-    const std::string payload = wrapPayload(joinUnits({"00:00:00:00:00:00", "master", "onlyScript"}));
-    auto result =
-        AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload, true);
+    const std::string payload = joinUnits({"00:00:00:00:00:00", "master", "onlyScript"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_SCRIPT, "mid", payload);
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -223,8 +207,8 @@ class BasicCommandRoutingFixture : public ::testing::TestWithParam<BasicCommandE
 TEST_P(BasicCommandRoutingFixture, BroadcastRoutesToMasterResponseType)
 {
     const auto &param = GetParam();
-    const std::string payload = wrapPayload(joinUnits({"00:00:00:00:00:00", "master", "VAL"}));
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(param.type, "mid", payload, true);
+    const std::string payload = joinUnits({"00:00:00:00:00:00", "master", "VAL"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(param.type, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size()) << "type=" << param.label;
     EXPECT_EQ(param.masterResponse, result.commands[0].responseType) << "type=" << param.label;
@@ -235,8 +219,8 @@ TEST_P(BasicCommandRoutingFixture, BroadcastRoutesToMasterResponseType)
 TEST_P(BasicCommandRoutingFixture, SpecificMacRoutesToPadawanResponseType)
 {
     const auto &param = GetParam();
-    const std::string payload = wrapPayload(joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "VAL"}));
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(param.type, "mid", payload, true);
+    const std::string payload = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan", "VAL"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(param.type, "mid", payload);
 
     ASSERT_EQ(1u, result.commands.size()) << "type=" << param.label;
     EXPECT_EQ(param.padawanResponse, result.commands[0].responseType) << "type=" << param.label;
@@ -259,8 +243,8 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(SerialProtocol, BasicCommandEmptyDestRejects)
 {
-    const std::string payload = wrapPayload(joinUnits({"", "padawan", "VAL"}));
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload, true);
+    const std::string payload = joinUnits({"", "padawan", "VAL"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload);
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -279,9 +263,9 @@ TEST(SerialProtocol, BasicCommandEmptyValueRejects)
     entry += "padawan";
     entry += UNIT_SEPARATOR;
     entry += UNIT_SEPARATOR;
-    const std::string payload = wrapPayload(entry);
+    const std::string payload = entry;
 
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload, true);
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload);
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -290,8 +274,8 @@ TEST(SerialProtocol, BasicCommandEmptyValueRejects)
 
 TEST(SerialProtocol, BasicCommandWrongPartCountRejects)
 {
-    const std::string payload = wrapPayload(joinUnits({"AA:BB:CC:DD:EE:FF", "padawan"}));
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload, true);
+    const std::string payload = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan"});
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload);
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -305,9 +289,9 @@ TEST(SerialProtocol, MixedValidAndInvalidEntriesCoexist)
     const std::string good1 = joinUnits({"00:00:00:00:00:00", "master", "v1"});
     const std::string bad = joinUnits({"", "padawan", "v2"}); // empty dest
     const std::string good2 = joinUnits({"AA:BB:CC:DD:EE:FF", "padawan2", "v3"});
-    const std::string payload = wrapPayload(joinRecords({good1, bad, good2}));
+    const std::string payload = joinRecords({good1, bad, good2});
 
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload, true);
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::RUN_COMMAND, "mid", payload);
 
     ASSERT_EQ(2u, result.commands.size());
     EXPECT_EQ(AstrOsInterfaceResponseType::COMMAND, result.commands[0].responseType);
@@ -319,11 +303,31 @@ TEST(SerialProtocol, MixedValidAndInvalidEntriesCoexist)
     EXPECT_EQ(AstrOsSerialProtocol::DecodeRejectReason::EMPTY_DEST, result.rejects[0].reason);
 }
 
+// ---------------- Empty payload ----------------
+
+TEST(SerialProtocol, EmptyPayloadProducesRejectForPayloadTypes)
+{
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::DEPLOY_CONFIG, "mid", "");
+
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(AstrOsSerialProtocol::DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, EmptyPayloadDoesNotAffectRegistrationSync)
+{
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::REGISTRATION_SYNC, "mid", "");
+
+    ASSERT_EQ(1u, result.commands.size());
+    EXPECT_TRUE(result.rejects.empty());
+    EXPECT_EQ(AstrOsInterfaceResponseType::REGISTRATION_SYNC, result.commands[0].responseType);
+}
+
 // ---------------- Unknown type ----------------
 
 TEST(SerialProtocol, UnknownTypeProducesUnknownTypeReject)
 {
-    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::UNKNOWN, "mid", "", true);
+    auto result = AstrOsSerialProtocol::decodeSerialMessage(AstrOsSerialMessageType::UNKNOWN, "mid", "");
 
     EXPECT_TRUE(result.commands.empty());
     ASSERT_EQ(1u, result.rejects.size());
@@ -337,4 +341,5 @@ TEST(SerialProtocol, DescribeRejectReasonReturnsNonNull)
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::EMPTY_DEST));
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::EMPTY_VALUE));
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::UNKNOWN_TYPE));
+    EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::EMPTY_PAYLOAD));
 }

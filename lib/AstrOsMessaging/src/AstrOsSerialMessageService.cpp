@@ -43,7 +43,7 @@ AstrOsSerialMessageService::~AstrOsSerialMessageService() {}
 /// @return is valid
 astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std::string msg)
 {
-    astros_serial_msg_validation_t result{"", AstrOsSerialMessageType::UNKNOWN, false};
+    astros_serial_msg_validation_t result{"", "", AstrOsSerialMessageType::UNKNOWN, false};
 
     auto msgParts = AstrOsStringUtils::splitString(msg, GROUP_SEPARATOR);
 
@@ -70,6 +70,7 @@ astros_serial_msg_validation_t AstrOsSerialMessageService::validateSerialMsg(std
 
     result.valid = true;
     result.msgId = parts[2];
+    result.payload = msgParts.size() > 1 ? msgParts[1] : "";
     result.type = type;
 
     return result;

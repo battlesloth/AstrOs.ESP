@@ -14,6 +14,7 @@ namespace AstrOsSerialProtocol
         EMPTY_DEST,
         EMPTY_VALUE,
         UNKNOWN_TYPE,
+        EMPTY_PAYLOAD,
     };
 
     struct DecodedCommand
@@ -37,16 +38,17 @@ namespace AstrOsSerialProtocol
         std::vector<DecodeReject> rejects;
     };
 
-    // Decodes an already-validated serial message payload. `type` and
-    // `msgId` come from AstrOsSerialMessageService::validateSerialMsg;
-    // `message` is the full raw message (the decoder re-splits on
-    // GROUP_SEPARATOR internally). `isMaster` routes each command through
-    // the master-side or padawan-side response-type table.
+    // Decodes an already-validated serial message. All three inputs —
+    // `type`, `msgId`, and `payload` — come from the fields populated by
+    // AstrOsSerialMessageService::validateSerialMsg. `payload` is the
+    // group after GROUP_SEPARATOR (the RECORD_SEPARATOR-joined controller
+    // records) and is empty for messages that carry no payload, e.g.
+    // REGISTRATION_SYNC.
     //
     // Pure: no I/O, no allocations outside the returned vectors, no
     // FreeRTOS/ESP dependencies.
-    DecodeResult decodeSerialMessage(AstrOsSerialMessageType type, const std::string &msgId, const std::string &message,
-                                     bool isMaster);
+    DecodeResult decodeSerialMessage(AstrOsSerialMessageType type, const std::string &msgId,
+                                     const std::string &payload);
 
     // Master-vs-padawan response-type lookup. Returns UNKNOWN for any
     // (type, isMaster) combination the handler does not forward — this
