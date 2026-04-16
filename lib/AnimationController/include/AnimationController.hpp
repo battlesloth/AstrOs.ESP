@@ -5,6 +5,7 @@
 #include <AstrOsAnimationEngine.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -32,6 +33,7 @@ private:
 
     std::atomic<bool> scriptLoaded;
     std::atomic<int> delayTillNextEvent;
+    std::atomic<uint32_t> panicGeneration;
     std::vector<AnimationCommand> scriptEvents;
 
     void loadNextScript();

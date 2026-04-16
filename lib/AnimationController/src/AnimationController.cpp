@@ -21,6 +21,7 @@ AnimationController::AnimationController()
     this->queueing.store(false);
     this->scriptLoaded.store(false);
     this->delayTillNextEvent.store(0);
+    this->panicGeneration.store(0);
 }
 
 AnimationController::~AnimationController()
@@ -45,6 +46,7 @@ void AnimationController::panicStop()
         return;
     }
 
+    this->panicGeneration.fetch_add(1);
     this->scriptQueue_.clear();
     this->scriptEvents.clear();
     this->scriptLoaded.store(false);
@@ -116,6 +118,7 @@ void AnimationController::loadNextScript()
     }
 
     std::string scriptId = this->scriptQueue_.pop();
+    uint32_t genBeforeIO = this->panicGeneration.load();
     xSemaphoreGive(this->animationMutex);
 
     ESP_LOGI(TAG, "Loading script %s", scriptId.c_str());
@@ -134,6 +137,13 @@ void AnimationController::loadNextScript()
     {
         ESP_LOGE(TAG, "loadNextScript: mutex timeout after file read — script not loaded");
         this->scriptLoaded.store(false);
+        return;
+    }
+
+    if (this->panicGeneration.load() != genBeforeIO)
+    {
+        ESP_LOGW(TAG, "loadNextScript: panicStop fired during file I/O — discarding loaded script");
+        xSemaphoreGive(this->animationMutex);
         return;
     }
 
