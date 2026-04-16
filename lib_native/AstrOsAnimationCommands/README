@@ -1,0 +1,24 @@
+AstrOsAnimationCommands
+=======================
+
+Pure, native-testable command parsing for the animation scripting system.
+Parses pipe-delimited command template strings into typed command objects
+(SerialCommand, I2cCommand, GpioCommand, MaestroCommand) used by both
+AnimationController and the hardware Modules.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+Command constructors set safe defaults (-1, empty string) when parsing
+fails. No logging — the MIXED-layer caller (AnimationController, Modules)
+can inspect fields and log at the boundary if needed.

@@ -1,5 +1,4 @@
 #include "MaestroCommand.hpp"
-#include <esp_log.h>
 
 MaestroCommand::MaestroCommand(std::string val)
 {
@@ -7,7 +6,6 @@ MaestroCommand::MaestroCommand(std::string val)
 
     if (parts.size() < 7)
     {
-        ESP_LOGE("ServoCommand", "Invalid number of parts in command: %s", val.c_str());
         this->channel = -1;
         this->position = -1;
         this->speed = -1;

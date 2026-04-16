@@ -1,15 +1,13 @@
+#include "SerialCommand.hpp"
+
 #include <AstrOsStringUtils.hpp>
-#include <SerialCommand.hpp>
-#include <esp_log.h>
 
 SerialCommand::SerialCommand(std::string val)
 {
-
     str_vec_t parts = SplitTemplate(val);
 
     if (parts.size() < 4)
     {
-        ESP_LOGE("SerialCommand", "Invalid number of parts in command: %s", val.c_str());
         this->type = MODULE_TYPE::NONE;
         this->serialChannel = -1;
         this->baudRate = -1;
@@ -67,7 +65,7 @@ std::string SerialCommand::ToKangarooCommand()
         return AstrOsStringUtils::stringFormat("%d,s%d%c", this->ch, this->spd, '\n');
     case KangarooAction::POSITION:
     {
-        if (SerialCommand::spd > 0)
+        if (this->spd > 0)
         {
             return AstrOsStringUtils::stringFormat("%d,p%d s%d%c", this->ch, this->pos, this->spd, '\n');
         }
@@ -80,7 +78,7 @@ std::string SerialCommand::ToKangarooCommand()
         return AstrOsStringUtils::stringFormat("%d,si%d%c", this->ch, this->spd, '\n');
     case KangarooAction::POSITION_INCREMENTAL:
     {
-        if (SerialCommand::spd > 0)
+        if (this->spd > 0)
         {
             return AstrOsStringUtils::stringFormat("%d,pi%d s%d%c", this->ch, this->pos, this->spd, '\n');
         }

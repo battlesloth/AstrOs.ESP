@@ -6,8 +6,6 @@
 #include <string>
 #include <vector>
 
-typedef std::vector<std::string> str_vec_t;
-
 class BaseCommand
 {
 public:
