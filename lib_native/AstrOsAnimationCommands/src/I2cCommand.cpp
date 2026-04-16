@@ -1,5 +1,4 @@
 #include "I2cCommand.hpp"
-#include <esp_log.h>
 
 I2cCommand::I2cCommand(std::string val)
 {
@@ -7,7 +6,6 @@ I2cCommand::I2cCommand(std::string val)
 
     if (parts.size() < 4)
     {
-        ESP_LOGE("I2cCommand", "Invalid number of parts in command: %s", val.c_str());
         this->channel = -1;
         this->value = "";
         return;

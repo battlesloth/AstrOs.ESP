@@ -1,5 +1,4 @@
 #include "GpioCommand.hpp"
-#include <esp_log.h>
 
 GpioCommand::GpioCommand(std::string val)
 {
@@ -7,7 +6,6 @@ GpioCommand::GpioCommand(std::string val)
 
     if (parts.size() < 4)
     {
-        ESP_LOGE("GpioCommand", "Invalid number of parts in command: %s", val.c_str());
         this->channel = -1;
         this->state = false;
         return;

@@ -1,15 +1,13 @@
+#include "SerialCommand.hpp"
+
 #include <AstrOsStringUtils.hpp>
-#include <SerialCommand.hpp>
-#include <esp_log.h>
 
 SerialCommand::SerialCommand(std::string val)
 {
-
     str_vec_t parts = SplitTemplate(val);
 
     if (parts.size() < 4)
     {
-        ESP_LOGE("SerialCommand", "Invalid number of parts in command: %s", val.c_str());
         this->type = MODULE_TYPE::NONE;
         this->serialChannel = -1;
         this->baudRate = -1;

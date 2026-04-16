@@ -31,10 +31,11 @@ jobs:
           # possible — broken purity shows up at `pio test -e test` time
           # otherwise, which is a much noisier failure mode.
           PURE_LIBS=(
-            lib/AstrOsMessaging
-            lib/AstrOsUtility
-            lib/AstrOsLogging
-            lib/AstrOsSerialProtocol
+            lib_native/AstrOsMessaging
+            lib_native/AstrOsUtility
+            lib_native/AstrOsLogging
+            lib_native/AstrOsSerialProtocol
+            lib_native/AstrOsAnimationCommands
           )
           PATTERN='#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)'
           status=0

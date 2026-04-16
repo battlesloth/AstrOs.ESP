@@ -28,8 +28,6 @@ public:
     MODULE_TYPE commandType;
     std::string commandTemplate;
     int duration;
-    // for most serial events, this will be the channel
-    // for Maestro, this will be the module index
     int module;
 
     std::unique_ptr<CommandTemplate> GetCommandTemplatePtr();

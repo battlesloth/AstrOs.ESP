@@ -1,7 +1,5 @@
-#include <AnimationCommand.hpp>
-#include <AnimationCommon.hpp>
-#include <AstrOsEnums.h>
-#include <esp_log.h>
+#include "AnimationCommand.hpp"
+
 #include <string>
 #include <vector>
 
@@ -37,7 +35,6 @@ str_vec_t AnimationCommand::splitTemplate()
 {
     str_vec_t result;
 
-    // we just need the first 3 spots
     auto start = 0U;
     auto end = commandTemplate.find("|");
 

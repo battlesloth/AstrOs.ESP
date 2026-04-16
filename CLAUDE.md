@@ -65,14 +65,15 @@ The actual behavior lives in `lib/`. When tracing a feature, start at `main.cpp`
 
 ### Library layout (what each thing owns)
 
-Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles under `[env:test]`), **MIXED** (algorithmic logic plus ESP-IDF/FreeRTOS wiring), or **HARDWARE-ONLY** (driver code that can only build on-target).
+Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles under `[env:test]`), **MIXED** (algorithmic logic plus ESP-IDF/FreeRTOS wiring), or **HARDWARE-ONLY** (driver code that can only build on-target). PURE libs live in `lib_native/`; everything else stays in `lib/`.
 
 | Lib | Class | Summary |
 |---|---|---|
-| `lib/AstrOsMessaging` | PURE | Wire-format serializers/parsers for serial + ESP-NOW. |
-| `lib/AstrOsSerialProtocol` | PURE | Decodes validated UART messages into `DecodedCommand` / `DecodeReject` records. |
-| `lib/AstrOsUtility` | PURE | String, path (`AstrOsPathUtils`), servo, and file utilities. |
-| `lib/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
+| `lib_native/AstrOsMessaging` | PURE | Wire-format serializers/parsers for serial + ESP-NOW. |
+| `lib_native/AstrOsSerialProtocol` | PURE | Decodes validated UART messages into `DecodedCommand` / `DecodeReject` records. |
+| `lib_native/AstrOsUtility` | PURE | String, path (`AstrOsPathUtils`), servo, and file utilities. |
+| `lib_native/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
+| `lib_native/AstrOsAnimationCommands` | PURE | Pipe-delimited command template parsers (`AnimationCommand`, `SerialCommand`, `I2cCommand`, `GpioCommand`, `MaestroCommand`). Used by both `AnimationController` and `Modules`. |
 | `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
 | `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
 | `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. |
@@ -89,9 +90,9 @@ Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles u
 
 When pulling pure logic out of a MIXED lib, follow this pattern (piloted on `AstrOsSerialProtocol`):
 
-1. **Create the lib directory** with `include/`, `src/`, and a `README` stating the purity rule and listing the forbidden include prefixes.
-2. **Register it with the CI purity guard** — append the path to the `PURE_LIBS` array in `.github/workflows/pr-validation.yml` (`native-purity` job).
-3. **Prefer rich return values over logger injection** — return a struct describing what happened (e.g., `{ commands, rejects }` or `{ valid, reason }`) and let the MIXED caller log at the boundary with `ESP_LOGW`/`ESP_LOGE`. Only reach for `lib/AstrOsLogging`'s `AstrOsLogger` struct when diagnostics truly must live next to the logic (tight loops, complex internal state).
+1. **Create the lib directory under `lib_native/`** with `include/`, `src/`, and a `README` stating the purity rule and listing the forbidden include prefixes. PURE libs always live in `lib_native/`, never in `lib/`. PlatformIO discovers them via the `lib_extra_dirs = lib_native` setting in `platformio.ini`.
+2. **Register it with the CI purity guard** — append the `lib_native/` path to the `PURE_LIBS` array in `.github/workflows/pr-validation.yml` (`native-purity` job).
+3. **Prefer rich return values over logger injection** — return a struct describing what happened (e.g., `{ commands, rejects }` or `{ valid, reason }`) and let the MIXED caller log at the boundary with `ESP_LOGW`/`ESP_LOGE`. Only reach for `lib_native/AstrOsLogging`'s `AstrOsLogger` struct when diagnostics truly must live next to the logic (tight loops, complex internal state).
 4. **Add native tests** under `test/test_native/` — the `[env:test]` target auto-discovers them.
 
 ### Runtime roles: master vs padawan
@@ -118,7 +119,7 @@ An April 2026 code review (`.docs/code-review/code-review.md`) catalogs several 
 
 - `main.cpp` timer callbacks (`pollingTimerCallback`, `animationTimerCallback`) — leak hazards + stack pressure.
 - `AstrOsEspNow` peer list — no mutex protecting `peers` vector.
-- `AnimationController` — some state fields read outside the mutex; `CommandTemplate *` returned by raw pointer with caller-owns-delete contract.
+- `AnimationController` — some state fields read outside the mutex.
 - `NvsManager.c` `setKeyId` — assumes peer index < 100.
 - Globals in `main.cpp` (`displayTimeout`, `discoveryMode`, `isMasterNode`, `rank`, `maestroModules`) — accessed cross-core without synchronisation.
 

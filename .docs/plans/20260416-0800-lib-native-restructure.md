@@ -102,14 +102,14 @@ Test cases:
 
 ## Task checklist
 
-- [ ] Task 1: Create `lib_native/` directory, `git mv` the 4 PURE libs there
-- [ ] Task 2: Update `platformio.ini` with `lib_extra_dirs = lib_native`
-- [ ] Task 3: Update CI purity guard paths in `pr-validation.yml`
-- [ ] Task 4: Verify existing tests + builds pass after the move (no new code, just paths)
-- [ ] Task 5: Extract command classes into `lib_native/AstrOsAnimationCommands` (new lib + README)
-- [ ] Task 6: Update `AnimationController` and `Modules` consumers for new include paths
-- [ ] Task 7: Add native tests for `AstrOsAnimationCommands`
-- [ ] Task 8: Update CLAUDE.md with new paths + lib classification
+- [x] Task 1: Create `lib_native/` directory, `git mv` the 4 PURE libs there
+- [x] Task 2: Update `platformio.ini` with `lib_extra_dirs = lib_native`
+- [x] Task 3: Update CI purity guard paths in `pr-validation.yml`
+- [x] Task 4: Verify existing tests + builds pass after the move (no new code, just paths)
+- [x] Task 5: Extract command classes into `lib_native/AstrOsAnimationCommands` (new lib + README)
+- [x] Task 6: Update `AnimationController` and `Modules` consumers for new include paths
+- [x] Task 7: Add native tests for `AstrOsAnimationCommands`
+- [x] Task 8: Update CLAUDE.md with new paths + lib classification
 
 ## Verification
 
