@@ -140,7 +140,7 @@ void AnimationController::loadNextScript()
     ESP_LOGI(TAG, "Loaded: %s", script.c_str());
     ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
 
-    this->scriptLoaded.store(true);
+    this->scriptLoaded.store(!this->scriptEvents.empty());
     xSemaphoreGive(this->animationMutex);
 }
 
