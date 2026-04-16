@@ -74,10 +74,11 @@ Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles u
 | `lib_native/AstrOsUtility` | PURE | String, path (`AstrOsPathUtils`), servo, and file utilities. |
 | `lib_native/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
 | `lib_native/AstrOsAnimationCommands` | PURE | Pipe-delimited command template parsers (`AnimationCommand`, `SerialCommand`, `I2cCommand`, `GpioCommand`, `MaestroCommand`). Used by both `AnimationController` and `Modules`. |
+| `lib_native/AstrOsAnimationEngine` | PURE | Script parsing, script-ID circular queue (`ScriptQueue`), and event dispatch (`getNextCommand`). The pure orchestration logic behind `AnimationController`. |
 | `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
 | `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
 | `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. |
-| `lib/AnimationController` | MIXED | Loads scripts, computes the next command, pushes commands onto hardware queues. Uses a FreeRTOS mutex (`animationMutex`) around `scriptEvents`. |
+| `lib/AnimationController` | MIXED | Thin adapter: wraps `AstrOsAnimationEngine` with a FreeRTOS mutex (`animationMutex`) and atomic flags. Owns file I/O (script loading via `AstrOsStorageManager`) and the panic-stop safety contract. |
 | `lib/AstrOsStorageManager` | MIXED | NVS for config + FAT/SD for scripts. Exposes `AstrOs_Storage` singleton. Peer configs, service config, controller fingerprint. |
 | `lib/Modules` | MIXED | Hardware abstractions: `SerialModule`, `I2cModule`, `GpioModule`, `MaestroModule`. Each owns a queue-consumer loop. |
 | `lib/AstrOsDisplay` | MIXED | SSD1306 OLED rendering. Pushes `queue_msg_t` entries into the `i2cQueue`. |

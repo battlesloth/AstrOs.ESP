@@ -31,11 +31,11 @@ Three pure components:
 
 ## Task checklist
 
-- [ ] Task 1: Create `lib_native/AstrOsAnimationEngine` with README + the three components
-- [ ] Task 2: Rewrite AnimationController as thin adapter using the new lib
-- [ ] Task 3: Add native tests for all three components
-- [ ] Task 4: Register with CI purity guard + update CLAUDE.md
-- [ ] Task 5: Verify tests + builds
+- [x] Task 1: Create `lib_native/AstrOsAnimationEngine` with README + the three components
+- [x] Task 2: Rewrite AnimationController as thin adapter using the new lib
+- [x] Task 3: Add native tests for all three components
+- [x] Task 4: Register with CI purity guard + update CLAUDE.md
+- [x] Task 5: Verify tests + builds
 
 ## Verification
 
