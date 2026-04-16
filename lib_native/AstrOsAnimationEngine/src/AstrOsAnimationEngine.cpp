@@ -37,20 +37,11 @@ namespace AstrOsAnimationEngine
             return result;
         }
 
-        if (events.size() == 1)
-        {
-            result.command = events.back().GetCommandTemplatePtr();
-            events.pop_back();
-            result.delayMs = 0;
-            result.scriptDone = true;
-            return result;
-        }
-
         const int duration = events.back().duration;
         result.delayMs = duration < 10 ? 10 : duration;
         result.command = events.back().GetCommandTemplatePtr();
         events.pop_back();
-        result.scriptDone = false;
+        result.scriptDone = events.empty();
         return result;
     }
 

@@ -49,8 +49,10 @@ TEST(AnimationEngine, GetNextCommandFromEmptyEventsReturnsDone)
     EXPECT_EQ(0, result.delayMs);
 }
 
-TEST(AnimationEngine, GetNextCommandSingleEventReturnsDone)
+TEST(AnimationEngine, GetNextCommandSingleEventReturnsDoneWithDelay)
 {
+    // Last event's duration is preserved as delayMs for cross-controller
+    // sync — the dispatch task sleeps this long before entering idle.
     auto events = AstrOsAnimationEngine::parseAnimationScript("1|500|0|c|3|75|100|50");
     ASSERT_EQ(1u, events.size());
 
@@ -58,7 +60,7 @@ TEST(AnimationEngine, GetNextCommandSingleEventReturnsDone)
 
     EXPECT_EQ(MODULE_TYPE::MAESTRO, result.command->type);
     EXPECT_TRUE(result.scriptDone);
-    EXPECT_EQ(0, result.delayMs);
+    EXPECT_EQ(500, result.delayMs);
     EXPECT_TRUE(events.empty());
 }
 
@@ -87,22 +89,27 @@ TEST(AnimationEngine, GetNextCommandMinimumDelay10ms)
 
 TEST(AnimationEngine, GetNextCommandDispatchesFullScript)
 {
+    // Script: GPIO(100ms) ; Maestro(500ms) ; Serial(200ms)
+    // Dispatch order matches script order (reversed internally).
     auto events = AstrOsAnimationEngine::parseAnimationScript("5|100|2|1|1;1|500|0|c|3|75|100|50;3|200|1|1|9600|hi");
     ASSERT_EQ(3u, events.size());
 
-    // First dispatch — 2 remaining
+    // First dispatch (GPIO, 100ms delay) — 2 remaining
     auto r1 = AstrOsAnimationEngine::getNextCommand(events);
     EXPECT_FALSE(r1.scriptDone);
+    EXPECT_EQ(100, r1.delayMs);
     EXPECT_EQ(2u, events.size());
 
-    // Second dispatch — 1 remaining
+    // Second dispatch (Maestro, 500ms delay) — 1 remaining
     auto r2 = AstrOsAnimationEngine::getNextCommand(events);
     EXPECT_FALSE(r2.scriptDone);
+    EXPECT_EQ(500, r2.delayMs);
     EXPECT_EQ(1u, events.size());
 
-    // Third dispatch — done
+    // Third dispatch (Serial, 200ms sync delay) — done
     auto r3 = AstrOsAnimationEngine::getNextCommand(events);
     EXPECT_TRUE(r3.scriptDone);
+    EXPECT_EQ(200, r3.delayMs);
     EXPECT_TRUE(events.empty());
 }
 

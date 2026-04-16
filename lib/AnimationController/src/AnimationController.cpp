@@ -176,13 +176,11 @@ std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 
     auto result = AstrOsAnimationEngine::getNextCommand(this->scriptEvents);
 
+    this->delayTillNextEvent.store(result.delayMs);
+
     if (result.scriptDone)
     {
         this->scriptLoaded.store(false);
-    }
-    else
-    {
-        this->delayTillNextEvent.store(result.delayMs);
     }
 
     xSemaphoreGive(this->animationMutex);
