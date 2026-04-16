@@ -138,7 +138,7 @@ void AnimationController::loadNextScript()
     this->scriptEvents = AstrOsAnimationEngine::parseAnimationScript(script);
 
     ESP_LOGI(TAG, "Loaded: %s", script.c_str());
-    ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
+    ESP_LOGI(TAG, "Events loaded: %zu", this->scriptEvents.size());
 
     this->scriptLoaded.store(!this->scriptEvents.empty());
     xSemaphoreGive(this->animationMutex);
