@@ -16,17 +16,21 @@ namespace AstrOsEspNowPeers
 
     AddResult PeerList::add(const espnow_peer_t &peer)
     {
-        if (isFull())
-        {
-            return AddResult::Full;
-        }
-
+        // Check for duplicates BEFORE the capacity guard so idempotent
+        // re-registration keeps working in a full mesh — a padawan
+        // re-sending REGISTRATION_SYNC after all PEER_LIMIT slots are
+        // already taken should hit the AlreadyExists path, not Full.
         for (const auto &existing : peers_)
         {
             if (std::memcmp(existing.mac_addr, peer.mac_addr, ESPNOW_ETH_MAC_LEN) == 0)
             {
                 return AddResult::AlreadyExists;
             }
+        }
+
+        if (isFull())
+        {
+            return AddResult::Full;
         }
 
         peers_.push_back(peer);

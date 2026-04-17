@@ -66,6 +66,22 @@ TEST(PeerList, AddReturnsFullAtCapacity)
     EXPECT_EQ(static_cast<std::size_t>(ESPNOW_PEER_LIMIT), list.size());
 }
 
+TEST(PeerList, AddDuplicateAtCapacityStillReturnsAlreadyExists)
+{
+    // Idempotent re-registration has to keep working when the mesh is at
+    // capacity — otherwise a padawan that re-sends REGISTRATION_SYNC gets
+    // a Full response even though it's already on the list.
+    PeerList list;
+    for (std::size_t i = 0; i < ESPNOW_PEER_LIMIT; ++i)
+    {
+        ASSERT_EQ(AddResult::Added, list.add(makePeer(static_cast<uint8_t>(i + 1))));
+    }
+    ASSERT_TRUE(list.isFull());
+
+    EXPECT_EQ(AddResult::AlreadyExists, list.add(makePeer(0x01, "re-registration")));
+    EXPECT_EQ(static_cast<std::size_t>(ESPNOW_PEER_LIMIT), list.size());
+}
+
 // ---------------- contains / findByMac ----------------
 
 TEST(PeerList, ContainsHitAndMiss)
