@@ -75,9 +75,10 @@ Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles u
 | `lib_native/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
 | `lib_native/AstrOsAnimationCommands` | PURE | Pipe-delimited command template parsers (`AnimationCommand`, `SerialCommand`, `I2cCommand`, `GpioCommand`, `MaestroCommand`). Used by both `AnimationController` and `Modules`. |
 | `lib_native/AstrOsAnimationEngine` | PURE | Script parsing, script-ID circular queue (`ScriptQueue`), and event dispatch (`getNextCommand`). The pure orchestration logic behind `AnimationController`. |
+| `lib_native/AstrOsEspNowProtocol` | PURE | Decodes validated ESP-NOW packets into `HandlerResult { InterfaceMessage, diagnostic }` records. Dispatches by packet type and enforces role gating on master-vs-padawan-only types; peer-state-entangled handlers (registration, poll) remain in `AstrOsEspNow`. |
 | `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
 | `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
-| `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. |
+| `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. Single-record packet decoding delegates to `AstrOsEspNowProtocol`. |
 | `lib/AnimationController` | MIXED | Thin adapter: wraps `AstrOsAnimationEngine` with a FreeRTOS mutex (`animationMutex`) and atomic flags. Owns file I/O (script loading via `AstrOsStorageManager`) and the panic-stop safety contract. |
 | `lib/AstrOsStorageManager` | MIXED | NVS for config + FAT/SD for scripts. Exposes `AstrOs_Storage` singleton. Peer configs, service config, controller fingerprint. |
 | `lib/Modules` | MIXED | Hardware abstractions: `SerialModule`, `I2cModule`, `GpioModule`, `MaestroModule`. Each owns a queue-consumer loop. |
