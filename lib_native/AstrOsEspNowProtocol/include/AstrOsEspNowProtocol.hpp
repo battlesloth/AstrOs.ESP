@@ -38,12 +38,18 @@ namespace AstrOsEspNowProtocol
     // Decodes an already-parsed, already-validated ESP-NOW packet.
     // Returns an InterfaceMessage for the MIXED adapter to forward to
     // its interface queue, or a Pending/error status with a diagnostic.
-    // `tracker` is mutated for multi-packet messages.
-    HandlerResult handlePacket(const astros_packet_t &packet, PacketTracker &tracker, bool isMasterNode);
+    // `tracker` is mutated for multi-packet messages; `nowMs` is the
+    // current monotonic time in milliseconds (on-target: esp_timer_get_time() / 1000).
+    HandlerResult handlePacket(const astros_packet_t &packet, PacketTracker &tracker, bool isMasterNode, int nowMs);
 
     // Maps a packet type to the interface-response type used when a
     // handler succeeds. Returns UNKNOWN for types this phase does not
     // handle (registration, poll, poll-ack).
     AstrOsInterfaceResponseType mapResponseType(AstrOsPacketType packetType);
+
+    // Returns the assembled payload for `packet`, or std::nullopt when
+    // multi-packet reassembly is still pending. Single-packet messages
+    // return immediately. Multi-packet messages mutate `tracker`.
+    std::optional<std::string> extractPayload(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
 
 } // namespace AstrOsEspNowProtocol
