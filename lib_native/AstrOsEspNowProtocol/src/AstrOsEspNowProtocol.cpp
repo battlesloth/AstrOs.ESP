@@ -213,10 +213,76 @@ namespace AstrOsEspNowProtocol
         return ok(InterfaceMessage{AstrOsInterfaceResponseType::SERVO_TEST, parts[1], "", "", parts[2]});
     }
 
-    HandlerResult handlePacket(const astros_packet_t & /*packet*/, PacketTracker & /*tracker*/, bool /*isMasterNode*/,
-                               int /*nowMs*/)
+    HandlerResult handleBasicAckNak(const astros_packet_t &packet)
     {
-        return HandlerResult{HandlerStatus::UnknownType, std::nullopt, ""};
+        auto payload = std::string(reinterpret_cast<const char *>(packet.payload), packet.payloadSize);
+
+        // 0 = peer mac, 1 = peer name, 2 = origination msgId, 3 = optional message (default "na")
+        auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+        if (parts.size() < 3)
+        {
+            return invalid("basic ack/nak", payload);
+        }
+
+        std::string message = parts.size() > 3 ? parts[3] : std::string("na");
+
+        return ok(InterfaceMessage{mapResponseType(packet.packetType), parts[2], parts[0], parts[1], message});
+    }
+
+    namespace
+    {
+        HandlerResult unsupportedOrWrongRole(bool roleMatches)
+        {
+            return {roleMatches ? HandlerStatus::UnsupportedType : HandlerStatus::WrongRole, std::nullopt, ""};
+        }
+    } // namespace
+
+    HandlerResult handlePacket(const astros_packet_t &packet, PacketTracker &tracker, bool isMasterNode, int nowMs)
+    {
+        switch (packet.packetType)
+        {
+        // Peer-state-entangled handlers, deferred to Phase 2. The dispatcher
+        // still enforces role gating here so the MIXED adapter can rely on a
+        // single rule: UnsupportedType means "fall through to residual switch".
+        case AstrOsPacketType::REGISTRATION_REQ:
+        case AstrOsPacketType::REGISTRATION_ACK:
+        case AstrOsPacketType::POLL_ACK:
+            return unsupportedOrWrongRole(isMasterNode);
+        case AstrOsPacketType::REGISTRATION:
+        case AstrOsPacketType::POLL:
+            return unsupportedOrWrongRole(!isMasterNode);
+
+        // Single-record handlers extracted in Phase 1.
+        case AstrOsPacketType::CONFIG:
+            return handleConfig(packet, tracker, nowMs);
+        case AstrOsPacketType::CONFIG_ACK:
+        case AstrOsPacketType::CONFIG_NAK:
+            return handleConfigAckNak(packet);
+        case AstrOsPacketType::SCRIPT_DEPLOY:
+            return handleScriptDeploy(packet, tracker, nowMs);
+        case AstrOsPacketType::SCRIPT_RUN:
+            return handleScriptRun(packet, tracker, nowMs);
+        case AstrOsPacketType::PANIC_STOP:
+            return handlePanicStop(packet, tracker, nowMs);
+        case AstrOsPacketType::FORMAT_SD:
+            return handleFormatSD(packet, tracker, nowMs);
+        case AstrOsPacketType::COMMAND_RUN:
+            return handleCommandRun(packet, tracker, nowMs);
+        case AstrOsPacketType::SERVO_TEST:
+            return handleServoTest(packet, tracker, nowMs);
+
+        case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
+        case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
+        case AstrOsPacketType::SCRIPT_RUN_ACK:
+        case AstrOsPacketType::SCRIPT_RUN_NAK:
+        case AstrOsPacketType::FORMAT_SD_ACK:
+        case AstrOsPacketType::FORMAT_SD_NAK:
+        case AstrOsPacketType::SERVO_TEST_ACK:
+            return handleBasicAckNak(packet);
+
+        default:
+            return {HandlerStatus::UnknownType, std::nullopt, ""};
+        }
     }
 
 } // namespace AstrOsEspNowProtocol

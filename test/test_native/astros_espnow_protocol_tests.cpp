@@ -393,3 +393,196 @@ TEST(EspNowProtocol, HandleServoTestShortPayloadIsInvalid)
     EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::InvalidPayload, result.status);
     EXPECT_NE(std::string::npos, result.diagnostic.find("servo test"));
 }
+
+// ---------------- handleBasicAckNak ----------------
+
+TEST(EspNowProtocol, HandleBasicAckNakFourPartsProducesInterfaceMessage)
+{
+    auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "padawan-1", "msg-42", "details"});
+    auto packet = makePacket("bank000000000000", payload, AstrOsPacketType::SCRIPT_DEPLOY_ACK);
+
+    auto result = AstrOsEspNowProtocol::handleBasicAckNak(packet);
+
+    ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, result.status);
+    EXPECT_EQ(AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK, result.message->responseType);
+    EXPECT_EQ("msg-42", result.message->msgId);
+    EXPECT_EQ("aa:bb:cc:dd:ee:ff", result.message->peerMac);
+    EXPECT_EQ("padawan-1", result.message->peerName);
+    EXPECT_EQ("details", result.message->message);
+}
+
+TEST(EspNowProtocol, HandleBasicAckNakThreePartsDefaultsMessageToNa)
+{
+    auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "padawan-1", "msg-42"});
+    auto packet = makePacket("bank000000000000", payload, AstrOsPacketType::SERVO_TEST_ACK);
+
+    auto result = AstrOsEspNowProtocol::handleBasicAckNak(packet);
+
+    ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, result.status);
+    EXPECT_EQ("na", result.message->message);
+}
+
+TEST(EspNowProtocol, HandleBasicAckNakShortPayloadIsInvalid)
+{
+    auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "padawan-1"});
+    auto packet = makePacket("bank000000000000", payload, AstrOsPacketType::SCRIPT_DEPLOY_NAK);
+
+    auto result = AstrOsEspNowProtocol::handleBasicAckNak(packet);
+
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::InvalidPayload, result.status);
+    EXPECT_NE(std::string::npos, result.diagnostic.find("basic ack/nak"));
+}
+
+// ---------------- handlePacket (dispatcher) ----------------
+
+TEST(EspNowProtocol, DispatcherRoutesSingleRecordTypesToTheirHandlers)
+{
+    auto tracker = PacketTracker();
+    struct Case
+    {
+        AstrOsPacketType in;
+        AstrOsInterfaceResponseType expected;
+    };
+    const Case cases[] = {
+        {AstrOsPacketType::CONFIG, AstrOsInterfaceResponseType::SET_CONFIG},
+        {AstrOsPacketType::SCRIPT_RUN, AstrOsInterfaceResponseType::SCRIPT_RUN},
+        {AstrOsPacketType::PANIC_STOP, AstrOsInterfaceResponseType::PANIC_STOP},
+        {AstrOsPacketType::FORMAT_SD, AstrOsInterfaceResponseType::FORMAT_SD},
+        {AstrOsPacketType::COMMAND_RUN, AstrOsInterfaceResponseType::COMMAND},
+        {AstrOsPacketType::SERVO_TEST, AstrOsInterfaceResponseType::SERVO_TEST},
+    };
+
+    for (const auto &c : cases)
+    {
+        auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "msg-42", "body"});
+        auto packet = makePacket("disp000000000000", payload, c.in);
+
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, false, 1000);
+
+        ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, result.status) << "packetType=" << static_cast<int>(c.in);
+        EXPECT_EQ(c.expected, result.message->responseType) << "packetType=" << static_cast<int>(c.in);
+    }
+}
+
+TEST(EspNowProtocol, DispatcherRoutesAckNakTypesToBasicAckNakHandler)
+{
+    auto tracker = PacketTracker();
+    auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "padawan-1", "msg-42", "ok"});
+
+    struct Case
+    {
+        AstrOsPacketType in;
+        AstrOsInterfaceResponseType expected;
+    };
+    // SERVO_TEST_ACK is dispatched to handleBasicAckNak but mapResponseType
+    // returns UNKNOWN for it — faithful port of the original switch at
+    // AstrOsEspNowService.cpp:1133-1156, which has no SERVO_TEST_ACK case.
+    // Preserving that behaviour here; the gap is tracked as a Phase 2 concern.
+    const Case cases[] = {
+        {AstrOsPacketType::SCRIPT_DEPLOY_ACK, AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK},
+        {AstrOsPacketType::SCRIPT_DEPLOY_NAK, AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK},
+        {AstrOsPacketType::SCRIPT_RUN_ACK, AstrOsInterfaceResponseType::SCRIPT_RUN_ACK},
+        {AstrOsPacketType::SCRIPT_RUN_NAK, AstrOsInterfaceResponseType::SCRIPT_RUN_NAK},
+        {AstrOsPacketType::FORMAT_SD_ACK, AstrOsInterfaceResponseType::FORMAT_SD_ACK},
+        {AstrOsPacketType::FORMAT_SD_NAK, AstrOsInterfaceResponseType::FORMAT_SD_NAK},
+        {AstrOsPacketType::SERVO_TEST_ACK, AstrOsInterfaceResponseType::UNKNOWN},
+    };
+
+    for (const auto &c : cases)
+    {
+        auto packet = makePacket("disp000000000000", payload, c.in);
+
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, true, 1000);
+
+        ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, result.status) << "packetType=" << static_cast<int>(c.in);
+        EXPECT_EQ(c.expected, result.message->responseType) << "packetType=" << static_cast<int>(c.in);
+    }
+}
+
+TEST(EspNowProtocol, DispatcherRoutesConfigAckNakToConfigAckNakHandler)
+{
+    auto tracker = PacketTracker();
+    auto payload = joinUnits({"aa:bb:cc:dd:ee:ff", "msg-42", "padawan-1", "body"});
+
+    auto ack = makePacket("disp000000000000", payload, AstrOsPacketType::CONFIG_ACK);
+    auto ackResult = AstrOsEspNowProtocol::handlePacket(ack, tracker, true, 1000);
+    ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, ackResult.status);
+    EXPECT_EQ(AstrOsInterfaceResponseType::SEND_CONFIG_ACK, ackResult.message->responseType);
+
+    auto nak = makePacket("disp000000000000", payload, AstrOsPacketType::CONFIG_NAK);
+    auto nakResult = AstrOsEspNowProtocol::handlePacket(nak, tracker, true, 1000);
+    ASSERT_EQ(AstrOsEspNowProtocol::HandlerStatus::Ok, nakResult.status);
+    EXPECT_EQ(AstrOsInterfaceResponseType::SEND_CONFIG_NAK, nakResult.message->responseType);
+}
+
+TEST(EspNowProtocol, DispatcherReturnsUnsupportedTypeForDeferredTypesInCorrectRole)
+{
+    auto tracker = PacketTracker();
+    std::string empty;
+
+    // Master-only types, master role -> UnsupportedType (Phase 2 handles).
+    for (auto type :
+         {AstrOsPacketType::REGISTRATION_REQ, AstrOsPacketType::REGISTRATION_ACK, AstrOsPacketType::POLL_ACK})
+    {
+        auto packet = makePacket("disp000000000000", empty, type);
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, true, 1000);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, result.status)
+            << "packetType=" << static_cast<int>(type);
+    }
+
+    // Padawan-only types, padawan role -> UnsupportedType.
+    for (auto type : {AstrOsPacketType::REGISTRATION, AstrOsPacketType::POLL})
+    {
+        auto packet = makePacket("disp000000000000", empty, type);
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, false, 1000);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, result.status)
+            << "packetType=" << static_cast<int>(type);
+    }
+}
+
+TEST(EspNowProtocol, DispatcherReturnsWrongRoleForDeferredTypesInOppositeRole)
+{
+    auto tracker = PacketTracker();
+    std::string empty;
+
+    // Master-only types received by a padawan.
+    for (auto type :
+         {AstrOsPacketType::REGISTRATION_REQ, AstrOsPacketType::REGISTRATION_ACK, AstrOsPacketType::POLL_ACK})
+    {
+        auto packet = makePacket("disp000000000000", empty, type);
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, false, 1000);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, result.status)
+            << "packetType=" << static_cast<int>(type);
+    }
+
+    // Padawan-only types received by the master.
+    for (auto type : {AstrOsPacketType::REGISTRATION, AstrOsPacketType::POLL})
+    {
+        auto packet = makePacket("disp000000000000", empty, type);
+        auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, true, 1000);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, result.status)
+            << "packetType=" << static_cast<int>(type);
+    }
+}
+
+TEST(EspNowProtocol, DispatcherReturnsUnknownTypeForUnknownPacketType)
+{
+    auto tracker = PacketTracker();
+    std::string empty;
+    auto packet = makePacket("disp000000000000", empty, AstrOsPacketType::UNKNOWN);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, true, 1000);
+
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnknownType, result.status);
+}
+
+TEST(EspNowProtocol, DispatcherPropagatesPendingFromMultiPacketHandlers)
+{
+    auto tracker = PacketTracker();
+    std::string frag = "first-half-";
+    auto packet = makePacket("disp000000000000", frag, AstrOsPacketType::CONFIG, 1, 2);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(packet, tracker, false, 1000);
+
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::Pending, result.status);
+}

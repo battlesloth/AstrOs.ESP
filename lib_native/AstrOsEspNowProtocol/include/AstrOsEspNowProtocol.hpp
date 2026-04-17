@@ -65,5 +65,6 @@ namespace AstrOsEspNowProtocol
     HandlerResult handlePanicStop(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
     HandlerResult handleFormatSD(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
     HandlerResult handleServoTest(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleBasicAckNak(const astros_packet_t &packet);
 
 } // namespace AstrOsEspNowProtocol
