@@ -71,19 +71,7 @@ private:
     bool handleRegistrationAck(uint8_t *src, astros_packet_t packet);
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
-    bool handleConfig(astros_packet_t packet);
-    bool handleConfigAckNak(astros_packet_t packet);
-    bool handleScriptDeploy(astros_packet_t packet);
-    bool handleScriptRun(astros_packet_t packet);
-    bool handleCommandRun(astros_packet_t packet);
-    bool handlePanicStop(astros_packet_t packet);
-    bool handleFormatSD(astros_packet_t packet);
-    bool handleServoTest(astros_packet_t packet);
 
-    bool handleBasicAckNak(astros_packet_t packet);
-    AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);
-
-    std::string handleMultiPacketMessage(astros_packet_t packet);
     esp_err_t wifiInit(void);
     esp_err_t espnowInit(void);
 

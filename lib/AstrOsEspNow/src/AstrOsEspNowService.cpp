@@ -1,3 +1,4 @@
+#include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsEspNowService.hpp>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
@@ -324,72 +325,54 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
 {
     astros_packet_t packet = this->messageService.parsePacket(data);
 
+    auto result = AstrOsEspNowProtocol::handlePacket(packet, this->packetTracker, this->isMasterNode,
+                                                     esp_timer_get_time() / 1000);
+
+    switch (result.status)
+    {
+    case AstrOsEspNowProtocol::HandlerStatus::Ok:
+    {
+        auto &msg = *result.message;
+        this->sendToInterfaceQueue(msg.responseType, msg.msgId, msg.peerMac, msg.peerName, msg.message);
+        return true;
+    }
+    case AstrOsEspNowProtocol::HandlerStatus::Pending:
+        return true;
+    case AstrOsEspNowProtocol::HandlerStatus::InvalidPayload:
+        ESP_LOGE(TAG, "%s", result.diagnostic.c_str());
+        return false;
+    case AstrOsEspNowProtocol::HandlerStatus::WrongRole:
+        ESP_LOGD(TAG, "Dropping packet type %d destined for the other role", (int)packet.packetType);
+        return true;
+    case AstrOsEspNowProtocol::HandlerStatus::UnknownType:
+    {
+        ESP_LOGE(TAG, "Unknown packet type received");
+        auto preview = std::string((char *)data, len);
+        ESP_LOGI(TAG, "packet: %s", preview.c_str());
+        return false;
+    }
+    case AstrOsEspNowProtocol::HandlerStatus::UnsupportedType:
+        // Phase 2 handlers — fall through to residual switch below.
+        break;
+    }
+
     switch (packet.packetType)
     {
     case AstrOsPacketType::REGISTRATION_REQ:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistrationReq(src);
     case AstrOsPacketType::REGISTRATION:
-        if (isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistration(src, packet);
     case AstrOsPacketType::REGISTRATION_ACK:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistrationAck(src, packet);
     case AstrOsPacketType::POLL:
-        if (isMasterNode)
-        {
-            break;
-        }
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handlePollAck(packet);
-    case AstrOsPacketType::CONFIG:
-        return this->handleConfig(packet);
-    case AstrOsPacketType::CONFIG_ACK:
-    case AstrOsPacketType::CONFIG_NAK:
-        return this->handleConfigAckNak(packet);
-    case AstrOsPacketType::SCRIPT_DEPLOY:
-        return this->handleScriptDeploy(packet);
-    case AstrOsPacketType::SCRIPT_RUN:
-        return this->handleScriptRun(packet);
-    case AstrOsPacketType::PANIC_STOP:
-        return this->handlePanicStop(packet);
-    case AstrOsPacketType::FORMAT_SD:
-        return this->handleFormatSD(packet);
-    case AstrOsPacketType::COMMAND_RUN:
-        return this->handleCommandRun(packet);
-    case AstrOsPacketType::SERVO_TEST:
-        return this->handleServoTest(packet);
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-    case AstrOsPacketType::SCRIPT_RUN_ACK:
-    case AstrOsPacketType::SCRIPT_RUN_NAK:
-    case AstrOsPacketType::FORMAT_SD_ACK:
-    case AstrOsPacketType::FORMAT_SD_NAK:
-    case AstrOsPacketType::SERVO_TEST_ACK:
-        ESP_LOGD(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
-        return this->handleBasicAckNak(packet);
     default:
-        ESP_LOGE(TAG, "Unknown packet type received");
-        auto test = std::string((char *)data, len);
-        ESP_LOGI(TAG, "packet: %s", test.c_str());
+        ESP_LOGE(TAG, "Dispatcher returned UnsupportedType for packet type %d but no residual handler exists",
+                 (int)packet.packetType);
         return false;
     }
-
-    return true;
 }
 
 /*******************************************
@@ -765,38 +748,6 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
  * Configuration methods
  *******************************************/
 
-bool AstrOsEspNow::handleConfig(astros_packet_t packet)
-{
-
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is message
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid config payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG, parts[1], "", "", parts[2]);
-
-    return true;
-}
-
 void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
 {
     uint8_t *destMac = (uint8_t *)malloc(ESP_NOW_ETH_ALEN);
@@ -819,231 +770,6 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     free(destMac);
 }
 
-bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
-{
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    ESP_LOGD(TAG, "Config ack/nak received: %s", payload.c_str());
-
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 4)
-    {
-        ESP_LOGE(TAG, "Invalid config ack/nak payload: %s", payload.c_str());
-        return false;
-    }
-
-    auto responseType = this->getInterfaceResponseType(packet.packetType);
-
-    this->sendToInterfaceQueue(responseType, parts[1], parts[0], parts[2], parts[3]);
-
-    return true;
-}
-
-/*******************************************
- * Script Deployment methods
- *******************************************/
-
-bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId, 3 is script
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 4)
-    {
-        ESP_LOGE(TAG, "Invalid script deploy payload: %s", payload.c_str());
-        return false;
-    }
-
-    std::stringstream ss;
-    ss << parts[2] << UNIT_SEPARATOR << parts[3];
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT, parts[1], "", "", ss.str());
-
-    return true;
-}
-
-/*******************************************
- * Script Run methods
- *******************************************/
-
-bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid script run payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN, parts[1], "", "", parts[2]);
-
-    return true;
-}
-
-bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid panic stop payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP, parts[1], "", "", "");
-
-    return true;
-}
-
-/*******************************************
- * Command Run methods
- *******************************************/
-
-bool AstrOsEspNow::handleCommandRun(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is command
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid command run payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND, parts[1], "", "", parts[2]);
-
-    return true;
-}
-
-/*******************************************
- * Utility Methods
- *******************************************/
-
-bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid format sd payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD, parts[1], "", "", "");
-
-    return true;
-}
-
-bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid servo test payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST, parts[1], "", "", parts[2]);
-
-    return true;
-}
 /*******************************************
  * Common Methods
  *******************************************/
@@ -1090,92 +816,6 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
 
     free(packet.data);
     free(destMac);
-}
-
-/// @brief Handles a basic ack or nak packet and sends the response to the interface handler queue.
-/// @param packet
-/// @return
-bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
-{
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    ESP_LOGD(TAG, "Basic ack/nak received: %s", payload.c_str());
-
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid basic ack/nak payload: %s", payload.c_str());
-        return false;
-    }
-
-    std::string msg;
-
-    if (parts.size() > 3)
-    {
-        msg = parts[3];
-    }
-    else
-    {
-        msg = "na";
-    }
-
-    auto responseType = this->getInterfaceResponseType(packet.packetType);
-
-    this->sendToInterfaceQueue(responseType, parts[2], parts[0], parts[1], msg);
-
-    return true;
-}
-
-/// @brief gets the response type for the provided packet type.
-/// @param type
-/// @return
-AstrOsInterfaceResponseType AstrOsEspNow::getInterfaceResponseType(AstrOsPacketType type)
-{
-    switch (type)
-    {
-    case AstrOsPacketType::CONFIG_ACK:
-        return AstrOsInterfaceResponseType::SEND_CONFIG_ACK;
-    case AstrOsPacketType::CONFIG_NAK:
-        return AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-        return AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK;
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        return AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK;
-    case AstrOsPacketType::SCRIPT_RUN_ACK:
-        return AstrOsInterfaceResponseType::SCRIPT_RUN_ACK;
-    case AstrOsPacketType::SCRIPT_RUN_NAK:
-        return AstrOsInterfaceResponseType::SCRIPT_RUN_NAK;
-    case AstrOsPacketType::FORMAT_SD_ACK:
-        return AstrOsInterfaceResponseType::FORMAT_SD_ACK;
-    case AstrOsPacketType::FORMAT_SD_NAK:
-        return AstrOsInterfaceResponseType::FORMAT_SD_NAK;
-    default:
-        return AstrOsInterfaceResponseType::UNKNOWN;
-    }
-}
-
-/// @brief adds the payload to the packet tracker.
-/// @param packet
-/// @return if the message is complete, it returns the message, otherwise it returns an empty string.
-std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
-{
-    auto msgId = std::string((char *)packet.id, 16);
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    PacketData packetData = {
-        .packetNumber = packet.packetNumber, .totalPackets = packet.totalPackets, .payload = payload};
-
-    auto result = this->packetTracker.addPacket(msgId, packetData, esp_timer_get_time() / 1000);
-
-    ESP_LOGD(TAG, "Multi packet message added to tracker with result: %d", result);
-
-    if (result == AddPacketResult::MESSAGE_COMPLETE)
-    {
-        return this->packetTracker.getMessage(msgId);
-    }
-
-    return "";
 }
 
 /// @brief finds the peer in the peer list and sets the pollAckThisCycle flag if pollAck is true.

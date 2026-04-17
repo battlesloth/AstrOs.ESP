@@ -475,9 +475,10 @@ TEST(EspNowProtocol, DispatcherRoutesAckNakTypesToBasicAckNakHandler)
         AstrOsInterfaceResponseType expected;
     };
     // SERVO_TEST_ACK is dispatched to handleBasicAckNak but mapResponseType
-    // returns UNKNOWN for it — faithful port of the original switch at
-    // AstrOsEspNowService.cpp:1133-1156, which has no SERVO_TEST_ACK case.
-    // Preserving that behaviour here; the gap is tracked as a Phase 2 concern.
+    // returns UNKNOWN for it. This is intentional: padawans do not ACK
+    // SERVO_TEST packets because the control UI drives servos via sliders,
+    // which produces one request per tick — an ACK storm the mesh can't
+    // absorb. The dispatch case is retained for wire-format completeness.
     const Case cases[] = {
         {AstrOsPacketType::SCRIPT_DEPLOY_ACK, AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK},
         {AstrOsPacketType::SCRIPT_DEPLOY_NAK, AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK},
