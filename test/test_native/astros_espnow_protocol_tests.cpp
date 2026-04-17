@@ -61,6 +61,8 @@ TEST(EspNowProtocol, MapResponseTypeAckNakTable)
     EXPECT_EQ(AstrOsInterfaceResponseType::SCRIPT_RUN_NAK, mapResponseType(AstrOsPacketType::SCRIPT_RUN_NAK));
     EXPECT_EQ(AstrOsInterfaceResponseType::FORMAT_SD_ACK, mapResponseType(AstrOsPacketType::FORMAT_SD_ACK));
     EXPECT_EQ(AstrOsInterfaceResponseType::FORMAT_SD_NAK, mapResponseType(AstrOsPacketType::FORMAT_SD_NAK));
+    EXPECT_EQ(AstrOsInterfaceResponseType::COMMAND_ACK, mapResponseType(AstrOsPacketType::COMMAND_RUN_ACK));
+    EXPECT_EQ(AstrOsInterfaceResponseType::COMMAND_NAK, mapResponseType(AstrOsPacketType::COMMAND_RUN_NAK));
 }
 
 TEST(EspNowProtocol, MapResponseTypeReturnsUnknownForNonAckTypes)
@@ -486,6 +488,8 @@ TEST(EspNowProtocol, DispatcherRoutesAckNakTypesToBasicAckNakHandler)
         {AstrOsPacketType::SCRIPT_RUN_NAK, AstrOsInterfaceResponseType::SCRIPT_RUN_NAK},
         {AstrOsPacketType::FORMAT_SD_ACK, AstrOsInterfaceResponseType::FORMAT_SD_ACK},
         {AstrOsPacketType::FORMAT_SD_NAK, AstrOsInterfaceResponseType::FORMAT_SD_NAK},
+        {AstrOsPacketType::COMMAND_RUN_ACK, AstrOsInterfaceResponseType::COMMAND_ACK},
+        {AstrOsPacketType::COMMAND_RUN_NAK, AstrOsInterfaceResponseType::COMMAND_NAK},
         {AstrOsPacketType::SERVO_TEST_ACK, AstrOsInterfaceResponseType::UNKNOWN},
     };
 

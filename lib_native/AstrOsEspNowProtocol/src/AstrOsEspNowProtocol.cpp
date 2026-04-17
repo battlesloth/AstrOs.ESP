@@ -43,6 +43,10 @@ namespace AstrOsEspNowProtocol
             return AstrOsInterfaceResponseType::FORMAT_SD_ACK;
         case AstrOsPacketType::FORMAT_SD_NAK:
             return AstrOsInterfaceResponseType::FORMAT_SD_NAK;
+        case AstrOsPacketType::COMMAND_RUN_ACK:
+            return AstrOsInterfaceResponseType::COMMAND_ACK;
+        case AstrOsPacketType::COMMAND_RUN_NAK:
+            return AstrOsInterfaceResponseType::COMMAND_NAK;
         default:
             return AstrOsInterfaceResponseType::UNKNOWN;
         }
@@ -277,6 +281,8 @@ namespace AstrOsEspNowProtocol
         case AstrOsPacketType::SCRIPT_RUN_NAK:
         case AstrOsPacketType::FORMAT_SD_ACK:
         case AstrOsPacketType::FORMAT_SD_NAK:
+        case AstrOsPacketType::COMMAND_RUN_ACK:
+        case AstrOsPacketType::COMMAND_RUN_NAK:
         case AstrOsPacketType::SERVO_TEST_ACK:
             return handleBasicAckNak(packet);
 
