@@ -1,0 +1,28 @@
+AstrOsEspNowPeers
+=================
+
+Pure, native-testable peer list for the ESP-NOW adapter. Owns the
+vector of registered padawan peers and the per-cycle pollAck flag
+lifecycle (resetPollCycle / markPollAckReceived / listUnacked).
+
+AstrOsEspNow (MIXED) wraps PeerList with its peersMutex so every
+access is serialised; the class itself has no locks. Fixes the
+"unprotected peers vector" finding from the April 2026 code review
+by making the vector unreachable except via PeerList methods.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+Methods return enum values (AddResult), std::optional, or booleans.
+No logging. The MIXED adapter (AstrOsEspNow) logs at the boundary if
+a call returns a non-success outcome.
