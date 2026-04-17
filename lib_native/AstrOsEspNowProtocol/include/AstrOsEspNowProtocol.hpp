@@ -52,4 +52,18 @@ namespace AstrOsEspNowProtocol
     // return immediately. Multi-packet messages mutate `tracker`.
     std::optional<std::string> extractPayload(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
 
+    // Individual packet-type handlers. Exposed for direct unit testing;
+    // also used by the `handlePacket` dispatcher. `tracker` and `nowMs`
+    // are ignored by handlers that never span multiple packets (the
+    // ack/nak handlers), but are kept in the signature so the dispatcher
+    // can invoke any handler uniformly.
+    HandlerResult handleConfig(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleConfigAckNak(const astros_packet_t &packet);
+    HandlerResult handleScriptDeploy(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleScriptRun(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleCommandRun(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handlePanicStop(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleFormatSD(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+    HandlerResult handleServoTest(const astros_packet_t &packet, PacketTracker &tracker, int nowMs);
+
 } // namespace AstrOsEspNowProtocol
