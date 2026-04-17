@@ -12,13 +12,13 @@ namespace AstrOsAnimationEngine
 
         auto parts = AstrOsStringUtils::splitString(script, ';');
 
-        for (const auto &part : parts)
+        for (auto &part : parts)
         {
             if (part.empty())
             {
                 continue;
             }
-            events.emplace_back(part);
+            events.emplace_back(std::move(part));
         }
 
         std::reverse(events.begin(), events.end());
