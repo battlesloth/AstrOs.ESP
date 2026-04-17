@@ -1,9 +1,9 @@
-#include <AstrOsEspNowUtility.h>
 #include <AstrOsPathUtils.hpp>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
 #include <NvsManager.h>
+#include <espnow_peer.h>
 
 #include <errno.h>
 #include <esp_log.h>

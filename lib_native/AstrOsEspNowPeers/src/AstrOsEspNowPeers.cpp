@@ -2,20 +2,19 @@
 
 #include <AstrOsStringUtils.hpp>
 
-#include <algorithm>
 #include <cstring>
 
 namespace AstrOsEspNowPeers
 {
     namespace
     {
-        bool macEquals(const uint8_t (&macAddr)[ETH_MAC_LEN], const std::string &macString)
+        bool macEquals(const uint8_t (&macAddr)[ESPNOW_ETH_MAC_LEN], const std::string &macString)
         {
             return AstrOsStringUtils::macToString(macAddr) == macString;
         }
     } // namespace
 
-    AddResult PeerList::add(const Peer &peer)
+    AddResult PeerList::add(const espnow_peer_t &peer)
     {
         if (isFull())
         {
@@ -24,7 +23,7 @@ namespace AstrOsEspNowPeers
 
         for (const auto &existing : peers_)
         {
-            if (std::memcmp(existing.macAddr, peer.macAddr, ETH_MAC_LEN) == 0)
+            if (std::memcmp(existing.mac_addr, peer.mac_addr, ESPNOW_ETH_MAC_LEN) == 0)
             {
                 return AddResult::AlreadyExists;
             }
@@ -39,11 +38,11 @@ namespace AstrOsEspNowPeers
         return findByMac(macString).has_value();
     }
 
-    std::optional<Peer> PeerList::findByMac(const std::string &macString) const
+    std::optional<espnow_peer_t> PeerList::findByMac(const std::string &macString) const
     {
         for (const auto &p : peers_)
         {
-            if (macEquals(p.macAddr, macString))
+            if (macEquals(p.mac_addr, macString))
             {
                 return p;
             }
@@ -63,7 +62,7 @@ namespace AstrOsEspNowPeers
     {
         for (auto &p : peers_)
         {
-            if (macEquals(p.macAddr, macString))
+            if (macEquals(p.mac_addr, macString))
             {
                 p.pollAckThisCycle = true;
                 return true;
@@ -72,9 +71,9 @@ namespace AstrOsEspNowPeers
         return false;
     }
 
-    std::vector<Peer> PeerList::listUnacked() const
+    std::vector<espnow_peer_t> PeerList::listUnacked() const
     {
-        std::vector<Peer> out;
+        std::vector<espnow_peer_t> out;
         for (const auto &p : peers_)
         {
             if (!p.pollAckThisCycle)
@@ -85,7 +84,7 @@ namespace AstrOsEspNowPeers
         return out;
     }
 
-    std::vector<Peer> PeerList::all() const
+    std::vector<espnow_peer_t> PeerList::all() const
     {
         return peers_;
     }
@@ -97,7 +96,7 @@ namespace AstrOsEspNowPeers
 
     bool PeerList::isFull() const
     {
-        return peers_.size() >= PEER_LIMIT;
+        return peers_.size() >= ESPNOW_PEER_LIMIT;
     }
 
     void PeerList::clear()

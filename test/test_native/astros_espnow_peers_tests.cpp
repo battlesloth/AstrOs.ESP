@@ -9,30 +9,27 @@
 namespace
 {
     using AstrOsEspNowPeers::AddResult;
-    using AstrOsEspNowPeers::ETH_MAC_LEN;
-    using AstrOsEspNowPeers::Peer;
-    using AstrOsEspNowPeers::PEER_LIMIT;
     using AstrOsEspNowPeers::PeerList;
 
     // Builds a peer with MAC AA:BB:CC:DD:EE:{lastOctet:02X}.
-    Peer makePeer(uint8_t lastOctet, const char *name = "pad")
+    espnow_peer_t makePeer(uint8_t lastOctet, const char *name = "pad")
     {
-        Peer p{};
-        p.macAddr[0] = 0xAA;
-        p.macAddr[1] = 0xBB;
-        p.macAddr[2] = 0xCC;
-        p.macAddr[3] = 0xDD;
-        p.macAddr[4] = 0xEE;
-        p.macAddr[5] = lastOctet;
+        espnow_peer_t p{};
+        p.mac_addr[0] = 0xAA;
+        p.mac_addr[1] = 0xBB;
+        p.mac_addr[2] = 0xCC;
+        p.mac_addr[3] = 0xDD;
+        p.mac_addr[4] = 0xEE;
+        p.mac_addr[5] = lastOctet;
         std::strncpy(p.name, name, sizeof(p.name) - 1);
-        p.isPaired = true;
+        p.is_paired = true;
         return p;
     }
 
     std::string macOf(uint8_t lastOctet)
     {
-        Peer p = makePeer(lastOctet);
-        return AstrOsStringUtils::macToString(p.macAddr);
+        auto p = makePeer(lastOctet);
+        return AstrOsStringUtils::macToString(p.mac_addr);
     }
 } // namespace
 
@@ -52,7 +49,6 @@ TEST(PeerList, AddDuplicateMacReturnsAlreadyExistsAndDoesNotGrow)
     EXPECT_EQ(AddResult::AlreadyExists, list.add(makePeer(0x01, "duplicate")));
     EXPECT_EQ(1u, list.size());
 
-    // First insertion wins; the duplicate attempt does not overwrite the name.
     auto fetched = list.findByMac(macOf(0x01));
     ASSERT_TRUE(fetched.has_value());
     EXPECT_STREQ("first", fetched->name);
@@ -61,13 +57,13 @@ TEST(PeerList, AddDuplicateMacReturnsAlreadyExistsAndDoesNotGrow)
 TEST(PeerList, AddReturnsFullAtCapacity)
 {
     PeerList list;
-    for (std::size_t i = 0; i < PEER_LIMIT; ++i)
+    for (std::size_t i = 0; i < ESPNOW_PEER_LIMIT; ++i)
     {
         ASSERT_EQ(AddResult::Added, list.add(makePeer(static_cast<uint8_t>(i + 1))));
     }
     EXPECT_TRUE(list.isFull());
     EXPECT_EQ(AddResult::Full, list.add(makePeer(0xFF)));
-    EXPECT_EQ(PEER_LIMIT, list.size());
+    EXPECT_EQ(static_cast<std::size_t>(ESPNOW_PEER_LIMIT), list.size());
 }
 
 // ---------------- contains / findByMac ----------------
@@ -120,7 +116,7 @@ TEST(PeerList, MarkPollAckReceivedHitAndMiss)
 
     auto unacked = list.listUnacked();
     ASSERT_EQ(1u, unacked.size());
-    EXPECT_EQ(0x02, unacked[0].macAddr[5]);
+    EXPECT_EQ(0x02, unacked[0].mac_addr[5]);
 }
 
 TEST(PeerList, ListUnackedAfterSelectiveAcks)

@@ -1,26 +1,14 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include <espnow_peer.h>
+
 namespace AstrOsEspNowPeers
 {
-    constexpr std::size_t ETH_MAC_LEN = 6;
-    constexpr std::size_t PEER_LIMIT = 10;
-    constexpr std::size_t PEER_NAME_MAX = 16;
-
-    struct Peer
-    {
-        uint8_t macAddr[ETH_MAC_LEN] = {};
-        char name[PEER_NAME_MAX] = {};
-        char cryptoKey[PEER_NAME_MAX] = {};
-        bool isPaired = false;
-        bool pollAckThisCycle = false;
-    };
-
     enum class AddResult
     {
         Added,
@@ -35,10 +23,10 @@ namespace AstrOsEspNowPeers
     class PeerList
     {
     public:
-        AddResult add(const Peer &peer);
+        AddResult add(const espnow_peer_t &peer);
 
         bool contains(const std::string &macString) const;
-        std::optional<Peer> findByMac(const std::string &macString) const;
+        std::optional<espnow_peer_t> findByMac(const std::string &macString) const;
 
         // Start of a new poll cycle: clears every peer's pollAckThisCycle flag.
         void resetPollCycle();
@@ -49,17 +37,17 @@ namespace AstrOsEspNowPeers
 
         // Peers whose pollAckThisCycle flag is still false. Returns copies
         // so the caller can release the mutex before acting on the list.
-        std::vector<Peer> listUnacked() const;
+        std::vector<espnow_peer_t> listUnacked() const;
 
         // Full snapshot for display / adapter::getPeers(). Returns a copy.
-        std::vector<Peer> all() const;
+        std::vector<espnow_peer_t> all() const;
 
         std::size_t size() const;
         bool isFull() const;
         void clear();
 
     private:
-        std::vector<Peer> peers_;
+        std::vector<espnow_peer_t> peers_;
     };
 
 } // namespace AstrOsEspNowPeers

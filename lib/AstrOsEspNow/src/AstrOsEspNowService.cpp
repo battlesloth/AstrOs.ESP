@@ -133,7 +133,7 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
             ESP_LOGE(TAG, "init: failed to acquire peersMutex within 1s");
             return ESP_FAIL;
         }
-        peers.push_back(peer);
+        peers.add(peer);
         xSemaphoreGive(this->peersMutex);
     }
 
@@ -224,7 +224,7 @@ bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
 {
     // Populate the new peer struct before taking the lock so we hold it
     // as briefly as possible.
-    espnow_peer_t newPeer;
+    espnow_peer_t newPeer{};
     size_t nameLen = std::min(name.length(), (size_t)15);
     memcpy(newPeer.name, name.c_str(), nameLen);
     newPeer.name[nameLen] = '\0';
@@ -238,34 +238,29 @@ bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
         return false;
     }
 
-    if (peers.size() >= 10)
-    {
-        xSemaphoreGive(this->peersMutex);
-        ESP_LOGE(TAG, "Peer cache is full");
-        return false;
-    }
-
-    for (auto &peer : peers)
-    {
-        if (memcmp(peer.mac_addr, macAddress, ESP_NOW_ETH_ALEN) == 0)
-        {
-            xSemaphoreGive(this->peersMutex);
-            ESP_LOGW(TAG, "Peer already cached");
-            return true;
-        }
-    }
-
-    // peer id is 0 indexed
+    // peer id is 0 indexed (legacy field; written for back-compat with NVS
+    // reads even though nothing reads it today).
     newPeer.id = peers.size();
-    peers.push_back(newPeer);
+    auto result = peers.add(newPeer);
 
     xSemaphoreGive(this->peersMutex);
 
-    // NOTE: cachePeerCallback is invoked OUTSIDE the lock to avoid lock-order
-    // inversion with the storage-manager's internal synchronization — calling
-    // it under peersMutex could deadlock if another task holds the storage
-    // mutex and tries to take peersMutex in the opposite order.
-    return this->cachePeerCallback(newPeer);
+    switch (result)
+    {
+    case AstrOsEspNowPeers::AddResult::Full:
+        ESP_LOGE(TAG, "Peer cache is full");
+        return false;
+    case AstrOsEspNowPeers::AddResult::AlreadyExists:
+        ESP_LOGW(TAG, "Peer already cached");
+        return true;
+    case AstrOsEspNowPeers::AddResult::Added:
+        // NOTE: cachePeerCallback is invoked OUTSIDE the lock to avoid lock-order
+        // inversion with the storage-manager's internal synchronization — calling
+        // it under peersMutex could deadlock if another task holds the storage
+        // mutex and tries to take peersMutex in the opposite order.
+        return this->cachePeerCallback(newPeer);
+    }
+    return false;
 }
 
 std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
@@ -282,12 +277,13 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
         return result;
     }
 
-    for (auto &peer : peers)
+    auto snapshot = peers.all();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : snapshot)
     {
         result.push_back(peer);
     }
-
-    xSemaphoreGive(this->peersMutex);
     return result;
 }
 
@@ -434,19 +430,16 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
         return false;
     }
 
-    auto s = this->peers.size();
-
-    // if the mac is already in the peer cache, then use the existing name, otherwise assign a new name based on the
-    // number of peers
-    auto it = std::find_if(this->peers.begin(), this->peers.end(), [&](const espnow_peer_t &p)
-                           { return AstrOsStringUtils::macToString(p.mac_addr) == macStr; });
-    if (it != this->peers.end())
+    // if the mac is already in the peer cache, use the existing name;
+    // otherwise assign a new name based on the current peer count.
+    auto existing = this->peers.findByMac(macStr);
+    if (existing.has_value())
     {
-        padawanName = it->name;
+        padawanName = existing->name;
     }
     else
     {
-        switch (s)
+        switch (this->peers.size())
         {
         case 0:
             padawanName = "Ashoka";
@@ -612,41 +605,32 @@ bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
 
 void AstrOsEspNow::pollPadawans()
 {
-    // Collect MAC addresses and reset the per-peer flag under the lock, then
-    // call esp_now_send outside to avoid holding peersMutex across the driver
-    // call (esp_now_send is async/queued, but keeping lock scope minimal is
-    // safer for priority and latency).
-    std::vector<std::array<uint8_t, ESP_NOW_ETH_ALEN>> macsToPoll;
-
+    // Reset pollAck flags + snapshot the peer list under the lock, then
+    // call esp_now_send outside to avoid holding peersMutex across the
+    // driver call (keeping lock scope minimal is safer for priority and
+    // latency).
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
         ESP_LOGE(TAG, "pollPadawans: failed to acquire peersMutex within 1s");
         return;
     }
 
-    for (auto &peer : peers)
+    peers.resetPollCycle();
+    auto snapshot = peers.all();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : snapshot)
     {
         if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
         {
             continue;
         }
 
-        peer.pollAckThisCycle = false;
-
-        std::array<uint8_t, ESP_NOW_ETH_ALEN> mac;
-        memcpy(mac.data(), peer.mac_addr, ESP_NOW_ETH_ALEN);
-        macsToPoll.push_back(mac);
-    }
-
-    xSemaphoreGive(this->peersMutex);
-
-    for (auto &mac : macsToPoll)
-    {
         astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL, this->mac)[0];
 
-        if (esp_now_send(mac.data(), data.data, data.size) != ESP_OK)
+        if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
-            ESP_LOGE(TAG, "Error sending poll message to " MACSTR, MAC2STR(mac.data()));
+            ESP_LOGE(TAG, "Error sending poll message to " MACSTR, MAC2STR(peer.mac_addr));
         }
 
         free(data.data);
@@ -701,7 +685,15 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawan = parts[1];
     auto fingerprint = parts[2];
 
-    if (!this->isValidPollPeer(padawanMac))
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "handlePollAck: failed to acquire peersMutex within 1s");
+        return false;
+    }
+    bool known = this->peers.markPollAckReceived(padawanMac);
+    xSemaphoreGive(this->peersMutex);
+
+    if (!known)
     {
         ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
@@ -720,28 +712,23 @@ void AstrOsEspNow::pollRepsonseTimeExpired()
         return;
     }
 
-    for (auto &peer : peers)
+    auto unacked = peers.listUnacked();
+    peers.resetPollCycle();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : unacked)
     {
         if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
         {
             continue;
         }
 
-        if (!peer.pollAckThisCycle)
-        {
-            ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
+        ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
 
-            auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
+        auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
-            this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK, "", macStr, peer.name, "");
-        }
-        else
-        {
-            peer.pollAckThisCycle = false;
-        }
+        this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK, "", macStr, peer.name, "");
     }
-
-    xSemaphoreGive(this->peersMutex);
 }
 
 /*******************************************
@@ -818,9 +805,8 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
     free(destMac);
 }
 
-/// @brief finds the peer in the peer list and sets the pollAckThisCycle flag if pollAck is true.
+/// @brief checks whether the given MAC (canonical "AA:BB:..." string) is in the peer list.
 /// @param peerMac
-/// @param pollAck
 /// @return
 bool AstrOsEspNow::findPeer(std::string peerMac)
 {
@@ -830,43 +816,9 @@ bool AstrOsEspNow::findPeer(std::string peerMac)
         return false;
     }
 
-    for (auto &p : peers)
-    {
-        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (pMac == peerMac)
-        {
-            xSemaphoreGive(this->peersMutex);
-            return true;
-        }
-    }
-
+    bool found = this->peers.contains(peerMac);
     xSemaphoreGive(this->peersMutex);
-    return false;
-}
-
-bool AstrOsEspNow::isValidPollPeer(std::string peerMac)
-{
-    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
-    {
-        ESP_LOGE(TAG, "isValidPollPeer: failed to acquire peersMutex within 1s");
-        return false;
-    }
-
-    for (auto &p : peers)
-    {
-        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (pMac == peerMac)
-        {
-            p.pollAckThisCycle = true;
-            xSemaphoreGive(this->peersMutex);
-            return true;
-        }
-    }
-
-    xSemaphoreGive(this->peersMutex);
-    return false;
+    return found;
 }
 
 /// @brief sends an esp now message to the provided peer.

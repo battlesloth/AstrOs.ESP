@@ -3,6 +3,7 @@
 
 #include "AstrOsEspNowUtility.h"
 #include "AstrOsMessaging.hpp"
+#include <AstrOsEspNowPeers.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <esp_err.h>
 
@@ -39,7 +40,7 @@ private:
     uint8_t masterMac[ESP_NOW_ETH_ALEN];
     bool isMasterNode;
     std::string mac;
-    std::vector<espnow_peer_t> peers;
+    AstrOsEspNowPeers::PeerList peers;
     SemaphoreHandle_t peersMutex;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
@@ -54,7 +55,6 @@ private:
     esp_err_t addPeer(uint8_t *macAddress);
     bool cachePeer(uint8_t *macAddress, std::string name);
     bool findPeer(std::string peer);
-    bool isValidPollPeer(std::string peer);
 
     bool (*cachePeerCallback)(espnow_peer_t);
     void (*updateSeviceConfigCallback)(std::string, uint8_t *);
