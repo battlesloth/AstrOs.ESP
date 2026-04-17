@@ -37,6 +37,8 @@ jobs:
             lib_native/AstrOsSerialProtocol
             lib_native/AstrOsAnimationCommands
             lib_native/AstrOsAnimationEngine
+            lib_native/AstrOsEspNowProtocol
+            lib_native/AstrOsEspNowPeers
           )
           PATTERN='#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)'
           status=0

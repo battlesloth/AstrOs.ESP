@@ -34,6 +34,9 @@ namespace AstrOsENC
     constexpr const static char *SCRIPT_RUN = "SCRIPT_RUN";
     constexpr const static char *SCRIPT_RUN_ACK = "RUN_SCRIPT_ACK";
     constexpr const static char *SCRIPT_RUN_NAK = "RUN_SCRIPT_NAK";
+    constexpr const static char *COMMAND_RUN = "COMMAND_RUN";
+    constexpr const static char *COMMAND_RUN_ACK = "COMMAND_RUN_ACK";
+    constexpr const static char *COMMAND_RUN_NAK = "COMMAND_RUN_NAK";
     constexpr const static char *PANIC_STOP = "PANIC_STOP";
     constexpr const static char *FORMAT_SD = "FORMAT_SD";
     constexpr const static char *FORMAT_SD_ACK = "FORMAT_SD_ACK";
