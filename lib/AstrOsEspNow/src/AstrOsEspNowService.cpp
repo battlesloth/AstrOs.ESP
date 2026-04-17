@@ -133,8 +133,34 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
             ESP_LOGE(TAG, "init: failed to acquire peersMutex within 1s");
             return ESP_FAIL;
         }
-        peers.add(peer);
+
+        auto addResult = peers.add(peer);
+        auto peerCount = peers.size();
         xSemaphoreGive(this->peersMutex);
+
+        switch (addResult)
+        {
+        case AstrOsEspNowPeers::AddResult::Added:
+            break;
+        case AstrOsEspNowPeers::AddResult::AlreadyExists:
+            // NVS yielded a duplicate entry. esp_now_add_peer would normally
+            // have rejected this above, so reaching here suggests a stored
+            // duplicate rather than a logic bug — tolerate it but warn so it
+            // shows up during QA.
+            ESP_LOGW(TAG, "init: NVS peer %d (%s) already present in PeerList — skipping duplicate", i,
+                     AstrOsStringUtils::macToString(peer.mac_addr).c_str());
+            break;
+        case AstrOsEspNowPeers::AddResult::Full:
+            // PeerList capacity is lower than the NVS-stored peer count. The
+            // ESP-NOW driver side has been updated for every peer so far
+            // (addPeer was already called above), which would leave the
+            // driver and PeerList permanently out of sync — fail init so the
+            // inconsistency is obvious instead of silently breaking polling
+            // and send lookups for the dropped peers.
+            ESP_LOGE(TAG, "init: PeerList full at %u; cannot load NVS peer %d — failing init to avoid divergence",
+                     static_cast<unsigned>(peerCount), i);
+            return ESP_FAIL;
+        }
     }
 
     this->packetTracker = PacketTracker();
