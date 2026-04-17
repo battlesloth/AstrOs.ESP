@@ -24,6 +24,9 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::SCRIPT_RUN] = AstrOsENC::SCRIPT_RUN;
     packetTypeMap[AstrOsPacketType::SCRIPT_RUN_ACK] = AstrOsENC::SCRIPT_RUN_ACK;
     packetTypeMap[AstrOsPacketType::SCRIPT_RUN_NAK] = AstrOsENC::SCRIPT_RUN_NAK;
+    packetTypeMap[AstrOsPacketType::COMMAND_RUN] = AstrOsENC::COMMAND_RUN;
+    packetTypeMap[AstrOsPacketType::COMMAND_RUN_ACK] = AstrOsENC::COMMAND_RUN_ACK;
+    packetTypeMap[AstrOsPacketType::COMMAND_RUN_NAK] = AstrOsENC::COMMAND_RUN_NAK;
     packetTypeMap[AstrOsPacketType::PANIC_STOP] = AstrOsENC::PANIC_STOP;
     packetTypeMap[AstrOsPacketType::FORMAT_SD] = AstrOsENC::FORMAT_SD;
     packetTypeMap[AstrOsPacketType::FORMAT_SD_ACK] = AstrOsENC::FORMAT_SD_ACK;
