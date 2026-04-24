@@ -51,9 +51,9 @@ Why these specific targets over the tighter values considered (3584 / 5120):
 
 ## Task checklist
 
-- [ ] Bump `serviceQueueTask` stack 3072 → 4096 at `src/main.cpp:208`
-- [ ] Bump `interfaceResponseQueueTask` stack 4096 → 6144 at `src/main.cpp:211`
-- [ ] Build both board envs: `pio run -e metro_s3` and `pio run -e lolin_d32_pro`
+- [x] Bump `serviceQueueTask` stack 3072 → 4096 at `src/main.cpp:208`
+- [x] Bump `interfaceResponseQueueTask` stack 4096 → 6144 at `src/main.cpp:211`
+- [x] Build both board envs: `pio run -e metro_s3` and `pio run -e lolin_d32_pro`
 - [ ] Flash bench master; run `npm run smoke -- full-happy-path --confirm` 3–4 times; confirm no HWM warnings
 
 ## Out of scope

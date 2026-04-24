@@ -205,10 +205,10 @@ void app_main()
 
     // core 1
     xTaskCreatePinnedToCore(&buttonListenerTask, "button_listener_task", 4096, (void *)serviceQueue, 5, NULL, 1);
-    xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 3072, (void *)serviceQueue, 6, NULL, 1);
+    xTaskCreatePinnedToCore(&serviceQueueTask, "service_queue_task", 4096, (void *)serviceQueue, 6, NULL, 1);
     xTaskCreatePinnedToCore(&animationQueueTask, "animation_queue_task", 4096, (void *)animationQueue, 7, NULL, 1);
     xTaskCreatePinnedToCore(&animationDispatchTask, "animation_dispatch_task", 4096, NULL, 5, NULL, 1);
-    xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 4096, (void *)interfaceResponseQueue,
+    xTaskCreatePinnedToCore(&interfaceResponseQueueTask, "interface_queue_task", 6144, (void *)interfaceResponseQueue,
                             10, NULL, 1);
     xTaskCreatePinnedToCore(&serialCh1QueueTask, "serial_ch1_queue_task", 4096, (void *)serialCh1Queue, 9, NULL, 1);
     xTaskCreatePinnedToCore(&serialCh2QueueTask, "serial_ch2_queue_task", 4096, (void *)serialCh2Queue, 9, NULL, 1);
