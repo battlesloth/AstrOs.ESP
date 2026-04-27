@@ -127,13 +127,14 @@ void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<a
     }
 }
 
-void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck)
+void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint,
+                                            std::string firmwareVersion, bool isAck)
 {
     std::string response;
 
     if (isAck)
     {
-        response = this->msgService.getPollAck(mac, name, fingerprint);
+        response = this->msgService.getPollAck(mac, name, fingerprint, firmwareVersion);
     }
     else
     {

@@ -45,6 +45,20 @@ After this phase merges, controllers will report their firmware version. The ser
 - Manually inspect a serial trace: a POLL_ACK frame should look like `<int>RS<validation>RS<msgid>GS<mac>US<name>US<fingerprint>US1.2.0\n`.
 - Flash to bench rig; confirm both master and peer controllers each include their own version in subsequent POLL_ACKs.
 
+## PR feedback addendum — forwarding bug fix
+
+The first cut of this change appended `AstrOsConstants::Version` directly inside `getPollAck`. That was wrong: `getPollAck` runs on the master and is invoked both for the master's own POLL_ACK *and* when the master forwards a padawan's POLL_ACK over serial (see `AstrOsEspNowService::handlePollAck` → `sendToInterfaceQueue(SEND_POLL_ACK, ...)` → `main.cpp:830` → `sendPollAckNak` → `getPollAck`). Hard-coding the local version meant peers always reported the master's version to the server.
+
+Fix: thread the peer's actual version end-to-end:
+
+- ESP-NOW POLL_ACK payload (peer → master) gains a 4th field carrying the peer's `AstrOsConstants::Version`. Peer side: `AstrOsEspNowService.cpp` `sendPollAck` now serializes `name<US>fingerprint<US>version` (master prepends mac → 4 wire fields total).
+- Master parses the optional 4th field in `handlePollAck` and packs `fingerprint<US>version` into the interface queue's `message` field (legacy peers without a version send just `fingerprint`).
+- `main.cpp` SEND_POLL_ACK dispatcher splits the message field and threads version through to `sendPollAckNak`.
+- `getPollAck`, `sendPollAckNak` signatures gained a `firmwareVersion` parameter. Master self-poll path (`main.cpp:432`) now passes `AstrOsConstants::Version` explicitly.
+- Native test asserts the version reported is whatever the caller passed (literal `9.9.9`), not `AstrOsConstants::Version`, so the contract that "the version belongs to the same controller as the identifiers" is enforced by the test.
+
+Backward compatibility: a Phase-1+ master receiving a legacy peer's 3-field POLL_ACK forwards an empty version → server treats as incompatible → red exclamation. A legacy master receiving a Phase-1+ peer's 4-field POLL_ACK ignores the trailing field → server gets a 3-field POLL_ACK → same outcome. Mixed-version mesh is safe in either direction during rollout.
+
 ## Critical files reference
 
 | Concern                 | File                                                                              |

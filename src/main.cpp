@@ -429,7 +429,8 @@ static void pollingTimerCallback(void *arg)
             {
                 ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
             }
-            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint), true);
+            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
+                                                   AstrOsConstants::Version, true);
         }
         else
         {
@@ -827,12 +828,19 @@ void interfaceResponseQueueTask(void *arg)
             {
             case AstrOsInterfaceResponseType::SEND_POLL_ACK:
             {
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, msg.message, true);
+                // The interface queue's `message` field for SEND_POLL_ACK is packed by
+                // AstrOsEspNow::handlePollAck as `fingerprint` (legacy peer, no version)
+                // or `fingerprint<US>version` (Phase 1+ peer). splitString() strips any
+                // trailing empty part, so a missing version yields a single piece.
+                auto pieces = AstrOsStringUtils::splitString(std::string(msg.message), UNIT_SEPARATOR);
+                std::string fp = pieces.size() > 0 ? pieces[0] : "";
+                std::string ver = pieces.size() > 1 ? pieces[1] : "";
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, true);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_POLL_NAK:
             {
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", false);
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", false);
                 break;
             }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
