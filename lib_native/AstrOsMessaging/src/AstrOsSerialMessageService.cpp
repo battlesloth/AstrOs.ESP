@@ -1,4 +1,5 @@
 #include "AstrOsSerialMessageService.hpp"
+#include "AstrOsConstants.hpp"
 #include <AstrOsStringUtils.hpp>
 
 #include <cmath>
@@ -126,7 +127,8 @@ std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
-    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint;
+    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint << UNIT_SEPARATOR
+       << AstrOsConstants::Version;
     return ss.str();
 }
 

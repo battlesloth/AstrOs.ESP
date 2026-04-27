@@ -20,10 +20,11 @@ TEST(SerialMessages, PollAckMessage)
     EXPECT_STREQ("na", validation.msgId.c_str());
 
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3, payloadParts.size());
+    ASSERT_EQ(4, payloadParts.size());
     EXPECT_EQ("macaddress", payloadParts[0]);
     EXPECT_EQ("test", payloadParts[1]);
     EXPECT_EQ("fingerprint", payloadParts[2]);
+    EXPECT_EQ(AstrOsConstants::Version, payloadParts[3]);
 }
 
 TEST(SerialMessages, PollNakMessage)

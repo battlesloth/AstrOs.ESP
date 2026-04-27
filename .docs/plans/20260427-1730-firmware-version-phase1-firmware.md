@@ -32,10 +32,10 @@ After this phase merges, controllers will report their firmware version. The ser
 
 ## Tasks
 
-- [ ] Bump `VERSION` to `1.2.0`; verify `version_generated.hpp` regenerates on next build.
-- [ ] Append `AstrOsConstants::Version` to `getPollAck()` payload.
-- [ ] Update native unit test for `getPollAck` to assert the new 4-field format.
-- [ ] Run `pio test -e native` to confirm tests pass.
+- [x] Bump `VERSION` to `1.2.0`; verify `version_generated.hpp` regenerates on next build.
+- [x] Append `AstrOsConstants::Version` to `getPollAck()` payload.
+- [x] Update native unit test for `getPollAck` to assert the new 4-field format.
+- [x] Run `pio test -e test` to confirm tests pass (190 / 190 passed).
 - [ ] Flash firmware to a bench ESP and confirm via serial monitor that POLL_ACK frames contain the version suffix.
 - [ ] Open PR to AstrOs.ESP `develop`.
 
