@@ -116,17 +116,21 @@ std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId
     return message;
 }
 
-/// @brief generates a poll acknowledgment message which contains the name and fingerprint of the peer
+/// @brief generates a poll acknowledgment message which contains the name, fingerprint, and firmware version
+///        of the controller identified by macAddress. Caller is responsible for passing the *correct* version
+///        for that mac — when forwarding a peer's POLL_ACK, this must be the peer's version, not the local one.
 /// @param macAddress peer mac address
-/// @param name peer controller
-/// @param fingerprint configuration fingerprint
+/// @param controller peer controller name
+/// @param fingerprint peer configuration fingerprint
+/// @param firmwareVersion peer firmware version (may be empty for legacy peers; server treats empty as incompatible)
 /// @return serial message
 std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::string controller,
-                                                   std::string fingerprint)
+                                                   std::string fingerprint, std::string firmwareVersion)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
-    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint;
+    ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint << UNIT_SEPARATOR
+       << firmwareVersion;
     return ss.str();
 }
 

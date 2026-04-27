@@ -95,7 +95,8 @@ public:
     astros_serial_msg_validation_t validateSerialMsg(std::string msg);
 
     std::string getRegistrationSyncAck(std::string msgId, std::vector<astros_peer_data_t> controllers);
-    std::string getPollAck(std::string macAddress, std::string controller, std::string fingerprint);
+    std::string getPollAck(std::string macAddress, std::string controller, std::string fingerprint,
+                           std::string firmwareVersion);
     std::string getPollNak(std::string macAddress, std::string controller);
     std::string getBasicAckNak(AstrOsSerialMessageType type, std::string msgId, std::string macAddress,
                                std::string controller, std::string data);
