@@ -686,7 +686,7 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error sending registration ack");
+        ESP_LOGE(TAG, "Error sending poll ack");
         result = false;
     }
 
