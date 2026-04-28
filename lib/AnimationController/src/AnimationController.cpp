@@ -1,11 +1,10 @@
-#include <algorithm>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <string.h>
 
 #include <AnimationCommand.hpp>
-#include <AnimationCommon.hpp>
 #include <AnimationController.hpp>
+#include <AstrOsAnimationEngine.hpp>
 #include <AstrOsStorageManager.hpp>
 
 static const char *TAG = "AnimationController";
@@ -14,306 +13,181 @@ AnimationController AnimationCtrl;
 
 AnimationController::AnimationController()
 {
-    for (auto &script : this->scriptQueue)
-    {
-        script = "";
-    }
-    this->queueFront = 0;
-    this->queueRear = -1;
-    this->queueSize = 0;
-
     this->animationMutex = xSemaphoreCreateMutex();
-    this->queueing = false;
+    if (this->animationMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create animationMutex — controller will be non-functional");
+    }
+    this->queueing.store(false);
+    this->scriptLoaded.store(false);
+    this->delayTillNextEvent.store(0);
+    this->panicGeneration.store(0);
 }
 
-AnimationController::~AnimationController() {}
+AnimationController::~AnimationController()
+{
+    if (this->animationMutex != NULL)
+    {
+        vSemaphoreDelete(this->animationMutex);
+        this->animationMutex = NULL;
+    }
+}
 
 void AnimationController::panicStop()
 {
     ESP_LOGI(TAG, "Panicing!");
-    auto cleared = false;
 
-    while (!cleared)
+    this->scriptLoaded.store(false);
+
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            for (auto &script : this->scriptQueue)
-            {
-                script = "";
-            }
-            this->queueFront = 0;
-            this->queueRear = -1;
-            this->queueSize = 0;
-
-            this->scriptEvents.clear();
-            this->scriptLoaded = false;
-            cleared = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "panicStop: mutex timeout — scriptLoaded is false so motion is halted, "
+                      "but script queue was not cleared (will be cleared on next queueScript)");
+        return;
     }
-    // TODO
+
+    this->panicGeneration.fetch_add(1);
+    this->scriptQueue_.clear();
+    this->scriptEvents.clear();
+    this->scriptLoaded.store(false);
+    xSemaphoreGive(this->animationMutex);
 }
 
 bool AnimationController::queueScript(std::string scriptId)
 {
-    this->queueing = true;
+    this->queueing.store(true);
 
     ESP_LOGI(TAG, "Queueing %s", scriptId.c_str());
 
-    if (queueIsFull())
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        ESP_LOGI(TAG, "Queue is full");
+        ESP_LOGE(TAG, "queueScript: failed to acquire animationMutex within 5s");
+        this->queueing.store(false);
         return false;
     }
 
-    while (this->queueing)
+    if (!this->scriptQueue_.push(scriptId))
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            this->queueRear = (queueRear + 1) % queueCapacity;
-
-            this->scriptQueue[queueRear] = scriptId;
-
-            this->queueSize++;
-            this->queueing = false;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGI(TAG, "Queue is full");
+        xSemaphoreGive(this->animationMutex);
+        this->queueing.store(false);
+        return false;
     }
 
+    this->queueing.store(false);
+    xSemaphoreGive(this->animationMutex);
     return true;
 }
 
 bool AnimationController::queueCommand(std::string command)
 {
-    auto queued = false;
-    while (!queued)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            AnimationCommand cmd = AnimationCommand(command);
-            this->scriptEvents.push_back(cmd);
-            queued = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "queueCommand: failed to acquire animationMutex within 5s");
+        return false;
     }
-    return false;
-}
 
-bool AnimationController::queueIsFull()
-{
-    return (this->queueSize == this->queueCapacity);
-}
-
-bool AnimationController::queueIsEmpty()
-{
-    return (this->queueSize == 0);
+    AnimationCommand cmd = AnimationCommand(command);
+    this->scriptEvents.push_back(cmd);
+    this->scriptLoaded.store(true);
+    this->delayTillNextEvent.store(0);
+    xSemaphoreGive(this->animationMutex);
+    return true;
 }
 
 void AnimationController::loadNextScript()
 {
-
-    if (queueIsEmpty() || this->queueing)
+    if (this->queueing.load())
     {
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
         return;
     }
 
-    std::string script = "error";
-    auto retrieved = false;
-
-    while (!retrieved)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            ESP_LOGI(TAG, "Loading script %s", this->scriptQueue[this->queueFront].c_str());
-
-            std::string path = "scripts/" + this->scriptQueue[this->queueFront];
-
-            script = AstrOs_Storage.readFile(path);
-
-            this->queueFront = (this->queueFront + 1) % this->queueCapacity;
-            this->queueSize--;
-
-            retrieved = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "loadNextScript: failed to acquire animationMutex within 5s");
+        this->scriptLoaded.store(false);
+        return;
     }
+
+    if (this->scriptQueue_.isEmpty())
+    {
+        this->scriptLoaded.store(false);
+        xSemaphoreGive(this->animationMutex);
+        return;
+    }
+
+    std::string scriptId = this->scriptQueue_.pop();
+    uint32_t genBeforeIO = this->panicGeneration.load();
+    xSemaphoreGive(this->animationMutex);
+
+    ESP_LOGI(TAG, "Loading script %s", scriptId.c_str());
+
+    std::string path = "scripts/" + scriptId;
+    std::string script = AstrOs_Storage.readFile(path);
 
     if (script == "error")
     {
         ESP_LOGI(TAG, "Script not loaded");
-        this->scriptLoaded = false;
+        this->scriptLoaded.store(false);
+        return;
     }
-    else
-    {
-        AnimationController::parseScript(script);
-        this->scriptLoaded = true;
-    }
-    // LoadFromMemory(scriptQueue[queueFront]);
 
-    /*****************************************
-     * Test script
-     *****************************************/
-    // if (strncmp(scriptQueue[queueFront], "#start", strlen("#home")) == 0){
-    //     servoScript[0].setValues(Spinner, Start, 0, 0, 500);
-    //     servoScript[1].setValues(Lifter, Start, 0, 0, 500);
-    //     servoEvents = 2;
-    // }
-    // if (strncmp(scriptQueue[queueFront], "#home", strlen("#home")) == 0){
-    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-    //     servoScript[1].setValues(Lifter, Home, 0, 0, 2000);
-    //     servoEvents = 2;
-    // }
-    // if (strncmp(scriptQueue[queueFront], "#stow", strlen("#stow")) == 0){
-    //     servoScript[0].setValues(Spinner, Home, 0, 0, 2000);
-    //     servoScript[1].setValues(Lifter, Position, -15, 0, 2000);
-    //     servoEvents = 2;
-    // }
-    // else if (strncmp(scriptQueue[queueFront], "#deploy", strlen("#deploy")) == 0) {
-    //     servoScript[0].setValues(Lifter, Position, 780, 0, 1000);
-    //     servoEvents = 1;
-    // }
-    // else if (strncmp(scriptQueue[queueFront], "#sneaky", strlen("#sneaky")) == 0) {
-    //     servoScript[0].setValues(Lifter, Position, 780, 100, 12000);
-    //     servoScript[1].setValues(Lifter, Position, 350, 100, 6000);
-    //     servoScript[2].setValues(Lifter, Position, 690, 100, 4000);
-    //     servoScript[3].setValues(Spinner, Position, -350, 700, 5000);
-    //     servoScript[4].setValues(Spinner, Position, 700, 2000, 3000);
-    //     servoScript[5].setValues(Lifter, Position, 790, 100, 2000);
-    //     servoScript[6].setValues(Spinner, Position, 350, 400, 5000);
-    //     servoScript[7].setValues(Spinner, Home, 0, 0, 1000);
-    //     servoScript[8].setValues(Lifter, Position, -15, 200, 12000);
-    //     servoEvents = 9;
-    // }
-    /*****************************************
-     * End Test Script
-     *****************************************/
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "loadNextScript: mutex timeout after file read — script not loaded");
+        this->scriptLoaded.store(false);
+        return;
+    }
+
+    if (this->panicGeneration.load() != genBeforeIO)
+    {
+        ESP_LOGW(TAG, "loadNextScript: panicStop fired during file I/O — discarding loaded script");
+        xSemaphoreGive(this->animationMutex);
+        return;
+    }
+
+    this->scriptEvents = AstrOsAnimationEngine::parseAnimationScript(script);
+
+    ESP_LOGI(TAG, "Loaded: %s", script.c_str());
+    ESP_LOGI(TAG, "Events loaded: %zu", this->scriptEvents.size());
+
+    this->scriptLoaded.store(!this->scriptEvents.empty());
+    xSemaphoreGive(this->animationMutex);
 }
 
 bool AnimationController::scriptIsLoaded()
 {
-
-    if (!scriptLoaded && !queueIsEmpty())
+    if (!scriptLoaded.load())
     {
         loadNextScript();
     }
-
-    return scriptLoaded;
+    return scriptLoaded.load();
 }
 
-CommandTemplate *AnimationController::getNextCommandPtr()
+std::unique_ptr<CommandTemplate> AnimationController::getNextCommandPtr()
 {
-    CommandTemplate *cmd = nullptr;
-    auto retrieved = false;
-
-    while (!retrieved)
+    if (xSemaphoreTake(this->animationMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
     {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-
-            if (this->scriptEvents.empty())
-            {
-                this->scriptLoaded = false;
-                cmd = new CommandTemplate(MODULE_TYPE::NONE, 0, "");
-            }
-            else if (this->scriptEvents.size() == 1)
-            {
-
-                CommandTemplate *lastCmd = scriptEvents.back().GetCommandTemplatePtr();
-                this->scriptEvents.pop_back();
-
-                this->scriptLoaded = false;
-                cmd = lastCmd;
-            }
-            else
-            {
-                this->delayTillNextEvent = scriptEvents.back().duration;
-
-                // 10 milliseconds minimum between events?
-                if (this->delayTillNextEvent < 10)
-                {
-                    this->delayTillNextEvent = 10;
-                }
-
-                cmd = scriptEvents.back().GetCommandTemplatePtr();
-                this->scriptEvents.pop_back();
-            }
-            retrieved = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        ESP_LOGE(TAG, "getNextCommandPtr: mutex timeout — halting script to prevent partial sequence execution");
+        this->scriptLoaded.store(false);
+        return nullptr;
     }
 
-    return cmd;
+    auto result = AstrOsAnimationEngine::getNextCommand(this->scriptEvents);
+
+    this->delayTillNextEvent.store(result.delayMs);
+
+    if (result.scriptDone)
+    {
+        this->scriptLoaded.store(false);
+    }
+
+    xSemaphoreGive(this->animationMutex);
+    return std::move(result.command);
 }
 
 int AnimationController::msTillNextServoCommand()
 {
-    return this->delayTillNextEvent;
-}
-
-void AnimationController::parseScript(std::string script)
-{
-    auto parsed = false;
-
-    while (!parsed)
-    {
-        if (xSemaphoreTake(this->animationMutex, portMAX_DELAY) == pdTRUE)
-        {
-            this->scriptEvents.clear();
-
-            auto parts = AstrOsStringUtils::splitString(script, ';');
-
-            /* auto start = 0U;
-             auto end = script.find(";");
-             while (end != std::string::npos)
-             {
-                 AnimationCommand cmd = AnimationCommand(script.substr(start, end - start));
-                 this->scriptEvents.push_back(cmd);
-                 start = end + 1;
-                 end = script.find(";", start);
-             }
-             */
-
-            for (auto part : parts)
-            {
-                if (part.empty())
-                {
-                    continue;
-                }
-                AnimationCommand cmd = AnimationCommand(part);
-                this->scriptEvents.push_back(cmd);
-            }
-
-            std::reverse(this->scriptEvents.begin(), this->scriptEvents.end());
-
-            ESP_LOGI(TAG, "Loaded: %s", script.c_str());
-            ESP_LOGI(TAG, "Events loaded: %d", this->scriptEvents.size());
-            parsed = true;
-            xSemaphoreGive(this->animationMutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
+    return this->delayTillNextEvent.load();
 }

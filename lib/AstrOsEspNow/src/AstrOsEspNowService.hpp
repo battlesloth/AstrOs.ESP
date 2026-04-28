@@ -3,12 +3,14 @@
 
 #include "AstrOsEspNowUtility.h"
 #include "AstrOsMessaging.hpp"
+#include <AstrOsEspNowPeers.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <esp_err.h>
 
-// needed for QueueHandle_t, must be in this order
+// needed for QueueHandle_t and SemaphoreHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 static uint8_t broadcastMac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t nullMac[ESP_NOW_ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -38,7 +40,8 @@ private:
     uint8_t masterMac[ESP_NOW_ETH_ALEN];
     bool isMasterNode;
     std::string mac;
-    std::vector<espnow_peer_t> peers;
+    AstrOsEspNowPeers::PeerList peers;
+    SemaphoreHandle_t peersMutex;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
 
@@ -52,7 +55,6 @@ private:
     esp_err_t addPeer(uint8_t *macAddress);
     bool cachePeer(uint8_t *macAddress, std::string name);
     bool findPeer(std::string peer);
-    bool isValidPollPeer(std::string peer);
 
     bool (*cachePeerCallback)(espnow_peer_t);
     void (*updateSeviceConfigCallback)(std::string, uint8_t *);
@@ -69,19 +71,7 @@ private:
     bool handleRegistrationAck(uint8_t *src, astros_packet_t packet);
     bool handlePoll(astros_packet_t packet);
     bool handlePollAck(astros_packet_t packet);
-    bool handleConfig(astros_packet_t packet);
-    bool handleConfigAckNak(astros_packet_t packet);
-    bool handleScriptDeploy(astros_packet_t packet);
-    bool handleScriptRun(astros_packet_t packet);
-    bool handleCommandRun(astros_packet_t packet);
-    bool handlePanicStop(astros_packet_t packet);
-    bool handleFormatSD(astros_packet_t packet);
-    bool handleServoTest(astros_packet_t packet);
 
-    bool handleBasicAckNak(astros_packet_t packet);
-    AstrOsInterfaceResponseType getInterfaceResponseType(AstrOsPacketType type);
-
-    std::string handleMultiPacketMessage(astros_packet_t packet);
     esp_err_t wifiInit(void);
     esp_err_t espnowInit(void);
 

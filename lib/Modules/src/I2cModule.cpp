@@ -6,12 +6,14 @@
 #include <driver/i2c.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <ssd1306.h>
 #include <sstream>
 #include <string>
 
 static const char *TAG = "I2cModule";
-static pthread_mutex_t i2cMutex;
+static SemaphoreHandle_t i2cMutex = NULL;
 
 SSD1306_t oled;
 
@@ -25,9 +27,11 @@ esp_err_t I2cModule::Init()
 {
     esp_err_t result = ESP_OK;
 
-    if (pthread_mutex_init(&i2cMutex, NULL) != 0)
+    i2cMutex = xSemaphoreCreateMutex();
+    if (i2cMutex == NULL)
     {
         ESP_LOGE(TAG, "Failed to initialize the I2C mutex");
+        return ESP_ERR_NO_MEM;
     }
 
 #ifdef USE_I2C_OLED
@@ -56,7 +60,7 @@ void I2cModule::SendCommand(uint8_t *cmd)
 esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)
 {
     esp_err_t ret = ESP_OK;
-    if (pthread_mutex_lock(&i2cMutex) == 0)
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
@@ -65,7 +69,12 @@ esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)
         i2c_master_stop(cmd);
         ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
         i2c_cmd_link_delete(cmd);
-        pthread_mutex_unlock(&i2cMutex);
+        xSemaphoreGive(i2cMutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "write: failed to acquire i2cMutex within 1s");
+        ret = ESP_ERR_TIMEOUT;
     }
     return ret;
 }
@@ -120,21 +129,33 @@ void I2cModule::writeSsd1306(int line, std::string value)
         len = value.length() + spaces;
     }
 
-    char *c = const_cast<char *>(ss.str().c_str());
+    // Bind to a named local: ss.str() returns a temporary std::string whose
+    // buffer is destroyed at the end of the full expression, so capturing its
+    // c_str() into a raw pointer would dangle before ssd1306_display_text
+    // dereferenced it.
+    std::string text = ss.str();
 
-    if (pthread_mutex_lock(&i2cMutex) == 0)
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         ssd1306_clear_line(&oled, line, false);
-        ssd1306_display_text(&oled, line, c, len, false);
-        pthread_mutex_unlock(&i2cMutex);
+        ssd1306_display_text(&oled, line, const_cast<char *>(text.c_str()), len, false);
+        xSemaphoreGive(i2cMutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "writeSsd1306: failed to acquire i2cMutex within 1s");
     }
 }
 
 void I2cModule::clearSsd1306(int line)
 {
-    if (pthread_mutex_lock(&i2cMutex) == 0)
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         ssd1306_clear_line(&oled, line, false);
-        pthread_mutex_unlock(&i2cMutex);
+        xSemaphoreGive(i2cMutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "clearSsd1306: failed to acquire i2cMutex within 1s");
     }
 }

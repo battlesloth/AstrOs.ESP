@@ -9,7 +9,10 @@
 TEST(SerialMessages, PollAckMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint");
+    // Caller supplies the firmware version explicitly so the server records the
+    // version that belongs to `macaddress`, not whatever version the master
+    // happens to be running when forwarding a peer's POLL_ACK.
+    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint", "9.9.9");
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
@@ -20,10 +23,11 @@ TEST(SerialMessages, PollAckMessage)
     EXPECT_STREQ("na", validation.msgId.c_str());
 
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3, payloadParts.size());
+    ASSERT_EQ(4, payloadParts.size());
     EXPECT_EQ("macaddress", payloadParts[0]);
     EXPECT_EQ("test", payloadParts[1]);
     EXPECT_EQ("fingerprint", payloadParts[2]);
+    EXPECT_EQ("9.9.9", payloadParts[3]);
 }
 
 TEST(SerialMessages, PollNakMessage)

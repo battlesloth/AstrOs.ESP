@@ -1,0 +1,31 @@
+AstrOsEspNowProtocol
+====================
+
+Pure, native-testable decoder for ESP-NOW packets already validated by
+AstrOsMessaging. Turns a parsed astros_packet_t into a
+HandlerResult — either an InterfaceMessage ready for the interface
+queue, a Pending signal for multi-packet reassembly, or a diagnostic
+for the MIXED adapter (AstrOsEspNow) to log at the boundary.
+
+Parallel to AstrOsSerialProtocol: same rich-return pattern, same
+caller-logs-at-the-boundary contract. Does not touch peer state,
+registration, or the poll cycle — those remain in AstrOsEspNow pending
+a separate extraction.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+Functions return HandlerResult with a HandlerStatus enum and an
+optional diagnostic string. No logging — the MIXED adapter
+(AstrOsEspNow) logs the diagnostic at ESP_LOGE when status is an error
+variant.

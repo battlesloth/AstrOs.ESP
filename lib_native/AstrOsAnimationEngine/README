@@ -1,0 +1,23 @@
+AstrOsAnimationEngine
+=====================
+
+Pure, native-testable logic for animation script orchestration. Owns
+script parsing, the script-ID queue (circular buffer), and single-event
+dispatch. AnimationController (MIXED) wraps these with FreeRTOS mutexes
+and atomic flags.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+Functions return result structs or booleans. No logging — the MIXED
+adapter (AnimationController) logs at the boundary.

@@ -18,13 +18,6 @@ private:
 
     AstrOsSerialMessageService msgService;
 
-    void handleRegistrationSync(std::string msgId);
-    void handleDeployConfig(std::string msgId, std::string message);
-    void handleDeployScript(std::string msgId, std::string message);
-
-    void handleBasicCommand(AstrOsSerialMessageType type, std::string msgId, std::string message);
-
-    AstrOsInterfaceResponseType getResponseType(AstrOsSerialMessageType type, bool isMaster);
     void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac,
                               std::string peerName, std::string message);
 
@@ -34,7 +27,8 @@ public:
     void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue);
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
-    void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck);
+    void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
+                        bool isAck);
     void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name,
                                  std::string payload);
 };

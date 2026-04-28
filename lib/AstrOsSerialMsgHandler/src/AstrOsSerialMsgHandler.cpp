@@ -2,7 +2,7 @@
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
-#include <AstrOsStringUtils.hpp>
+#include <AstrOsSerialProtocol.hpp>
 #include <AstrOsUtility.h>
 #include <esp_log.h>
 #include <string.h>
@@ -33,200 +33,29 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
         return;
     }
 
-    switch (validation.type)
-    {
-    case AstrOsSerialMessageType::REGISTRATION_SYNC:
-    {
-        this->handleRegistrationSync(validation.msgId);
-        break;
-    }
-    case AstrOsSerialMessageType::DEPLOY_CONFIG:
-    {
-        this->handleDeployConfig(validation.msgId, message);
-        break;
-    }
-    case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-    {
-        this->handleDeployScript(validation.msgId, message);
-        break;
-    }
-    case AstrOsSerialMessageType::RUN_SCRIPT:
-    case AstrOsSerialMessageType::PANIC_STOP:
-    case AstrOsSerialMessageType::FORMAT_SD:
-    case AstrOsSerialMessageType::RUN_COMMAND:
-    case AstrOsSerialMessageType::SERVO_TEST:
-    {
-        this->handleBasicCommand(validation.type, validation.msgId, message);
-        break;
-    }
-    default:
+    if (validation.type == AstrOsSerialMessageType::UNKNOWN)
     {
         ESP_LOGE(TAG, "Unknown/Invalid message type: %d", static_cast<int>(validation.type));
-        break;
+        return;
     }
-    }
-}
 
-void AstrOsSerialMsgHandler::handleRegistrationSync(std::string msgId)
-{
-    ESP_LOGD(TAG, "Received REGISTRATION_SYNC message");
+    ESP_LOGD(TAG, "Received serial message type: %d", static_cast<int>(validation.type));
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::REGISTRATION_SYNC, msgId, "", "", "");
-}
+    // The pure decoder owns all of the field splitting and
+    // per-controller validation. Everything ESP-specific (queue handoff,
+    // logging) stays here at the boundary.
+    auto decoded = AstrOsSerialProtocol::decodeSerialMessage(validation.type, validation.msgId, validation.payload);
 
-void AstrOsSerialMsgHandler::handleDeployConfig(std::string msgId, std::string message)
-{
-    ESP_LOGD(TAG, "Received DEPLOY_CONFIG message");
-
-    auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
-    auto controllers = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
-
-    for (auto controller : controllers)
+    for (const auto &cmd : decoded.commands)
     {
-        auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
-        if (msgParts.size() != 3)
-        {
-            ESP_LOGE(TAG, "Invalid config: %s", controller.c_str());
-            continue;
-        }
-
-        if (msgParts[0] == "00:00:00:00:00:00")
-        {
-            auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, true);
-            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[2]);
-        }
-        else
-        {
-            auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_CONFIG, false);
-            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[2]);
-        }
+        this->sendToInterfaceQueue(cmd.responseType, cmd.msgId, cmd.peerMac, cmd.peerName, cmd.message);
     }
-}
 
-void AstrOsSerialMsgHandler::handleDeployScript(std::string msgId, std::string message)
-{
-    ESP_LOGD(TAG, "Received DEPLOY_SCRIPT message");
-
-    auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
-    auto controllers = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
-
-    for (auto controller : controllers)
+    for (const auto &rej : decoded.rejects)
     {
-        auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
-        if (msgParts.size() != 4)
-        {
-            ESP_LOGE(TAG, "Invalid script: %s", controller.c_str());
-            continue;
-        }
-
-        auto script = msgParts[2] + UNIT_SEPARATOR + msgParts[3];
-
-        if (msgParts[0] == "00:00:00:00:00:00")
-        {
-            auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_SCRIPT, true);
-            this->sendToInterfaceQueue(responseType, msgId, "", "", script);
-        }
-        else
-        {
-            auto responseType = this->getResponseType(AstrOsSerialMessageType::DEPLOY_SCRIPT, false);
-            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", script);
-        }
-    }
-}
-
-/// @brief Handles basic serial commands. Basic serial commands are commands that have a
-///        simple stucture of Address|Controller|Command and and don't require command formatting.
-/// @param msgId
-/// @param message
-void AstrOsSerialMsgHandler::handleBasicCommand(AstrOsSerialMessageType type, std::string msgId, std::string message)
-{
-    ESP_LOGD(TAG, "Received message type: %d", static_cast<int>(type));
-
-    auto parts = AstrOsStringUtils::splitString(message, GROUP_SEPARATOR);
-    auto controllers = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
-
-    for (auto controller : controllers)
-    {
-        auto msgParts = AstrOsStringUtils::splitString(controller, UNIT_SEPARATOR);
-
-        if (msgParts.size() != 3)
-        {
-            ESP_LOGE(TAG, "Invalid command: %s", controller.c_str());
-            continue;
-        }
-
-        if (msgParts[0].empty())
-        {
-            ESP_LOGW(TAG, "Empty command destination: %s", controller.c_str());
-            continue;
-        }
-
-        if (msgParts[2].empty())
-        {
-            ESP_LOGW(TAG, "Empty command value: %s", controller.c_str());
-            continue;
-        }
-
-        if (msgParts[0] == "00:00:00:00:00:00")
-        {
-            auto responseType = this->getResponseType(type, true);
-            this->sendToInterfaceQueue(responseType, msgId, "", "", msgParts[2]);
-        }
-        else
-        {
-            auto responseType = this->getResponseType(type, false);
-            this->sendToInterfaceQueue(responseType, msgId, msgParts[0], "", msgParts[2]);
-        }
-    }
-}
-
-AstrOsInterfaceResponseType AstrOsSerialMsgHandler::getResponseType(AstrOsSerialMessageType type, bool isMaster)
-{
-    if (isMaster)
-    {
-        switch (type)
-        {
-        case AstrOsSerialMessageType::REGISTRATION_SYNC:
-            return AstrOsInterfaceResponseType::REGISTRATION_SYNC;
-        case AstrOsSerialMessageType::DEPLOY_CONFIG:
-            return AstrOsInterfaceResponseType::SET_CONFIG;
-        case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-            return AstrOsInterfaceResponseType::SAVE_SCRIPT;
-        case AstrOsSerialMessageType::RUN_SCRIPT:
-            return AstrOsInterfaceResponseType::SCRIPT_RUN;
-        case AstrOsSerialMessageType::PANIC_STOP:
-            return AstrOsInterfaceResponseType::PANIC_STOP;
-        case AstrOsSerialMessageType::FORMAT_SD:
-            return AstrOsInterfaceResponseType::FORMAT_SD;
-        case AstrOsSerialMessageType::RUN_COMMAND:
-            return AstrOsInterfaceResponseType::COMMAND;
-        case AstrOsSerialMessageType::SERVO_TEST:
-            return AstrOsInterfaceResponseType::SERVO_TEST;
-        default:
-            return AstrOsInterfaceResponseType::UNKNOWN;
-        }
-    }
-    else
-    {
-        switch (type)
-        {
-        case AstrOsSerialMessageType::DEPLOY_CONFIG:
-            return AstrOsInterfaceResponseType::SEND_CONFIG;
-        case AstrOsSerialMessageType::DEPLOY_SCRIPT:
-            return AstrOsInterfaceResponseType::SEND_SCRIPT;
-        case AstrOsSerialMessageType::RUN_SCRIPT:
-            return AstrOsInterfaceResponseType::SEND_SCRIPT_RUN;
-        case AstrOsSerialMessageType::PANIC_STOP:
-            return AstrOsInterfaceResponseType::SEND_PANIC_STOP;
-        case AstrOsSerialMessageType::FORMAT_SD:
-            return AstrOsInterfaceResponseType::SEND_FORMAT_SD;
-        case AstrOsSerialMessageType::RUN_COMMAND:
-            return AstrOsInterfaceResponseType::SEND_COMMAND;
-        case AstrOsSerialMessageType::SERVO_TEST:
-            return AstrOsInterfaceResponseType::SEND_SERVO_TEST;
-        default:
-            return AstrOsInterfaceResponseType::UNKNOWN;
-        }
+        ESP_LOGE(TAG, "Rejected controller record (%s) for message type %d: %s",
+                 AstrOsSerialProtocol::describeRejectReason(rej.reason), static_cast<int>(validation.type),
+                 rej.entry.c_str());
     }
 }
 
@@ -298,13 +127,14 @@ void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<a
     }
 }
 
-void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint, bool isAck)
+void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint,
+                                            std::string firmwareVersion, bool isAck)
 {
     std::string response;
 
     if (isAck)
     {
-        response = this->msgService.getPollAck(mac, name, fingerprint);
+        response = this->msgService.getPollAck(mac, name, fingerprint, firmwareVersion);
     }
     else
     {

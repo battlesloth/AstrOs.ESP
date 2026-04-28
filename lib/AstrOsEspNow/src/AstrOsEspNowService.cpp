@@ -1,9 +1,11 @@
+#include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsEspNowService.hpp>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
 
 #include <algorithm>
+#include <array>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -97,6 +99,14 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
         return ESP_FAIL;
     }
 
+    this->peersMutex = xSemaphoreCreateMutex();
+
+    if (this->peersMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to initialize the peers mutex");
+        return ESP_FAIL;
+    }
+
     memcpy(this->masterMac, config.masterMac, ESP_NOW_ETH_ALEN);
 
     // Add broadcast peer information to peer list.
@@ -118,7 +128,39 @@ esp_err_t AstrOsEspNow::init(astros_espnow_config_t config)
             return err;
         }
 
-        peers.push_back(peer);
+        if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "init: failed to acquire peersMutex within 1s");
+            return ESP_FAIL;
+        }
+
+        auto addResult = peers.add(peer);
+        auto peerCount = peers.size();
+        xSemaphoreGive(this->peersMutex);
+
+        switch (addResult)
+        {
+        case AstrOsEspNowPeers::AddResult::Added:
+            break;
+        case AstrOsEspNowPeers::AddResult::AlreadyExists:
+            // NVS yielded a duplicate entry. esp_now_add_peer would normally
+            // have rejected this above, so reaching here suggests a stored
+            // duplicate rather than a logic bug — tolerate it but warn so it
+            // shows up during QA.
+            ESP_LOGW(TAG, "init: NVS peer %d (%s) already present in PeerList — skipping duplicate", i,
+                     AstrOsStringUtils::macToString(peer.mac_addr).c_str());
+            break;
+        case AstrOsEspNowPeers::AddResult::Full:
+            // PeerList capacity is lower than the NVS-stored peer count. The
+            // ESP-NOW driver side has been updated for every peer so far
+            // (addPeer was already called above), which would leave the
+            // driver and PeerList permanently out of sync — fail init so the
+            // inconsistency is obvious instead of silently breaking polling
+            // and send lookups for the dropped peers.
+            ESP_LOGE(TAG, "init: PeerList full at %u; cannot load NVS peer %d — failing init to avoid divergence",
+                     static_cast<unsigned>(peerCount), i);
+            return ESP_FAIL;
+        }
     }
 
     this->packetTracker = PacketTracker();
@@ -135,86 +177,53 @@ std::string AstrOsEspNow::getMac()
         return "00:00:00:00:00:00";
     }
 
-    std::string macAddress;
-
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            macAddress = this->mac;
-            macSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "getMac: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string macAddress = this->mac;
+    xSemaphoreGive(valueMutex);
     return macAddress;
 }
 
 std::string AstrOsEspNow::getName()
 {
-    std::string name;
-
-    bool nameSet = false;
-    while (!nameSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            name = this->name;
-            nameSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "getName: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string name = this->name;
+    xSemaphoreGive(valueMutex);
     return name;
 }
 
 std::string AstrOsEspNow::getFingerprint()
 {
-    std::string fingerprint;
-
-    bool fingerprintSet = false;
-    while (!fingerprintSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            fingerprint = this->fingerprint;
-            fingerprintSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "getFingerprint: failed to acquire valueMutex within 1s, returning empty");
+        return "";
     }
 
+    std::string fingerprint = this->fingerprint;
+    xSemaphoreGive(valueMutex);
     return fingerprint;
 }
 
 void AstrOsEspNow::updateFingerprint(std::string fingerprint)
 {
-    bool fingerprintSet = false;
-    while (!fingerprintSet)
+    if (xSemaphoreTake(valueMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(valueMutex, 100 / portTICK_PERIOD_MS))
-        {
-            this->fingerprint = fingerprint;
-            fingerprintSet = true;
-            xSemaphoreGive(valueMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "updateFingerprint: failed to acquire valueMutex within 1s — fingerprint not updated");
+        return;
     }
+
+    this->fingerprint = fingerprint;
+    xSemaphoreGive(valueMutex);
 }
 
 esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
@@ -239,91 +248,94 @@ esp_err_t AstrOsEspNow::addPeer(uint8_t *macAddress)
 
 bool AstrOsEspNow::cachePeer(uint8_t *macAddress, std::string name)
 {
-
-    if (peers.size() > 10)
-    {
-        ESP_LOGE(TAG, "Peer cache is full");
-        return false;
-    }
-
-    for (auto &peer : peers)
-    {
-        if (memcmp(peer.mac_addr, macAddress, ESP_NOW_ETH_ALEN) == 0)
-        {
-            ESP_LOGW(TAG, "Peer already cached");
-            return true;
-        }
-    }
-
-    // add to peer cache
-    espnow_peer_t newPeer;
-
-    // peer id is 0 indexed
-    newPeer.id = peers.size();
-    memcpy(newPeer.name, name.c_str(), name.length() + 1);
+    // Populate the new peer struct before taking the lock so we hold it
+    // as briefly as possible.
+    espnow_peer_t newPeer{};
+    size_t nameLen = std::min(name.length(), (size_t)15);
+    memcpy(newPeer.name, name.c_str(), nameLen);
+    newPeer.name[nameLen] = '\0';
     memcpy(newPeer.mac_addr, macAddress, ESP_NOW_ETH_ALEN);
     memset(newPeer.crypto_key, 0, ESP_NOW_KEY_LEN);
     newPeer.is_paired = true;
 
-    peers.push_back(newPeer);
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "cachePeer: failed to acquire peersMutex within 1s");
+        return false;
+    }
 
-    return this->cachePeerCallback(newPeer);
+    // peer id is 0 indexed (legacy field; written for back-compat with NVS
+    // reads even though nothing reads it today).
+    newPeer.id = peers.size();
+    auto result = peers.add(newPeer);
+
+    xSemaphoreGive(this->peersMutex);
+
+    switch (result)
+    {
+    case AstrOsEspNowPeers::AddResult::Full:
+        ESP_LOGE(TAG, "Peer cache is full");
+        return false;
+    case AstrOsEspNowPeers::AddResult::AlreadyExists:
+        ESP_LOGW(TAG, "Peer already cached");
+        return true;
+    case AstrOsEspNowPeers::AddResult::Added:
+        // NOTE: cachePeerCallback is invoked OUTSIDE the lock to avoid lock-order
+        // inversion with the storage-manager's internal synchronization — calling
+        // it under peersMutex could deadlock if another task holds the storage
+        // mutex and tries to take peersMutex in the opposite order.
+        return this->cachePeerCallback(newPeer);
+    }
+    return false;
 }
 
 std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
 {
     std::vector<espnow_peer_t> result;
 
-    result.clear();
-
     espnow_peer_t master = {.id = 0, .name = "master"};
-
     memcpy(master.mac_addr, nullMac, ESP_NOW_ETH_ALEN);
-
     result.push_back(master);
 
-    for (auto &peer : peers)
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeers: failed to acquire peersMutex within 1s");
+        return result;
+    }
+
+    auto snapshot = peers.all();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : snapshot)
     {
         result.push_back(peer);
     }
-
     return result;
 }
 
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-        {
-            memcpy(this->masterMac, macAddress, ESP_NOW_ETH_ALEN);
-            macSet = true;
-            xSemaphoreGive(masterMacMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "updateMasterMac: failed to acquire masterMacMutex within 1s — master MAC not updated");
+        return;
     }
+
+    memcpy(this->masterMac, macAddress, ESP_NOW_ETH_ALEN);
+    xSemaphoreGive(masterMacMutex);
 }
 
 void AstrOsEspNow::getMasterMac(uint8_t *macAddress)
 {
-    bool macSet = false;
-    while (!macSet)
+    if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        if (xSemaphoreTake(masterMacMutex, 100 / portTICK_PERIOD_MS))
-        {
-            memcpy(macAddress, this->masterMac, ESP_NOW_ETH_ALEN);
-            macSet = true;
-            xSemaphoreGive(masterMacMutex);
-        }
-        else
-        {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
+        ESP_LOGE(TAG, "getMasterMac: failed to acquire masterMacMutex within 1s — zeroing output buffer");
+        memset(macAddress, 0, ESP_NOW_ETH_ALEN);
+        return;
     }
+
+    memcpy(macAddress, this->masterMac, ESP_NOW_ETH_ALEN);
+    xSemaphoreGive(masterMacMutex);
 }
 
 /// @brief Handle incoming messages from espnow
@@ -335,72 +347,54 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
 {
     astros_packet_t packet = this->messageService.parsePacket(data);
 
+    auto result = AstrOsEspNowProtocol::handlePacket(packet, this->packetTracker, this->isMasterNode,
+                                                     esp_timer_get_time() / 1000);
+
+    switch (result.status)
+    {
+    case AstrOsEspNowProtocol::HandlerStatus::Ok:
+    {
+        auto &msg = *result.message;
+        this->sendToInterfaceQueue(msg.responseType, msg.msgId, msg.peerMac, msg.peerName, msg.message);
+        return true;
+    }
+    case AstrOsEspNowProtocol::HandlerStatus::Pending:
+        return true;
+    case AstrOsEspNowProtocol::HandlerStatus::InvalidPayload:
+        ESP_LOGE(TAG, "%s", result.diagnostic.c_str());
+        return false;
+    case AstrOsEspNowProtocol::HandlerStatus::WrongRole:
+        ESP_LOGD(TAG, "Dropping packet type %d destined for the other role", (int)packet.packetType);
+        return true;
+    case AstrOsEspNowProtocol::HandlerStatus::UnknownType:
+    {
+        ESP_LOGE(TAG, "Unknown packet type received");
+        auto preview = std::string((char *)data, len);
+        ESP_LOGI(TAG, "packet: %s", preview.c_str());
+        return false;
+    }
+    case AstrOsEspNowProtocol::HandlerStatus::UnsupportedType:
+        // Phase 2 handlers — fall through to residual switch below.
+        break;
+    }
+
     switch (packet.packetType)
     {
     case AstrOsPacketType::REGISTRATION_REQ:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistrationReq(src);
     case AstrOsPacketType::REGISTRATION:
-        if (isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistration(src, packet);
     case AstrOsPacketType::REGISTRATION_ACK:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handleRegistrationAck(src, packet);
     case AstrOsPacketType::POLL:
-        if (isMasterNode)
-        {
-            break;
-        }
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
-        if (!isMasterNode)
-        {
-            break;
-        }
         return this->handlePollAck(packet);
-    case AstrOsPacketType::CONFIG:
-        return this->handleConfig(packet);
-    case AstrOsPacketType::CONFIG_ACK:
-    case AstrOsPacketType::CONFIG_NAK:
-        return this->handleConfigAckNak(packet);
-    case AstrOsPacketType::SCRIPT_DEPLOY:
-        return this->handleScriptDeploy(packet);
-    case AstrOsPacketType::SCRIPT_RUN:
-        return this->handleScriptRun(packet);
-    case AstrOsPacketType::PANIC_STOP:
-        return this->handlePanicStop(packet);
-    case AstrOsPacketType::FORMAT_SD:
-        return this->handleFormatSD(packet);
-    case AstrOsPacketType::COMMAND_RUN:
-        return this->handleCommandRun(packet);
-    case AstrOsPacketType::SERVO_TEST:
-        return this->handleServoTest(packet);
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-    case AstrOsPacketType::SCRIPT_RUN_ACK:
-    case AstrOsPacketType::SCRIPT_RUN_NAK:
-    case AstrOsPacketType::FORMAT_SD_ACK:
-    case AstrOsPacketType::FORMAT_SD_NAK:
-    case AstrOsPacketType::SERVO_TEST_ACK:
-        ESP_LOGD(TAG, "Basic ack/nak received for type %d from " MACSTR, (int)packet.packetType, MAC2STR(src));
-        return this->handleBasicAckNak(packet);
     default:
-        ESP_LOGE(TAG, "Unknown packet type received");
-        auto test = std::string((char *)data, len);
-        ESP_LOGI(TAG, "packet: %s", test.c_str());
+        ESP_LOGE(TAG, "Dispatcher returned UnsupportedType for packet type %d but no residual handler exists",
+                 (int)packet.packetType);
         return false;
     }
-
-    return true;
 }
 
 /*******************************************
@@ -454,40 +448,46 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
 
     std::string macStr = AstrOsStringUtils::macToString(src);
 
-    std::string padewanName;
-    auto s = this->peers.size();
+    std::string padawanName;
 
-    // if the mac is already in the peer cache, then use the existing name, otherwise assign a new name based on the
-    // number of peers
-    auto it = std::find_if(this->peers.begin(), this->peers.end(), [&](const espnow_peer_t &p)
-                           { return AstrOsStringUtils::macToString(p.mac_addr) == macStr; });
-    if (it != this->peers.end())
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        padewanName = it->name;
+        ESP_LOGE(TAG, "handleRegistrationReq: failed to acquire peersMutex within 1s");
+        return false;
+    }
+
+    // if the mac is already in the peer cache, use the existing name;
+    // otherwise assign a new name based on the current peer count.
+    auto existing = this->peers.findByMac(macStr);
+    if (existing.has_value())
+    {
+        padawanName = existing->name;
     }
     else
     {
-        switch (s)
+        switch (this->peers.size())
         {
         case 0:
-            padewanName = "Ashoka";
+            padawanName = "Ashoka";
             break;
         case 1:
-            padewanName = "Grogu";
+            padawanName = "Grogu";
             break;
         case 2:
-            padewanName = "Anakin";
+            padawanName = "Anakin";
             break;
         case 3:
-            padewanName = "Obi-Wan";
+            padawanName = "Obi-Wan";
             break;
         default:
             break;
         }
     }
 
+    xSemaphoreGive(this->peersMutex);
+
     astros_espnow_data_t data =
-        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padewanName)[0];
+        this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padawanName)[0];
 
     err = esp_now_send(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -631,14 +631,26 @@ bool AstrOsEspNow::handleRegistrationAck(uint8_t *src, astros_packet_t packet)
 
 void AstrOsEspNow::pollPadawans()
 {
-    for (auto &peer : peers)
+    // Reset pollAck flags + snapshot the peer list under the lock, then
+    // call esp_now_send outside to avoid holding peersMutex across the
+    // driver call (keeping lock scope minimal is safer for priority and
+    // latency).
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "pollPadawans: failed to acquire peersMutex within 1s");
+        return;
+    }
+
+    peers.resetPollCycle();
+    auto snapshot = peers.all();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : snapshot)
     {
         if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
         {
             continue;
         }
-
-        peer.pollAckThisCycle = false;
 
         astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL, this->mac)[0];
 
@@ -667,14 +679,14 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     }
 
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint();
+    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version;
 
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
     if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
     {
-        ESP_LOGE(TAG, "Error sending registration ack");
+        ESP_LOGE(TAG, "Error sending poll ack");
         result = false;
     }
 
@@ -698,77 +710,65 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
+    // Phase 1+ peers append their firmware version as a 4th field. Legacy peers
+    // omit it; we forward an empty string so the server records the peer's version
+    // as unknown (which it then treats as incompatible — accurate semantic).
+    auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
 
-    if (!this->isValidPollPeer(padawanMac))
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "handlePollAck: failed to acquire peersMutex within 1s");
+        return false;
+    }
+    bool known = this->peers.markPollAckReceived(padawanMac);
+    xSemaphoreGive(this->peersMutex);
+
+    if (!known)
     {
         ESP_LOGW(TAG, "Padawan not found in peer list=> %s : %s", padawan.c_str(), padawanMac.c_str());
         return false;
     }
 
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, fingerprint);
+    // Pack `fingerprint<US>version` (or just `fingerprint` for legacy peers) into
+    // the interface queue's `message` field. The dispatcher in main.cpp unpacks it
+    // and threads the version through to getPollAck so the version reported to
+    // the server matches the peer identifiers, not the local controller's version.
+    auto packed = peerVersion.empty() ? fingerprint : fingerprint + UNIT_SEPARATOR + peerVersion;
+    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, packed);
 
     return true;
 }
 
 void AstrOsEspNow::pollRepsonseTimeExpired()
 {
-    for (auto &peer : peers)
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "pollRepsonseTimeExpired: failed to acquire peersMutex within 1s");
+        return;
+    }
+
+    auto unacked = peers.listUnacked();
+    peers.resetPollCycle();
+    xSemaphoreGive(this->peersMutex);
+
+    for (auto &peer : unacked)
     {
         if (memcmp(peer.mac_addr, broadcastMac, ESP_NOW_ETH_ALEN) == 0)
         {
             continue;
         }
 
-        if (!peer.pollAckThisCycle)
-        {
-            ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
+        ESP_LOGD(TAG, "Poll response time expired for %s:" MACSTR, peer.name, MAC2STR(peer.mac_addr));
 
-            auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
+        auto macStr = AstrOsStringUtils::macToString(peer.mac_addr);
 
-            this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK, "", macStr, peer.name, "");
-        }
-        else
-        {
-            peer.pollAckThisCycle = false;
-        }
+        this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_NAK, "", macStr, peer.name, "");
     }
 }
 
 /*******************************************
  * Configuration methods
  *******************************************/
-
-bool AstrOsEspNow::handleConfig(astros_packet_t packet)
-{
-
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is message
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid config payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SET_CONFIG, parts[1], "", "", parts[2]);
-
-    return true;
-}
 
 void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
 {
@@ -792,231 +792,6 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
     free(destMac);
 }
 
-bool AstrOsEspNow::handleConfigAckNak(astros_packet_t packet)
-{
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    ESP_LOGD(TAG, "Config ack/nak received: %s", payload.c_str());
-
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 4)
-    {
-        ESP_LOGE(TAG, "Invalid config ack/nak payload: %s", payload.c_str());
-        return false;
-    }
-
-    auto responseType = this->getInterfaceResponseType(packet.packetType);
-
-    this->sendToInterfaceQueue(responseType, parts[1], parts[0], parts[2], parts[3]);
-
-    return true;
-}
-
-/*******************************************
- * Script Deployment methods
- *******************************************/
-
-bool AstrOsEspNow::handleScriptDeploy(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId, 3 is script
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 4)
-    {
-        ESP_LOGE(TAG, "Invalid script deploy payload: %s", payload.c_str());
-        return false;
-    }
-
-    std::stringstream ss;
-    ss << parts[2] << UNIT_SEPARATOR << parts[3];
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SAVE_SCRIPT, parts[1], "", "", ss.str());
-
-    return true;
-}
-
-/*******************************************
- * Script Run methods
- *******************************************/
-
-bool AstrOsEspNow::handleScriptRun(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is scriptId
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid script run payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SCRIPT_RUN, parts[1], "", "", parts[2]);
-
-    return true;
-}
-
-bool AstrOsEspNow::handlePanicStop(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid panic stop payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::PANIC_STOP, parts[1], "", "", "");
-
-    return true;
-}
-
-/*******************************************
- * Command Run methods
- *******************************************/
-
-bool AstrOsEspNow::handleCommandRun(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id, 2 is command
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid command run payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::COMMAND, parts[1], "", "", parts[2]);
-
-    return true;
-}
-
-/*******************************************
- * Utility Methods
- *******************************************/
-
-bool AstrOsEspNow::handleFormatSD(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid format sd payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::FORMAT_SD, parts[1], "", "", "");
-
-    return true;
-}
-
-bool AstrOsEspNow::handleServoTest(astros_packet_t packet)
-{
-    std::string payload;
-
-    if (packet.totalPackets > 1)
-    {
-        payload = this->handleMultiPacketMessage(packet);
-        if (payload.empty())
-        {
-            return true;
-        }
-    }
-    else
-    {
-        payload = std::string((char *)packet.payload, packet.payloadSize);
-    }
-
-    // 0 is dest mac, 1 is orgination msg id
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid servo test payload: %s", payload.c_str());
-        return false;
-    }
-
-    this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SERVO_TEST, parts[1], "", "", parts[2]);
-
-    return true;
-}
 /*******************************************
  * Common Methods
  *******************************************/
@@ -1065,125 +840,20 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
     free(destMac);
 }
 
-/// @brief Handles a basic ack or nak packet and sends the response to the interface handler queue.
-/// @param packet
-/// @return
-bool AstrOsEspNow::handleBasicAckNak(astros_packet_t packet)
-{
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    ESP_LOGD(TAG, "Basic ack/nak received: %s", payload.c_str());
-
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-
-    if (parts.size() < 3)
-    {
-        ESP_LOGE(TAG, "Invalid basic ack/nak payload: %s", payload.c_str());
-        return false;
-    }
-
-    std::string msg;
-
-    if (parts.size() > 3)
-    {
-        msg = parts[3];
-    }
-    else
-    {
-        msg = "na";
-    }
-
-    auto responseType = this->getInterfaceResponseType(packet.packetType);
-
-    this->sendToInterfaceQueue(responseType, parts[2], parts[0], parts[1], msg);
-
-    return true;
-}
-
-/// @brief gets the response type for the provided packet type.
-/// @param type
-/// @return
-AstrOsInterfaceResponseType AstrOsEspNow::getInterfaceResponseType(AstrOsPacketType type)
-{
-    switch (type)
-    {
-    case AstrOsPacketType::CONFIG_ACK:
-        return AstrOsInterfaceResponseType::SEND_CONFIG_ACK;
-    case AstrOsPacketType::CONFIG_NAK:
-        return AstrOsInterfaceResponseType::SEND_CONFIG_NAK;
-    case AstrOsPacketType::SCRIPT_DEPLOY_ACK:
-        return AstrOsInterfaceResponseType::SAVE_SCRIPT_ACK;
-    case AstrOsPacketType::SCRIPT_DEPLOY_NAK:
-        return AstrOsInterfaceResponseType::SAVE_SCRIPT_NAK;
-    case AstrOsPacketType::SCRIPT_RUN_ACK:
-        return AstrOsInterfaceResponseType::SCRIPT_RUN_ACK;
-    case AstrOsPacketType::SCRIPT_RUN_NAK:
-        return AstrOsInterfaceResponseType::SCRIPT_RUN_NAK;
-    case AstrOsPacketType::FORMAT_SD_ACK:
-        return AstrOsInterfaceResponseType::FORMAT_SD_ACK;
-    case AstrOsPacketType::FORMAT_SD_NAK:
-        return AstrOsInterfaceResponseType::FORMAT_SD_NAK;
-    default:
-        return AstrOsInterfaceResponseType::UNKNOWN;
-    }
-}
-
-/// @brief adds the payload to the packet tracker.
-/// @param packet
-/// @return if the message is complete, it returns the message, otherwise it returns an empty string.
-std::string AstrOsEspNow::handleMultiPacketMessage(astros_packet_t packet)
-{
-    auto msgId = std::string((char *)packet.id, 16);
-    auto payload = std::string((char *)packet.payload, packet.payloadSize);
-
-    PacketData packetData = {
-        .packetNumber = packet.packetNumber, .totalPackets = packet.totalPackets, .payload = payload};
-
-    auto result = this->packetTracker.addPacket(msgId, packetData, esp_timer_get_time() / 1000);
-
-    ESP_LOGD(TAG, "Multi packet message added to tracker with result: %d", result);
-
-    if (result == AddPacketResult::MESSAGE_COMPLETE)
-    {
-        return this->packetTracker.getMessage(msgId);
-    }
-
-    return "";
-}
-
-/// @brief finds the peer in the peer list and sets the pollAckThisCycle flag if pollAck is true.
+/// @brief checks whether the given MAC (canonical "AA:BB:..." string) is in the peer list.
 /// @param peerMac
-/// @param pollAck
 /// @return
 bool AstrOsEspNow::findPeer(std::string peerMac)
 {
-    for (auto &p : peers)
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
-        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (memcmp(pMac.c_str(), peerMac.c_str(), peerMac.size()) == 0)
-        {
-            return true;
-        }
+        ESP_LOGE(TAG, "findPeer: failed to acquire peersMutex within 1s");
+        return false;
     }
 
-    return false;
-}
-
-bool AstrOsEspNow::isValidPollPeer(std::string peerMac)
-{
-    for (auto &p : peers)
-    {
-        auto pMac = AstrOsStringUtils::macToString(p.mac_addr);
-
-        if (memcmp(pMac.c_str(), peerMac.c_str(), ESP_NOW_ETH_ALEN) == 0)
-        {
-            p.pollAckThisCycle = true;
-            return true;
-        }
-    }
-
-    return false;
+    bool found = this->peers.contains(peerMac);
+    xSemaphoreGive(this->peersMutex);
+    return found;
 }
 
 /// @brief sends an esp now message to the provided peer.

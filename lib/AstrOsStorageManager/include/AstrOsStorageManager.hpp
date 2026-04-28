@@ -1,12 +1,13 @@
 #ifndef ASTROSSTORAGEMANAGER_HPP
 #define ASTROSSTORAGEMANAGER_HPP
 
+#include <esp_err.h>
 #include <esp_log.h>
 #include <string>
 #include <vector>
 
-#include <AstrOsEspNowUtility.h>
 #include <AstrOsUtility.h>
+#include <espnow_peer.h>
 
 class AstrOsStorageManager
 {
@@ -58,7 +59,7 @@ public:
 
     std::vector<std::string> listFiles(std::string folder);
 
-    bool formatSdCard();
+    esp_err_t formatSdCard();
 };
 
 extern AstrOsStorageManager AstrOs_Storage;

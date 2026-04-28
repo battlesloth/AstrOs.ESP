@@ -2,8 +2,11 @@
 #define ANIMATIONCONTROLLER_HPP
 
 #include <AnimationCommand.hpp>
+#include <AstrOsAnimationEngine.hpp>
 
-#include <array>
+#include <atomic>
+#include <cstdint>
+#include <memory>
 #include <string>
 
 // needed for QueueHandle_t, must be in this order
@@ -25,25 +28,15 @@ class AnimationController
 private:
     SemaphoreHandle_t animationMutex;
 
-    // script queue
-    bool queueing;
-    int queueFront;
-    int queueRear;
-    int queueSize;
-    int queueCapacity = QUEUE_CAPACITY;
-    std::array<std::string, QUEUE_CAPACITY> scriptQueue;
+    ScriptQueue<QUEUE_CAPACITY> scriptQueue_;
+    std::atomic<bool> queueing;
 
-    // script
-    bool scriptLoaded;
-    int delayTillNextEvent;
+    std::atomic<bool> scriptLoaded;
+    std::atomic<int> delayTillNextEvent;
+    std::atomic<uint32_t> panicGeneration;
     std::vector<AnimationCommand> scriptEvents;
 
-    // functions
-    bool queueIsEmpty();
-    bool queueIsFull();
-    void handleLastServoEvent();
     void loadNextScript();
-    void parseScript(std::string script);
 
 public:
     AnimationController();
@@ -52,7 +45,7 @@ public:
     bool queueScript(std::string script);
     bool queueCommand(std::string command);
     bool scriptIsLoaded();
-    CommandTemplate *getNextCommandPtr();
+    std::unique_ptr<CommandTemplate> getNextCommandPtr();
     int msTillNextServoCommand();
 };
 

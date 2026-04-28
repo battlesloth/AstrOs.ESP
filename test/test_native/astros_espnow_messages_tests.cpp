@@ -277,3 +277,108 @@ TEST(EspNowMessages, ServoTest)
 
     free(value.data);
 }
+
+TEST(EspNowMessages, CommandRun)
+{
+    std::stringstream msg;
+    msg << "msg-id" << UNIT_SEPARATOR << "command-body";
+
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::COMMAND_RUN, "macaddress", msg.str())[0];
+    auto parsed = msgService.parsePacket(value.data);
+
+    EXPECT_EQ(AstrOsPacketType::COMMAND_RUN, parsed.packetType);
+    EXPECT_EQ(1, parsed.packetNumber);
+    EXPECT_EQ(1, parsed.totalPackets);
+
+    std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "macaddress" << UNIT_SEPARATOR << "msg-id" << UNIT_SEPARATOR << "command-body";
+
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+
+    free(value.data);
+}
+
+TEST(EspNowMessages, CommandRunAck)
+{
+    std::stringstream msg;
+    msg << "padawan-name" << UNIT_SEPARATOR << "msg-id" << UNIT_SEPARATOR << "ok";
+
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::COMMAND_RUN_ACK, "macaddress", msg.str())[0];
+    auto parsed = msgService.parsePacket(value.data);
+
+    EXPECT_EQ(AstrOsPacketType::COMMAND_RUN_ACK, parsed.packetType);
+    EXPECT_EQ(1, parsed.packetNumber);
+    EXPECT_EQ(1, parsed.totalPackets);
+
+    std::string payloadString(reinterpret_cast<char *>(parsed.payload), parsed.payloadSize);
+    std::stringstream expected;
+    expected << "macaddress" << UNIT_SEPARATOR << "padawan-name" << UNIT_SEPARATOR << "msg-id" << UNIT_SEPARATOR
+             << "ok";
+
+    EXPECT_STREQ(expected.str().c_str(), payloadString.c_str());
+
+    free(value.data);
+}
+
+TEST(EspNowMessages, CommandRunNak)
+{
+    auto msgService = AstrOsEspNowMessageService();
+
+    auto value = msgService.generateEspNowMsg(AstrOsPacketType::COMMAND_RUN_NAK, "macaddress", "why-it-failed")[0];
+    auto parsed = msgService.parsePacket(value.data);
+
+    EXPECT_EQ(AstrOsPacketType::COMMAND_RUN_NAK, parsed.packetType);
+    EXPECT_EQ(1, parsed.packetNumber);
+    EXPECT_EQ(1, parsed.totalPackets);
+
+    free(value.data);
+}
+
+// Guard against the class of bug that let COMMAND_RUN / COMMAND_RUN_ACK /
+// COMMAND_RUN_NAK slip through unregistered for months: when a packet type
+// has no entry in packetTypeMap, generateEspNowMsg returns an empty vector
+// silently and nothing reaches the wire. Enumerate every declared type and
+// assert the round-trip survives. Any new enum value has to be added to
+// both this list and packetTypeMap — the test fails loudly otherwise.
+TEST(EspNowMessages, EveryDeclaredPacketTypeHasAValidator)
+{
+    auto msgService = AstrOsEspNowMessageService();
+
+    const AstrOsPacketType types[] = {
+        AstrOsPacketType::UNKNOWN,           AstrOsPacketType::BASIC,
+        AstrOsPacketType::REGISTRATION_REQ,  AstrOsPacketType::REGISTRATION,
+        AstrOsPacketType::REGISTRATION_ACK,  AstrOsPacketType::POLL,
+        AstrOsPacketType::POLL_ACK,          AstrOsPacketType::CONFIG,
+        AstrOsPacketType::CONFIG_ACK,        AstrOsPacketType::CONFIG_NAK,
+        AstrOsPacketType::SCRIPT_DEPLOY,     AstrOsPacketType::SCRIPT_DEPLOY_ACK,
+        AstrOsPacketType::SCRIPT_DEPLOY_NAK, AstrOsPacketType::SCRIPT_RUN,
+        AstrOsPacketType::SCRIPT_RUN_ACK,    AstrOsPacketType::SCRIPT_RUN_NAK,
+        AstrOsPacketType::COMMAND_RUN,       AstrOsPacketType::COMMAND_RUN_ACK,
+        AstrOsPacketType::COMMAND_RUN_NAK,   AstrOsPacketType::PANIC_STOP,
+        AstrOsPacketType::FORMAT_SD,         AstrOsPacketType::FORMAT_SD_ACK,
+        AstrOsPacketType::FORMAT_SD_NAK,     AstrOsPacketType::SERVO_TEST,
+        AstrOsPacketType::SERVO_TEST_ACK,
+    };
+
+    for (auto type : types)
+    {
+        auto packets = msgService.generatePackets(type, "round-trip");
+        ASSERT_FALSE(packets.empty()) << "AstrOsPacketType value " << static_cast<int>(type)
+                                      << " is not registered in packetTypeMap "
+                                      << "(generateEspNowMsg will silently drop it). Add a packetTypeMap entry in "
+                                         "AstrOsEspNowMessageService.cpp.";
+
+        auto parsed = msgService.parsePacket(packets[0].data);
+        EXPECT_EQ(type, parsed.packetType) << "Round-trip lost type " << static_cast<int>(type);
+
+        for (auto &p : packets)
+        {
+            free(p.data);
+        }
+    }
+}
