@@ -65,6 +65,9 @@ Existing framing is unchanged: `[type(int)][RS][validator-string][RS][msg-id][GS
 FW_TRANSFER_BEGIN:    transfer-id<US>total-size<US>sha256-hex<US>chunk-size<US>target-list
                       target-list = controllerId[RS]controllerId[RS]...
                                     "master" included means master self-flashes last
+FW_TRANSFER_BEGIN_ACK: transfer-id<US>status
+                      status = "OK" on success; otherwise a snake_case rejection
+                      code (e.g., "sd_full", "busy", "unsupported_version")
 FW_CHUNK:             transfer-id<US>seq<US>payload-len<US>base64-bytes<US>crc16-hex
 FW_CHUNK_ACK:         transfer-id<US>highest-contiguous-seq<US>next-expected-seq<US>window-remaining
 FW_CHUNK_NAK:         transfer-id<US>last-good-seq<US>reason-code   // CRC|SIZE|OUT_OF_ORDER|FLASH_FULL
