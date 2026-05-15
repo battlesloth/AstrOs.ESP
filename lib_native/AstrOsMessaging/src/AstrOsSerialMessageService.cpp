@@ -426,7 +426,12 @@ std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::str
 
 namespace
 {
-    // Returns true iff `s` is exactly `expectedLen` hex characters (0-9, a-f, A-F).
+    // Returns true iff `s` is exactly `expectedLen` LOWERCASE hex characters
+    // (0-9, a-f). Per .docs/protocol.md line 25, all SHA-256 hashes on the wire
+    // are lowercase. Accepting uppercase here would let a malformed wire hash
+    // slip through the parser and later be miscategorized as HASH_MISMATCH
+    // when the master's locally computed lowercase hash didn't match — wrong
+    // diagnostic for the actual problem (malformed wire input).
     bool isHexStringOfLength(const std::string &s, size_t expectedLen)
     {
         if (s.size() != expectedLen)
@@ -435,7 +440,7 @@ namespace
         }
         for (char c : s)
         {
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
             {
                 return false;
             }
@@ -470,14 +475,17 @@ namespace
     }
 
     // Parses a non-negative decimal integer with strict semantics. strtoul
-    // by itself accepts leading '+' or '-' (turning "-1" into ULONG_MAX on
-    // overflow-wraparound), which on the 32-bit ESP target would slip past
-    // a `> 0xFFFFFFFFul` bound check as exactly UINT32_MAX. This helper
-    // rejects signed prefixes, empty input, and trailing non-digit chars.
-    // Caller is responsible for the upper-bound check on `out`.
+    // by itself accepts leading whitespace and leading '+'/'-' (the latter
+    // wraps "-1" to ULONG_MAX on overflow-wraparound, which on the 32-bit
+    // ESP target equals UINT32_MAX and would slip past a `> 0xFFFFFFFFul`
+    // bound check). Requiring the first character to be a digit rejects
+    // signed prefixes, leading whitespace, and any other non-digit lead.
+    // Trailing non-digits and overflow are still caught by the endptr +
+    // errno checks below. Caller is responsible for the upper-bound check
+    // on `out`.
     bool parseStrictUint(const std::string &s, unsigned long &out)
     {
-        if (s.empty() || s[0] == '-' || s[0] == '+')
+        if (s.empty() || s[0] < '0' || s[0] > '9')
         {
             return false;
         }

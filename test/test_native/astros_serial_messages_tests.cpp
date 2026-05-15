@@ -964,3 +964,59 @@ TEST(SerialMessages, ParseFwDeployBeginRejectsInteriorEmptyOrder)
     auto rec = parseFwDeployBegin(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+//=================================================================================================
+// FW_* parser uppercase-hex + leading-whitespace rejection (external PR feedback, second batch)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsUppercaseSha256)
+{
+    // protocol.md line 25 mandates SHA-256 is 64 *lowercase* hex chars.
+    // Accepting uppercase here would let a malformed wire hash slip through
+    // and later be misdiagnosed as HASH_MISMATCH when compared to the
+    // master's locally computed lowercase hash.
+    std::string upperHash64 = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << upperHash64 << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsUppercaseSha256)
+{
+    std::string upperHash64 = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << upperHash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsLeadingWhitespaceTotalSize)
+{
+    // strtoul skips leading whitespace; the strict digit-first check rejects it.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsLeadingWhitespaceSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsLeadingWhitespaceTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
