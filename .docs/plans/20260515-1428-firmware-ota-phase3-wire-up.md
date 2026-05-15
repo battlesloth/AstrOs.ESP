@@ -34,9 +34,9 @@ No changes to `lib_native/AstrOsMessaging`, `lib_native/AstrOsBulkTransport`, or
 
 - **Where `pio` lives.** Same as Phase 2 — assume it's on PATH, otherwise invoke via `~/.platformio/penv/bin/pio` or the VS Code-bundled binary. Build commands: `pio run -e metro_s3`, `pio run -e lolin_d32_pro`, `pio test -e test`. The pre-commit hook runs clang-format on staged C/C++ files.
 - **Branch.** Implementation work happens on `feature/ota-phase3-wire-up`, branched from `develop`. The plan file you are reading is committed here as the first commit. Per `CLAUDE.md` the plan must be committed before any implementation code.
-- **The `AstrOs_SerialMsgHandler` global lives in `lib/AstrOsSerialMsgHandler/src/AstrOsSerialMsgHandler.cpp:12`.** It is the only instance; both `handleMessage` (inbound parse) and the various `sendXxx` methods (outbound to server) run through it. Adding `sendFw*` methods follows the existing per-message-type pattern.
+- **The `AstrOs_SerialMsgHandler` global lives near the top of `lib/AstrOsSerialMsgHandler/src/AstrOsSerialMsgHandler.cpp` (line moves with edits; current is line 16 post-clang-format).** It is the only instance; both `handleMessage` (inbound parse) and the various `sendXxx` methods (outbound to server) run through it. Adding `sendFw*` methods follows the existing per-message-type pattern.
 - **Inbound flow for the master:** `astrosRxTask` (in `src/main.cpp` around line 984) reads bytes from the AstrOs UART, accumulates a line, and on `\n` calls `AstrOs_SerialMsgHandler.handleMessage(line)` at roughly line 1011. That call runs on core 0. Phase 3's FW_* dispatch executes in this same task — base64 decode happens there, then the decoded payload is handed off via `otaQueue` to the new `otaReceiverTask` running on core 1.
-- **`AstrOsSerialMsgHandler::handleMessage` currently always calls `AstrOsSerialProtocol::decodeSerialMessage` and pumps the resulting commands into `interfaceResponseQueue`** (line 47 of the .cpp). Phase 3 adds an **early return** for the four FW_* types BEFORE that decode call. The Phase 1 `decodeFwInbound` path therefore becomes unreachable for these messages on the master serial path; leave it in place but do not modify it.
+- **`AstrOsSerialMsgHandler::handleMessage` currently always calls `AstrOsSerialProtocol::decodeSerialMessage` and pumps the resulting commands into `interfaceResponseQueue`** (the decode call sits at line 92 of the .cpp post-clang-format; in develop pre-Phase-3 it was line 47). Phase 3 adds an **early return** for the four FW_* types BEFORE that decode call. The Phase 1 `decodeFwInbound` path therefore becomes unreachable for these messages on the master serial path; leave it in place but do not modify it.
 - **Base64 decoder choice: `mbedtls_base64_decode`.** Header `mbedtls/base64.h` is already in the ESP-IDF dependency tree (the SHA-256 path Phase 4 needs lives in the same component). The function signature is:
   ```c
   int mbedtls_base64_decode(unsigned char *dst, size_t dlen, size_t *olen,
@@ -484,7 +484,7 @@ Expected: 4 tests pass.
 pio test -e test
 ```
 
-Expected: all 293 (pre-existing) + 4 (new) = 297 tests pass.
+Expected: all 294 (pre-existing) + 4 (new) = 298 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1591,7 +1591,7 @@ Expected: both build clean.
 pio test -e test
 ```
 
-Expected: 297 tests pass (293 baseline + 4 from Task 2).
+Expected: 298 tests pass (294 baseline + 4 from Task 2).
 
 - [ ] **Step 10: Commit**
 
@@ -1619,7 +1619,7 @@ Phase 3 milestone check per the design doc's QA section: drive a complete 1.2 MB
 pio test -e test
 ```
 
-Expected: 297 / 297 pass.
+Expected: 298 / 298 pass.
 
 - [ ] **Step 2: Confirm both boards build clean**
 
@@ -1729,7 +1729,7 @@ gh pr create --base develop --title "feat(ota): Phase 3 — wire up master seria
 - Phase 3 sinks payload to /dev/null; SD writer + streaming SHA-256 land in Phase 4.
 
 ## Test plan
-- [x] `pio test -e test` (297 pass, 4 new for queue_ota_msg_t layout)
+- [x] `pio test -e test` (298 pass, 4 new for queue_ota_msg_t layout)
 - [x] `pio run -e metro_s3` clean
 - [x] `pio run -e lolin_d32_pro` clean
 - [x] clang-format clean
