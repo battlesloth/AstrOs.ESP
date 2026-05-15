@@ -343,3 +343,25 @@ TEST(SerialProtocol, DescribeRejectReasonReturnsNonNull)
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::UNKNOWN_TYPE));
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::EMPTY_PAYLOAD));
 }
+
+TEST(SerialProtocol, MapResponseTypeMasterFwTable)
+{
+    using namespace AstrOsSerialProtocol;
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_BEGIN,
+              mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_CHUNK, mapResponseType(AstrOsSerialMessageType::FW_CHUNK, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_END,
+              mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_END, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_DEPLOY_BEGIN,
+              mapResponseType(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, true));
+}
+
+TEST(SerialProtocol, MapResponseTypePadawanFwAllUnknown)
+{
+    using namespace AstrOsSerialProtocol;
+    // Padawans don't receive FW_* over serial; they get only ESP-NOW.
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_CHUNK, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_END, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, false));
+}

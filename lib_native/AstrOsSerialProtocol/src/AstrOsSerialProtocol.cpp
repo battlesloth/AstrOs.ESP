@@ -139,6 +139,14 @@ namespace AstrOsSerialProtocol
                 return AstrOsInterfaceResponseType::COMMAND;
             case AstrOsSerialMessageType::SERVO_TEST:
                 return AstrOsInterfaceResponseType::SERVO_TEST;
+            case AstrOsSerialMessageType::FW_TRANSFER_BEGIN:
+                return AstrOsInterfaceResponseType::FW_TRANSFER_BEGIN;
+            case AstrOsSerialMessageType::FW_CHUNK:
+                return AstrOsInterfaceResponseType::FW_CHUNK;
+            case AstrOsSerialMessageType::FW_TRANSFER_END:
+                return AstrOsInterfaceResponseType::FW_TRANSFER_END;
+            case AstrOsSerialMessageType::FW_DEPLOY_BEGIN:
+                return AstrOsInterfaceResponseType::FW_DEPLOY_BEGIN;
             default:
                 return AstrOsInterfaceResponseType::UNKNOWN;
             }
