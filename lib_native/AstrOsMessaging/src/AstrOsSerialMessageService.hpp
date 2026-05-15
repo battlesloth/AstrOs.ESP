@@ -36,6 +36,17 @@ namespace AstrOsSC
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
     constexpr const static char *SERVO_TEST = "SERVO_TEST";
     constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
+    constexpr const static char *FW_TRANSFER_BEGIN = "FW_TRANSFER_BEGIN";
+    constexpr const static char *FW_TRANSFER_BEGIN_ACK = "FW_TRANSFER_BEGIN_ACK";
+    constexpr const static char *FW_CHUNK = "FW_CHUNK";
+    constexpr const static char *FW_CHUNK_ACK = "FW_CHUNK_ACK";
+    constexpr const static char *FW_CHUNK_NAK = "FW_CHUNK_NAK";
+    constexpr const static char *FW_TRANSFER_END = "FW_TRANSFER_END";
+    constexpr const static char *FW_TRANSFER_END_ACK = "FW_TRANSFER_END_ACK";
+    constexpr const static char *FW_DEPLOY_BEGIN = "FW_DEPLOY_BEGIN";
+    constexpr const static char *FW_PROGRESS = "FW_PROGRESS";
+    constexpr const static char *FW_DEPLOY_DONE = "FW_DEPLOY_DONE";
+    constexpr const static char *FW_BACKPRESSURE = "FW_BACKPRESSURE";
 } // namespace AstrOsSC
 
 enum class AstrOsSerialMessageType
@@ -62,7 +73,20 @@ enum class AstrOsSerialMessageType
     FORMAT_SD_ACK,
     FORMAT_SD_NAK,
     SERVO_TEST,
-    SERVO_TEST_ACK
+    SERVO_TEST_ACK,
+    // Values 23–29 are reserved for in-flight non-OTA additions per
+    // .docs/protocol.md. FW_* OTA types start at 30.
+    FW_TRANSFER_BEGIN = 30,
+    FW_TRANSFER_BEGIN_ACK = 31,
+    FW_CHUNK = 32,
+    FW_CHUNK_ACK = 33,
+    FW_CHUNK_NAK = 34,
+    FW_TRANSFER_END = 35,
+    FW_TRANSFER_END_ACK = 36,
+    FW_DEPLOY_BEGIN = 37,
+    FW_PROGRESS = 38,
+    FW_DEPLOY_DONE = 39,
+    FW_BACKPRESSURE = 40,
 };
 
 typedef struct

@@ -2,6 +2,7 @@
 #include <AstrOsUtility.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <sstream>
 
 // using ::testing::MatchesRegex;
 // using ::testing::StartsWith;
@@ -294,4 +295,50 @@ TEST(SerialMessages, FormatSDNakMessage)
 TEST(SerialMessages, ServoTestAckMessage)
 {
     RunAckNakTest(AstrOsSerialMessageType::SERVO_TEST_ACK);
+}
+
+//=================================================================================================
+// FW_* recognition (Phase 1 wire format)
+//=================================================================================================
+
+namespace
+{
+    // Hand-craft a serial message that has only a header (no payload) for
+    // a given FW_* type, using the same shape generateHeader produces.
+    // We can't call the real generateHeader yet for FW_* types until the
+    // msgTypeMap entries land in Task 1, so this helper builds the raw
+    // string directly.
+    std::string buildBareHeader(int typeInt, const char *validator, const std::string &msgId)
+    {
+        std::stringstream ss;
+        ss << typeInt << RECORD_SEPARATOR << validator << RECORD_SEPARATOR << msgId << GROUP_SEPARATOR;
+        return ss.str();
+    }
+} // namespace
+
+TEST(SerialMessages, FwTransferBeginRecognized)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = buildBareHeader(30, "FW_TRANSFER_BEGIN", "mid-1");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, validation.type);
+    EXPECT_STREQ("mid-1", validation.msgId.c_str());
+}
+
+TEST(SerialMessages, FwTypesUseProtocolReservedRange)
+{
+    EXPECT_EQ(30, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_BEGIN));
+    EXPECT_EQ(31, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK));
+    EXPECT_EQ(32, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK));
+    EXPECT_EQ(33, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK_ACK));
+    EXPECT_EQ(34, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK_NAK));
+    EXPECT_EQ(35, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_END));
+    EXPECT_EQ(36, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_END_ACK));
+    EXPECT_EQ(37, static_cast<int>(AstrOsSerialMessageType::FW_DEPLOY_BEGIN));
+    EXPECT_EQ(38, static_cast<int>(AstrOsSerialMessageType::FW_PROGRESS));
+    EXPECT_EQ(39, static_cast<int>(AstrOsSerialMessageType::FW_DEPLOY_DONE));
+    EXPECT_EQ(40, static_cast<int>(AstrOsSerialMessageType::FW_BACKPRESSURE));
 }

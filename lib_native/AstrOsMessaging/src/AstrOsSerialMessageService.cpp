@@ -32,6 +32,17 @@ AstrOsSerialMessageService::AstrOsSerialMessageService()
         {AstrOsSerialMessageType::PANIC_STOP, AstrOsSC::PANIC_STOP},
         {AstrOsSerialMessageType::SERVO_TEST, AstrOsSC::SERVO_TEST},
         {AstrOsSerialMessageType::SERVO_TEST_ACK, AstrOsSC::SERVO_TEST_ACK},
+        {AstrOsSerialMessageType::FW_TRANSFER_BEGIN, AstrOsSC::FW_TRANSFER_BEGIN},
+        {AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, AstrOsSC::FW_TRANSFER_BEGIN_ACK},
+        {AstrOsSerialMessageType::FW_CHUNK, AstrOsSC::FW_CHUNK},
+        {AstrOsSerialMessageType::FW_CHUNK_ACK, AstrOsSC::FW_CHUNK_ACK},
+        {AstrOsSerialMessageType::FW_CHUNK_NAK, AstrOsSC::FW_CHUNK_NAK},
+        {AstrOsSerialMessageType::FW_TRANSFER_END, AstrOsSC::FW_TRANSFER_END},
+        {AstrOsSerialMessageType::FW_TRANSFER_END_ACK, AstrOsSC::FW_TRANSFER_END_ACK},
+        {AstrOsSerialMessageType::FW_DEPLOY_BEGIN, AstrOsSC::FW_DEPLOY_BEGIN},
+        {AstrOsSerialMessageType::FW_PROGRESS, AstrOsSC::FW_PROGRESS},
+        {AstrOsSerialMessageType::FW_DEPLOY_DONE, AstrOsSC::FW_DEPLOY_DONE},
+        {AstrOsSerialMessageType::FW_BACKPRESSURE, AstrOsSC::FW_BACKPRESSURE},
     };
 }
 
