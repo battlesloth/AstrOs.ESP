@@ -161,7 +161,7 @@ namespace AstrOsBulkTransport
 
     EndResult BulkReceiver::onEnd(uint8_t xferId, uint32_t totalChunksSent)
     {
-        // Three distinct IO_ERROR causes — surface each with its own
+        // Four distinct IO_ERROR causes — surface each with its own
         // Reason so Phase 3 can log them distinctly. The four conditions
         // intentionally check in order of caller-fault diagnosis: "is
         // the receiver even live?" → "are we talking about the same

@@ -2,22 +2,55 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Post-implementation amendments (commits `6123a6a`, `fe87535`, and the
-> PR-toolkit cleanup pass on `feature/ota-phase2-bulk-transport`):** the
-> original plan claimed `crc16_ccitt_false` was byte-identical to ESP-IDF's
-> `esp_crc16_le`. That is wrong — `esp_crc16_le` is CRC-16/CCITT
-> *reflected* with init=0 and produces different output. The correct
-> ESP-IDF equivalent is `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`.
-> The plan also said the single-zero-byte CRC value is `0x1EF0`; the
-> correct value is `0xE1F0` (nibbles transposed). The shipped README,
-> `.hpp`, and tests have the corrected forms; the historical text in this
-> plan is preserved with inline corrections (`~~strikethrough~~ →
-> correction`) so the original intent is auditable. Test totals also moved
-> (22 → 26 cases, 279 → 287 total) after `fe87535` added 4 strengthening
-> tests. Final PR-toolkit pass on the same branch added `BeginResult`,
-> `EndResult::Reason`, `ChunkResult` factory methods, totalSize/windowSize
-> validation, and a `seq >= totalChunks` overflow guard — see the cleanup
-> commits for the API redesign rationale.
+> **Post-implementation amendments** (commits `6123a6a`, `fe87535`, and the
+> PR-toolkit cleanup pass on `feature/ota-phase2-bulk-transport`).
+>
+> **CRC interop:** the original plan claimed `crc16_ccitt_false` was
+> byte-identical to ESP-IDF's `esp_crc16_le`. That is wrong — `esp_crc16_le`
+> is CRC-16/CCITT *reflected* with init=0 and produces different output.
+> The correct ESP-IDF equivalent is
+> `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`. The plan also said the
+> single-zero-byte CRC value is `0x1EF0`; the correct value is `0xE1F0`
+> (nibbles transposed). The shipped README, `.hpp`, and tests have the
+> corrected forms.
+>
+> **Test totals:** the plan originally said "22 new tests / 279 total."
+> Actual shipped numbers are **32 new BulkTransport tests / 293 total**
+> (261 develop baseline + 32). Growth came in three waves: original 22
+> tests at the task-by-task TDD stage, +4 strengthening tests in
+> `fe87535`, then +6 more during the PR-toolkit cleanup pass (4
+> `begin()`-validation tests in `cc8b749` covering ZERO_WINDOW_SIZE and
+> the three SIZE_INCONSISTENT shapes, plus 2 in `cbd000a` —
+> `Crc16MultiByteNonStringVector` and `OnEndOkLeavesReceiverInPostOkState`).
+>
+> **API redesign from the PR-toolkit pass:** added `BeginResult`,
+> `EndResult::Reason`, `ChunkResult` factory methods (`ack`,
+> `nakActive`, `nakInactive`) with a private default constructor,
+> `[[nodiscard]]` on `BeginResult`/`EndResult`, totalSize/windowSize
+> validation in `begin()`, a `seq >= totalChunks_` overflow guard in
+> `onChunk`, and a private `lastGoodSeq()` helper folding the
+> duplicated first-chunk-NAK contract into one place.
+>
+> **HASH_MISMATCH ownership** moved: originally attributed to "the
+> Phase 3 OtaReceiver that owns the streaming SHA-256 context," but
+> the corrected layering is — Phase 3's MIXED `OtaReceiver` sinks
+> payload to `/dev/null` and never returns `HASH_MISMATCH`; only the
+> Phase 4 enhancement that adds the streaming SHA-256 context will
+> produce it. The shipped `.hpp` reflects this; the Task-3 plan-body
+> skeleton (lines ~413-424) still carries the original (incorrect)
+> claim and was not surgically corrected.
+>
+> **Plan-body skeletons are historical, NOT current code.** The
+> task-by-task skeletons in the body of this plan (especially Task 3's
+> `EndResult` shape, Task 4's `void begin(...)` signature, and the
+> ~19 test-call sites) reflect the original API as it was first
+> implemented, not the post-cleanup shipped API. The CRC interop
+> claims were surgically corrected (the highest-stakes drift); the
+> API-redesign drift was not. **Re-executors of this plan must
+> consult the shipped `.hpp`/`.cpp` and the cleanup commits as the
+> source of truth for the final API.** Trying to build solely from
+> the body skeletons will produce a working but obsolete API surface
+> the PR-toolkit pass has since superseded.
 
 **Goal:** Build `lib_native/AstrOsBulkTransport` — a PURE, native-testable state machine that consumes parsed `FW_CHUNK` records and produces ACK/NAK decisions with sliding-window backpressure. No firmware behavior change; this is the algorithmic core that Phase 3 will wire into the `AstrOsSerialMsgHandler` dispatch path.
 
@@ -408,6 +441,17 @@ namespace AstrOsBulkTransport
         uint16_t payloadLen = 0;
     };
 
+    // NOTE — superseded by cleanup commit `cbd000a` (PR-toolkit pass):
+    //
+    // (1) HASH_MISMATCH ownership moved to Phase 4 — Phase 3's MIXED
+    //     OtaReceiver sinks payload to /dev/null and never produces it.
+    //     Only the Phase 4 enhancement with the streaming SHA-256 context
+    //     ever returns HASH_MISMATCH. The comment below predates that
+    //     layering decision.
+    // (2) EndResult gained a `Reason` enum (NONE | NOT_ACTIVE |
+    //     WRONG_XFER_ID | SENDER_TOTAL_MISMATCH | RECEIVER_SHORT_COUNT)
+    //     and a `[[nodiscard]]` attribute. See the shipped `.hpp` for
+    //     the final shape.
     struct EndResult
     {
         // HASH_MISMATCH is reserved for the MIXED-layer caller (Phase 3
@@ -1266,7 +1310,7 @@ EOF
 - [ ] **Step 1: Run the full native test suite**
 
 Run: `/home/jeff/.platformio/penv/bin/pio test -e test`
-Expected: 261 → 287 (26 new BulkTransport tests, including the 4 strengthening cases added late by commit `fe87535`). All pass.
+Expected: 261 → 293 (32 new BulkTransport tests — 22 from the original task-by-task TDD, 4 from `fe87535`'s strengthening pass, 6 more from the PR-toolkit cleanup pass — 4 begin-validation in `cc8b749` + `Crc16MultiByteNonStringVector` and `OnEndOkLeavesReceiverInPostOkState` in `cbd000a`). All pass.
 
 - [ ] **Step 2: Build both board firmware variants**
 
@@ -1324,7 +1368,7 @@ Adds:
 
 ## Test plan
 
-- [x] \`pio test -e test\` passes (287/287 — Phase 2 added 26 tests on top of develop's 261)
+- [x] \`pio test -e test\` passes (293/293 — Phase 2 added 32 tests on top of develop's 261)
 - [x] \`pio run -e metro_s3\` builds clean
 - [x] \`pio run -e lolin_d32_pro\` builds clean
 - [x] CI native-purity grep finds no forbidden includes in the new lib
@@ -1351,7 +1395,7 @@ EOF
   - `onEnd` OK + IO_ERROR (Tasks 7 + 8) ✓
   - End-to-end integration test (Task 9) ✓
   - Final verification + PR (Task 10) ✓
-  - **Post-implementation hardening from PR-toolkit pass (not a numbered task)**: `begin()` input-validation guards (zero `chunkSize`/`totalChunks`/`windowSize`, `totalSize` ≈ `totalChunks * chunkSize` consistency); `seq >= totalChunks_` overflow guard on the SIZE math; `BeginResult` return value; `EndResult::Reason` enum (distinct IO_ERROR causes); `ChunkResult` factory methods preventing invalid field combinations; `writeResumePoint` helper folding the duplicated first-chunk-NAK contract into one place. ✓
+  - **Post-implementation hardening from PR-toolkit pass (not a numbered task)**: `begin()` input-validation guards (zero `chunkSize`/`totalChunks`/`windowSize`, `totalSize` ≈ `totalChunks * chunkSize` consistency); `seq >= totalChunks_` overflow guard on the SIZE math; `BeginResult` return value; `EndResult::Reason` enum (distinct IO_ERROR causes); `ChunkResult` factory methods preventing invalid field combinations; `lastGoodSeq()` private helper folding the duplicated first-chunk-NAK contract into one place. ✓
 - **Placeholder scan:** the original plan was free of TBDs at task-execution time. The amendment header above flags the specific claims (CRC interop, single-zero-byte value, 22/279 test counts) that were superseded by the PR-toolkit cleanup; surgical corrections in-body keep the plan re-executable.
 - **Type consistency:** `BulkReceiver`, `ChunkResult`, `EndResult`, `Decision`, `NakReason` are used consistently across all tasks. `crc16_ccitt_false` lowercase-underscore naming is used everywhere.
 - **Scope check:** 10 tasks. Above the CLAUDE.md ~8-task warning, but each task is small (≤2 files, ≤30 min) and Phase 2 is genuinely one coherent unit — splitting into "scaffold" and "state machine" sub-phases would just add cross-PR coordination cost without value. If the scope grows past 10, escalate.
