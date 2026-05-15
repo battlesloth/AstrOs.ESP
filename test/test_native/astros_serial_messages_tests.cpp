@@ -481,9 +481,18 @@ TEST(SerialMessages, FwChunkNakRejectsInvalidReasonCode)
     // at the source rather than emitting an unidentifiable frame.
     auto msgSvc = AstrOsSerialMessageService();
 
+    // Sanity foil: an otherwise-identical call with a valid reasonCode must
+    // NOT return empty. Pins that emptiness is reasonCode-driven, not a
+    // regression that short-circuits the whole builder.
+    EXPECT_FALSE(msgSvc.getFwChunkNak("7", 0, 0, "CRC").empty());
+
     EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "WAT").empty());
     EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "").empty());
-    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "crc").empty()); // case-sensitive
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "crc").empty());          // case-sensitive
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "out_of_order").empty()); // case-sensitive
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, " CRC").empty());         // leading space
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "CRC ").empty());         // trailing space
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "OUT-OF-ORDER").empty()); // wrong separator
 }
 
 TEST(SerialMessages, FwTransferEndAckOkMessage)

@@ -444,6 +444,8 @@ Payload shape: `transfer-id<US>last-good-seq<US>reason-code` where reason-code i
 
 - [x] **Step 1: Write the failing test**
 
+> Superseded — see amendment above.
+
 ```cpp
 TEST(SerialMessages, FwChunkNakCrcMessage)
 {
@@ -486,11 +488,15 @@ Expected: FAIL — `getFwChunkNak` not declared.
 
 Header — append:
 
+> Superseded — see amendment above.
+
 ```cpp
     std::string getFwChunkNak(std::string transferId, uint32_t lastGoodSeq, std::string reasonCode);
 ```
 
 Source — append:
+
+> Superseded — see amendment above.
 
 ```cpp
 /// @brief generates FW_CHUNK_NAK reply. Payload shape:
@@ -515,6 +521,8 @@ Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
 - [x] **Step 5: Commit**
+
+> Superseded — see amendment above.
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \

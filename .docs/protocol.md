@@ -49,7 +49,7 @@ Existing framing is unchanged: `[type(int)][RS][validator-string][RS][msg-id][GS
 | 31 | `FW_TRANSFER_BEGIN_ACK` | master → server | Ready or reject (e.g. SD full). |
 | 32 | `FW_CHUNK` | server → master | One frame of base64-encoded bytes with seq + CRC-16. |
 | 33 | `FW_CHUNK_ACK` | master → server | Cumulative ACK with `next-expected-seq` and `window-remaining`. |
-| 34 | `FW_CHUNK_NAK` | master → server | Bad CRC / out-of-order, with `last-good-seq` and `next-expected-seq`. |
+| 34 | `FW_CHUNK_NAK` | master → server | Reject (CRC \| SIZE \| OUT_OF_ORDER \| FLASH_FULL) with `last-good-seq` and `next-expected-seq`. |
 | 35 | `FW_TRANSFER_END` | server → master | End-of-stream + final SHA-256. |
 | 36 | `FW_TRANSFER_END_ACK` | master → server | `OK` / `HASH_MISMATCH` / `IO_ERROR` + computed hash. |
 | 37 | `FW_DEPLOY_BEGIN` | server → master | Push staged SD copy to listed controllers, in given order. |

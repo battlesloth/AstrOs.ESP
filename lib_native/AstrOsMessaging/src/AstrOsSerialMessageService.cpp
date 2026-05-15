@@ -216,9 +216,12 @@ std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, ui
 ///        from it directly. Returns "" if `reasonCode` is not one of the
 ///        four protocol-defined values (caller programming error).
 /// @param transferId transfer id
-/// @param lastGoodSeq the last seq we committed; 0 when nothing committed
-///        yet (see nextExpectedSeq to distinguish from "seq 0 committed")
-/// @param nextExpectedSeq the seq the server must (re)send next
+/// @param lastGoodSeq the last seq we committed; 0 by convention when nothing
+///        has been committed yet. Receivers must look at nextExpectedSeq to
+///        disambiguate, since lastGoodSeq=0 is also the legitimate value when
+///        seq 0 has actually been committed.
+/// @param nextExpectedSeq the seq the server should resend next (the resume
+///        point — authoritative; do not derive from lastGoodSeq + 1)
 /// @param reasonCode must be one of "CRC" | "SIZE" | "OUT_OF_ORDER" |
 ///        "FLASH_FULL"; any other value returns "" and the caller is
 ///        responsible for noticing and logging
