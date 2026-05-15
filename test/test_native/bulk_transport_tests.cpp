@@ -175,8 +175,61 @@ TEST(BulkTransport, BeginWithZeroChunkSizeLeavesReceiverInactive)
     EXPECT_EQ(0u, result.windowRemaining); // not-active sentinel
 }
 
+TEST(BulkTransport, BeginWithZeroWindowSizeLeavesReceiverInactive)
+{
+    // Zero windowSize would defeat the windowRemaining=0 not-active
+    // sentinel: every reply from an active receiver would also report
+    // windowRemaining=0 (the configured size). begin() must reject so
+    // Phase 3's "abort + restart" dispatch isn't permanently armed.
+    AstrOsBulkTransport::BulkReceiver r;
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/0);
+
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::ZERO_WINDOW_SIZE, br.reason);
+}
+
+TEST(BulkTransport, BeginWithTotalSizeAboveChunkGridLeavesReceiverInactive)
+{
+    // totalChunks=2, chunkSize=4 -> at most 8 bytes can fit. totalSize=9
+    // means the sender claims more data than the chunk grid can hold:
+    // structurally impossible. Reject before the SIZE math can be confused.
+    AstrOsBulkTransport::BulkReceiver r;
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/9, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::SIZE_INCONSISTENT, br.reason);
+}
+
+TEST(BulkTransport, BeginWithTotalSizeBelowChunkGridLeavesReceiverInactive)
+{
+    // totalChunks=2, chunkSize=4 -> minimum valid totalSize is 5 (one
+    // full chunk + at least one byte in the second). totalSize=4 means
+    // the second chunk would have to be zero bytes, which the wire
+    // protocol disallows.
+    AstrOsBulkTransport::BulkReceiver r;
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::SIZE_INCONSISTENT, br.reason);
+}
+
+TEST(BulkTransport, BeginWithZeroTotalSizeLeavesReceiverInactive)
+{
+    // A zero-byte image is structurally meaningless — caught by the
+    // explicit `totalSize == 0` arm of the consistency check.
+    AstrOsBulkTransport::BulkReceiver r;
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/0, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::SIZE_INCONSISTENT, br.reason);
+}
+
 TEST(BulkTransport, BeginWithZeroTotalChunksLeavesReceiverInactive)
 {
+    // Note: the zero-totalChunks check runs BEFORE the zero-windowSize and
+    // SIZE_INCONSISTENT checks (consistent with the order in begin()), so
+    // a degenerate-on-multiple-axes BEGIN reports ZERO_TOTAL_CHUNKS — the
+    // first structural problem the receiver hits.
     AstrOsBulkTransport::BulkReceiver r;
     auto br = r.begin(/*xferId=*/7, /*totalSize=*/0, /*totalChunks=*/0, /*chunkSize=*/4, /*windowSize=*/16);
 

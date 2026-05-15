@@ -59,6 +59,29 @@ namespace AstrOsBulkTransport
             reset();
             return BeginResult::invalid(BeginResult::Reason::ZERO_TOTAL_CHUNKS);
         }
+        // A zero windowSize defeats the windowRemaining-as-not-active-sentinel
+        // contract: every reply from an active receiver would report
+        // windowRemaining=0 (the configured size), making it indistinguishable
+        // from the inactive case (windowRemaining=0 sentinel). Phase 3's
+        // "abort + restart handshake" dispatch would fire on every chunk.
+        if (windowSize == 0)
+        {
+            reset();
+            return BeginResult::invalid(BeginResult::Reason::ZERO_WINDOW_SIZE);
+        }
+        // totalSize must be in the half-open interval
+        // ((totalChunks - 1) * chunkSize, totalChunks * chunkSize].
+        // Outside this range, the SIZE math at onChunk lines 27/28 either
+        // overflows or produces a meaningless expectedLen (underflow when
+        // totalSize < committedBytes). Computed in uint64_t to avoid the
+        // overflow itself happening in the check.
+        const uint64_t maxBytes = static_cast<uint64_t>(totalChunks) * chunkSize;
+        const uint64_t minBytes = (totalChunks == 1) ? 1u : (static_cast<uint64_t>(totalChunks - 1) * chunkSize) + 1u;
+        if (totalSize == 0 || totalSize > maxBytes || totalSize < minBytes)
+        {
+            reset();
+            return BeginResult::invalid(BeginResult::Reason::SIZE_INCONSISTENT);
+        }
 
         xferId_ = xferId;
         nextSeq_ = 0;
@@ -92,9 +115,14 @@ namespace AstrOsBulkTransport
             return ChunkResult::nakInactive();
         }
 
-        // Structural rejections: wrong xferId or out-of-seq. Both collapse
-        // to OUT_OF_ORDER per the wire-level reason-code set.
-        if (xferId != xferId_ || seq != nextSeq_)
+        // Structural rejections: wrong xferId, out-of-seq, or seq outside
+        // the chunk grid. Range guard prevents `seq * chunkSize_` from
+        // overflowing uint32_t in the SIZE math below — in well-behaved
+        // code the `seq != nextSeq_` reject catches this earlier (nextSeq_
+        // is bounded by totalChunks_), but defense-in-depth pins it as a
+        // structural property of onChunk rather than an emergent one. All
+        // three collapse to OUT_OF_ORDER per the wire-level reason-code set.
+        if (xferId != xferId_ || seq != nextSeq_ || seq >= totalChunks_)
         {
             return ChunkResult::nakActive(NakReason::OUT_OF_ORDER, lastGoodSeq(), nextSeq_, windowSize_);
         }
