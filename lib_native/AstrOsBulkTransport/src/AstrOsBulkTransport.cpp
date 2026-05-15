@@ -2,11 +2,20 @@
 
 namespace AstrOsBulkTransport
 {
+    // NakReason wire stability: values CRC..FLASH_FULL are serialized into
+    // FW_CHUNK_NAK reason-code fields. Pin them at compile time so an
+    // accidental reorder breaks the build, not the protocol.
+    static_assert(static_cast<uint8_t>(NakReason::NONE) == 0);
+    static_assert(static_cast<uint8_t>(NakReason::CRC) == 1);
+    static_assert(static_cast<uint8_t>(NakReason::SIZE) == 2);
+    static_assert(static_cast<uint8_t>(NakReason::OUT_OF_ORDER) == 3);
+    static_assert(static_cast<uint8_t>(NakReason::FLASH_FULL) == 4);
+
     // CRC-16/CCITT-FALSE. Bit-by-bit reference implementation:
     //   poly = 0x1021, init = 0xFFFF, refIn = false, refOut = false, xorOut = 0.
-    // Table-based variants would be faster but the volume here (one chunk =
-    // ~4 KB per frame, ~5 MB/s peak throughput) doesn't justify the static
-    // table cost in a PURE lib that has no on-device performance pressure.
+    // Table-based variants would be faster but the FW_CHUNK rate is bounded
+    // by the 115200-baud serial link (~11 KB/s sustained, so each ~4 KB
+    // chunk's CRC completes in well under a millisecond). No table needed.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len)
     {
         uint16_t crc = 0xFFFFu;
@@ -31,6 +40,19 @@ namespace AstrOsBulkTransport
     void BulkReceiver::begin(uint8_t xferId, uint32_t totalSize, uint32_t totalChunks, uint16_t chunkSize,
                              uint8_t windowSize)
     {
+        // Reject protocol-illegal parameters by leaving the receiver inactive.
+        // A zero chunkSize would make every chunk NAK with SIZE (because
+        // expectedLen would be 0 for any non-final seq) and would risk
+        // confusing the SIZE math; zero totalChunks would let onEnd return
+        // OK without ever receiving a chunk. The MIXED caller's
+        // FW_TRANSFER_BEGIN parser should catch these earlier, but the
+        // guard here keeps the state machine in a well-defined state.
+        if (chunkSize == 0 || totalChunks == 0)
+        {
+            reset();
+            return;
+        }
+
         xferId_ = xferId;
         nextSeq_ = 0;
         totalSize_ = totalSize;
@@ -56,8 +78,9 @@ namespace AstrOsBulkTransport
     {
         ChunkResult result{};
         result.decision = Decision::NAK;
-        // Reported window: always windowSize_ on every reply. The receiver
-        // tracks no in-flight state.
+        // Reported window: windowSize_ on every active-state reply (ACK or
+        // NAK) since the receiver tracks no in-flight state. 0 when the
+        // receiver is not active — Phase 3 dispatches on this sentinel.
         result.windowRemaining = active_ ? windowSize_ : 0;
 
         // Structural rejections first: not-active, wrong xferId, out-of-seq.

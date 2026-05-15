@@ -30,9 +30,13 @@ messages and for any ESP_LOGW logging at the boundary.
 CRC
 ---
 
-This lib owns its own crc16_ccitt_false implementation. The CRC matches
-ESP-IDF's esp_crc16_le (poly 0x1021, init 0xFFFF, no reflection, no
-XOR-out) — they are byte-identical. The Phase 3 MIXED layer should call
-the PURE crc16_ccitt_false directly rather than esp_crc16_le; a single
-bench test confirming the two produce identical output for the same
-inputs is the only justification needed to keep both around.
+This lib owns its own crc16_ccitt_false implementation: poly 0x1021,
+init 0xFFFF, no input reflection, no output reflection, no XOR-out.
+Canonical check value: crc16_ccitt_false("123456789", 9) == 0x29B1.
+
+NOTE on ESP-IDF interop: this is NOT byte-identical to esp_crc16_le.
+esp_crc16_le is CRC-16/CCITT (reflected, init=0) — a different algorithm
+that produces different output for the same input. The matching ESP-IDF
+form requires the big-endian variant with a tilde wrapper:
+~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len). Phase 3 should call this
+PURE crc16_ccitt_false directly rather than going through esp_crc16_le.

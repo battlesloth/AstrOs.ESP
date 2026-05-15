@@ -23,7 +23,7 @@ When extending either enum, **append** — never reorder existing entries. Both 
 | Item | Value | Notes |
 |---|---|---|
 | Image hash | SHA-256, hex-encoded as 64 lowercase chars | Computed by server over the full `.bin`; verified at master (after SD landing) and at each padawan (after `esp_ota_end`). |
-| Frame CRC | CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`) | Per ESP-NOW data frame, over `[transfer-id .. payload bytes]`. ESP-IDF: `esp_crc16_le`. |
+| Frame CRC | CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no input/output reflection, no XOR-out) | Per ESP-NOW data frame, over `[transfer-id .. payload bytes]`. NOT `esp_crc16_le` — that helper is CRC-16/CCITT (reflected, init=0) and produces different output. The canonical PURE implementation is `AstrOsBulkTransport::crc16_ccitt_false`; equivalent ESP-IDF form is `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`. Canonical check vector: `"123456789"` → `0x29B1`. |
 | Serial chunk size | 4096 bytes (decoded) | Base64-encoded in the wire form, ≈ 5.5 KB per `FW_CHUNK` line at 115200 baud (~0.5 s transit). |
 | ESP-NOW chunk size | 128 bytes | Per `OTA_DATA` frame; 1.2 MB image ≈ 9400 frames per padawan. |
 | Serial sliding window | 16 frames | Inflight bytes ≈ 64 KB. |

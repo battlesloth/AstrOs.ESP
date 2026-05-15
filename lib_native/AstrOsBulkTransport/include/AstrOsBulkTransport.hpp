@@ -6,20 +6,30 @@
 namespace AstrOsBulkTransport
 {
     // Single-frame CRC-16/CCITT-FALSE. Poly 0x1021, init 0xFFFF, no input
-    // reflection, no output reflection, no XOR-out. Byte-identical to
-    // ESP-IDF's esp_crc16_le.
+    // reflection, no output reflection, no XOR-out. Canonical check value:
+    // crc16_ccitt_false("123456789", 9) == 0x29B1.
+    //
+    // NOTE on ESP-IDF interop: this is NOT byte-identical to esp_crc16_le.
+    // esp_crc16_le is CRC-16/CCITT (reflected, init=0) — a different
+    // algorithm. The matching ESP-IDF variant is the big-endian one with a
+    // tilde wrapper: `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`. Phase
+    // 3 should call this PURE function directly rather than wiring up an
+    // ESP-IDF helper.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len);
 
-    enum class Decision
+    enum class Decision : uint8_t
     {
         ACK,
         NAK
     };
 
-    // Internal NAK reasons map 1:1 to the wire-level FW_CHUNK_NAK reason
-    // codes (CRC | SIZE | OUT_OF_ORDER | FLASH_FULL). `WRONG_TRANSFER_ID`
-    // and `NOT_ACTIVE` are NOT distinct enum entries — those structural
-    // rejections all map to OUT_OF_ORDER, matching the wire protocol.
+    // Internal NAK reasons. Values `CRC` through `FLASH_FULL` map directly
+    // to the wire-level FW_CHUNK_NAK reason codes (CRC | SIZE | OUT_OF_ORDER
+    // | FLASH_FULL); the explicit numeric values are wire-stable and must
+    // not be reordered. `NONE` is used only on the ACK path and has no wire
+    // representation. `WRONG_TRANSFER_ID` and `NOT_ACTIVE` are NOT distinct
+    // enumerators — those structural rejections all collapse to OUT_OF_ORDER,
+    // matching the wire protocol's reason-code set.
     enum class NakReason : uint8_t
     {
         NONE = 0,
@@ -29,6 +39,43 @@ namespace AstrOsBulkTransport
         FLASH_FULL = 4
     };
 
+    // Result of `BulkReceiver::onChunk`. Carries both ACK and NAK information
+    // in a single struct.
+    //
+    // Always populated:
+    //   - `decision`         — ACK or NAK
+    //   - `highestContiguousSeq` — last seq committed (0 if none committed yet)
+    //   - `nextExpectedSeq`  — seq the sender should send next
+    //   - `windowRemaining`  — see semantics below
+    //
+    // NAK path additionally populates:
+    //   - `reason`           — CRC | SIZE | OUT_OF_ORDER | FLASH_FULL
+    //                          Phase 3 maps this directly into FW_CHUNK_NAK's
+    //                          reason-code field. highestContiguousSeq maps
+    //                          to FW_CHUNK_NAK's `last-good-seq`.
+    //                          IMPORTANT: on the first-chunk NAK (nextSeq_==0
+    //                          before any ACK), highestContiguousSeq is also
+    //                          0 — same as "seq 0 was committed." Phase 3
+    //                          must use `nextExpectedSeq == 0` as the
+    //                          sentinel for "nothing committed yet" rather
+    //                          than relying on highestContiguousSeq alone.
+    //
+    // ACK path additionally populates:
+    //   - `payload`/`payloadLen` — caller's input pointer + length pass
+    //                          straight through, unmodified. BulkReceiver
+    //                          does not own this memory and does not touch
+    //                          the bytes. nullptr/0 on NAK.
+    //
+    // windowRemaining semantics:
+    //   - On any reply from an active receiver (ACK, CRC NAK, SIZE NAK,
+    //     OUT_OF_ORDER NAK on an active-state mismatch): equals the
+    //     `windowSize` passed to `begin()`. The receiver tracks no
+    //     in-flight state.
+    //   - On a NAK from an inactive receiver (begin() not yet called or
+    //     reset() was called): always 0. Phase 3 should treat
+    //     `windowRemaining == 0` as the "not active, abort + restart the
+    //     handshake" sentinel and any other value as "active-state
+    //     mismatch; retransmit from `nextExpectedSeq`."
     struct ChunkResult
     {
         Decision decision = Decision::NAK;
@@ -36,19 +83,18 @@ namespace AstrOsBulkTransport
         uint32_t nextExpectedSeq = 0;
         uint8_t windowRemaining = 0;
         NakReason reason = NakReason::NONE;
-        // On ACK only: the caller's input pointer + length pass straight
-        // through, unmodified. BulkReceiver does not own this memory and
-        // does not touch the bytes. nullptr/0 on NAK.
         const uint8_t *payload = nullptr;
         uint16_t payloadLen = 0;
     };
 
     struct EndResult
     {
-        // HASH_MISMATCH is reserved for the MIXED-layer caller (Phase 3
-        // OtaReceiver) that owns the streaming SHA-256 context. This
-        // PURE state machine only knows about chunk counts; it returns
-        // OK on matching totals and IO_ERROR on mismatch.
+        // HASH_MISMATCH is reserved for the MIXED-layer caller (Phase 4
+        // OtaReceiver, when the streaming SHA-256 context is added).
+        // Phase 3 OtaReceiver sinks payload to /dev/null and never returns
+        // HASH_MISMATCH; this PURE state machine never returns it either.
+        // BulkReceiver::onEnd only validates chunk counts and returns
+        // OK on matching totals or IO_ERROR on mismatch.
         enum class Status
         {
             OK,
@@ -60,19 +106,37 @@ namespace AstrOsBulkTransport
 
     // Sequential chunk-receive state machine for the firmware OTA path.
     // The receiver commits chunks strictly in seq order — sliding window
-    // is a sender optimization, not a reorder buffer. After every ACK
-    // the receiver reports `windowRemaining = windowSize_` because it
-    // tracks no in-flight state (each ACK'd chunk is already consumed
-    // by the caller).
+    // is a sender optimization, not a reorder buffer.
+    //
+    // State machine contract:
+    //   - A NAK leaves `nextSeq_` unchanged. The sender MUST retransmit
+    //     the chunk identified by `cr.nextExpectedSeq` (same seq as the
+    //     rejected one).
+    //   - `windowRemaining` on every active-state reply (ACK or NAK)
+    //     equals the `windowSize` passed to `begin()`. The "not active"
+    //     case returns `windowRemaining = 0` as a distinct sentinel.
+    //   - `onEnd` does NOT auto-reset the receiver on IO_ERROR — the
+    //     caller can inspect `nextSeq_` (indirectly via subsequent
+    //     `onChunk` calls' nextExpectedSeq field) before calling `reset()`.
+    //   - Calling `begin()` on an already-active receiver is well-defined:
+    //     it reinitializes the receiver as if `reset()` + `begin()` had
+    //     been called. Useful when the caller decides to restart a
+    //     transfer mid-stream.
+    //   - `begin()` with `chunkSize == 0` or `totalChunks == 0` is treated
+    //     as a protocol violation: the receiver is left inactive (callers
+    //     get OUT_OF_ORDER NAKs from `onChunk`).
     //
     // Usage:
     //   BulkReceiver r;
     //   r.begin(xferId, totalSize, totalChunks, chunkSize, windowSize);
     //   for each FW_CHUNK arrival:
-    //       auto cr = r.onChunk(xferId, seq, len, crc16, payload);
-    //       // caller acts on cr.decision (write bytes / send ACK / send NAK)
+    //       auto cr = r.onChunk(xferId, seq, payloadLen, crc16, payload);
+    //       // On ACK: write cr.payload[0..cr.payloadLen-1] to flash,
+    //       //         send FW_CHUNK_ACK with the seq/window fields.
+    //       // On NAK: send FW_CHUNK_NAK(last-good-seq=highestContiguousSeq,
+    //       //         reason=cr.reason). Sender retransmits cr.nextExpectedSeq.
     //   auto er = r.onEnd(xferId, totalChunksSent);
-    //   r.reset();  // ready for next transfer; safe to call anytime.
+    //   r.reset();  // safe to call anytime; required before the next begin().
     class BulkReceiver
     {
     public:
