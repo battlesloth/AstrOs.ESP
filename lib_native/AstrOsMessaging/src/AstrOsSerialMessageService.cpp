@@ -205,6 +205,21 @@ std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, ui
     return ss.str();
 }
 
+/// @brief generates FW_CHUNK_NAK reply. Payload shape:
+///        transfer-id<US>last-good-seq<US>reason-code.
+/// @param transferId transfer id
+/// @param lastGoodSeq the last seq we committed (server resumes from N+1)
+/// @param reasonCode "CRC" | "SIZE" | "OUT_OF_ORDER" | "FLASH_FULL"
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, uint32_t lastGoodSeq,
+                                                      std::string reasonCode)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_CHUNK_NAK, "na");
+    ss << transferId << UNIT_SEPARATOR << std::to_string(lastGoodSeq) << UNIT_SEPARATOR << reasonCode;
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message

@@ -393,3 +393,34 @@ TEST(SerialMessages, FwChunkAckMessage)
     EXPECT_EQ("42", payloadParts[2]);
     EXPECT_EQ("14", payloadParts[3]);
 }
+
+TEST(SerialMessages, FwChunkNakCrcMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 40, "CRC");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_CHUNK_NAK, validation.type);
+    EXPECT_STREQ("na", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("40", payloadParts[1]);
+    EXPECT_EQ("CRC", payloadParts[2]);
+}
+
+TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 40, "OUT_OF_ORDER");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("OUT_OF_ORDER", payloadParts[2]);
+}
