@@ -76,6 +76,13 @@ namespace AstrOsBulkTransport
     //     `windowRemaining == 0` as the "not active, abort + restart the
     //     handshake" sentinel and any other value as "active-state
     //     mismatch; retransmit from `nextExpectedSeq`."
+    // Construction discipline: the default constructor is private so
+    // callers cannot aggregate-initialize impossible field combinations
+    // (e.g. Decision::ACK with reason != NONE, or NAK with non-null
+    // payload). Use the static factories: `ack`, `nakActive`,
+    // `nakInactive`. Fields stay public-readable so test code keeps the
+    // existing read-by-name idiom (`r.payload`, `r.reason`, etc.) —
+    // factories prevent the construction hazard without rewriting reads.
     struct ChunkResult
     {
         Decision decision = Decision::NAK;
@@ -85,6 +92,54 @@ namespace AstrOsBulkTransport
         NakReason reason = NakReason::NONE;
         const uint8_t *payload = nullptr;
         uint16_t payloadLen = 0;
+
+        // ACK: the chunk committed. `committedSeq` is the seq we just
+        // committed; `nextExpectedSeq` is committedSeq + 1; both go on
+        // the wire as FW_CHUNK_ACK fields.
+        static ChunkResult ack(uint32_t committedSeq, uint32_t nextExpectedSeq, uint8_t windowSize,
+                               const uint8_t *payload, uint16_t payloadLen)
+        {
+            ChunkResult r;
+            r.decision = Decision::ACK;
+            r.reason = NakReason::NONE;
+            r.highestContiguousSeq = committedSeq;
+            r.nextExpectedSeq = nextExpectedSeq;
+            r.windowRemaining = windowSize;
+            r.payload = payload;
+            r.payloadLen = payloadLen;
+            return r;
+        }
+
+        // Active NAK: receiver is in a live transfer but the chunk was
+        // rejected (CRC | SIZE | OUT_OF_ORDER | FLASH_FULL). `windowSize`
+        // here is the configured `windowSize` from begin() — used as the
+        // "still active, retransmit from nextExpectedSeq" wire signal.
+        static ChunkResult nakActive(NakReason reason, uint32_t highestContiguousSeq, uint32_t nextExpectedSeq,
+                                     uint8_t windowSize)
+        {
+            ChunkResult r;
+            r.decision = Decision::NAK;
+            r.reason = reason;
+            r.highestContiguousSeq = highestContiguousSeq;
+            r.nextExpectedSeq = nextExpectedSeq;
+            r.windowRemaining = windowSize;
+            return r;
+        }
+
+        // Inactive NAK: chunk arrived while no transfer is live (begin()
+        // not called or reset() was called). `windowRemaining = 0` is the
+        // wire signal Phase 3 uses to say "abort + restart handshake."
+        static ChunkResult nakInactive()
+        {
+            ChunkResult r;
+            r.decision = Decision::NAK;
+            r.reason = NakReason::OUT_OF_ORDER;
+            // highestContiguousSeq, nextExpectedSeq, windowRemaining all 0.
+            return r;
+        }
+
+    private:
+        ChunkResult() = default;
     };
 
     struct EndResult
@@ -146,6 +201,17 @@ namespace AstrOsBulkTransport
         void reset();
 
     private:
+        // The wire field FW_CHUNK_NAK::last-good-seq. 0 is overloaded:
+        // either "seq 0 was committed" or "nothing committed yet." Phase
+        // 3 disambiguates via `nextExpectedSeq == 0` (only true when
+        // nothing committed). Centralized here so the first-chunk-NAK
+        // contract lives in one place rather than duplicated at every
+        // NAK construction site.
+        uint32_t lastGoodSeq() const
+        {
+            return (nextSeq_ == 0) ? 0u : (nextSeq_ - 1u);
+        }
+
         uint8_t xferId_ = 0;
         uint32_t nextSeq_ = 0;
         uint32_t totalSize_ = 0;

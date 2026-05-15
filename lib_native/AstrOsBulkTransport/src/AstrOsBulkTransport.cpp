@@ -76,27 +76,19 @@ namespace AstrOsBulkTransport
     ChunkResult BulkReceiver::onChunk(uint8_t xferId, uint32_t seq, uint16_t payloadLen, uint16_t crc16,
                                       const uint8_t *payload)
     {
-        ChunkResult result{};
-        result.decision = Decision::NAK;
-        // Reported window: windowSize_ on every active-state reply (ACK or
-        // NAK) since the receiver tracks no in-flight state. 0 when the
-        // receiver is not active — Phase 3 dispatches on this sentinel.
-        result.windowRemaining = active_ ? windowSize_ : 0;
-
-        // Structural rejections first: not-active, wrong xferId, out-of-seq.
-        // All collapse to OUT_OF_ORDER per the wire-level reason-code set.
-        if (!active_ || xferId != xferId_ || seq != nextSeq_)
+        // Not-active: distinct from "active state mismatch" via the
+        // windowRemaining=0 sentinel that ChunkResult::nakInactive
+        // produces. Phase 3 dispatches differently on the two cases.
+        if (!active_)
         {
-            result.reason = NakReason::OUT_OF_ORDER;
-            // highestContiguousSeq / nextExpectedSeq default to 0 on the
-            // not-active path; on an active mismatch they should reflect
-            // the receiver's actual state so the sender can resync.
-            if (active_)
-            {
-                result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
-                result.nextExpectedSeq = nextSeq_;
-            }
-            return result;
+            return ChunkResult::nakInactive();
+        }
+
+        // Structural rejections: wrong xferId or out-of-seq. Both collapse
+        // to OUT_OF_ORDER per the wire-level reason-code set.
+        if (xferId != xferId_ || seq != nextSeq_)
+        {
+            return ChunkResult::nakActive(NakReason::OUT_OF_ORDER, lastGoodSeq(), nextSeq_, windowSize_);
         }
 
         // SIZE: compute the expected length for THIS seq. All chunks are
@@ -110,31 +102,16 @@ namespace AstrOsBulkTransport
         }
         if (payloadLen != expectedLen)
         {
-            result.reason = NakReason::SIZE;
-            result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
-            result.nextExpectedSeq = nextSeq_;
-            return result;
+            return ChunkResult::nakActive(NakReason::SIZE, lastGoodSeq(), nextSeq_, windowSize_);
         }
 
-        // CRC: recompute over the payload and compare.
-        uint16_t computed = crc16_ccitt_false(payload, payloadLen);
-        if (computed != crc16)
+        if (crc16_ccitt_false(payload, payloadLen) != crc16)
         {
-            result.reason = NakReason::CRC;
-            result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
-            result.nextExpectedSeq = nextSeq_;
-            return result;
+            return ChunkResult::nakActive(NakReason::CRC, lastGoodSeq(), nextSeq_, windowSize_);
         }
 
-        // ACK and advance.
-        result.decision = Decision::ACK;
-        result.reason = NakReason::NONE;
-        result.highestContiguousSeq = seq;
-        result.nextExpectedSeq = seq + 1;
-        result.payload = payload;
-        result.payloadLen = payloadLen;
         nextSeq_++;
-        return result;
+        return ChunkResult::ack(seq, seq + 1, windowSize_, payload, payloadLen);
     }
 
     EndResult BulkReceiver::onEnd(uint8_t xferId, uint32_t totalChunksSent)
