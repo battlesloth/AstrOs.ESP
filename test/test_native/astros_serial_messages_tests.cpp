@@ -493,3 +493,54 @@ TEST(SerialMessages, FwDeployDoneAllFailedMessage)
     EXPECT_EQ("", secondParts[2]);
     EXPECT_EQ("not_implemented", secondParts[3]);
 }
+
+//=================================================================================================
+// parseFwTransferBegin (Task 7)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1234567" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome" << RECORD_SEPARATOR << "master";
+
+    auto rec = parseFwTransferBegin(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(1234567u, rec.totalSize);
+    EXPECT_EQ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rec.sha256Hex);
+    EXPECT_EQ(4096u, rec.chunkSize);
+    ASSERT_EQ(3u, rec.targetIds.size());
+    EXPECT_EQ("core", rec.targetIds[0]);
+    EXPECT_EQ("dome", rec.targetIds[1]);
+    EXPECT_EQ("master", rec.targetIds[2]);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1234567"; // only 2 fields
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginNonNumericSize)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "abc" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginEmptyTargetList)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << ""; // empty target list
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}

@@ -114,6 +114,16 @@ typedef struct
     std::string errorOrEmpty; // may be empty
 } astros_fw_deploy_result_t;
 
+typedef struct
+{
+    std::string transferId;
+    uint32_t totalSize;
+    std::string sha256Hex;
+    uint16_t chunkSize;
+    std::vector<std::string> targetIds;
+    bool valid;
+} FwTransferBeginRecord;
+
 class AstrOsSerialMessageService
 {
 private:
@@ -155,5 +165,11 @@ public:
     std::string getFormatSD(std::string msgId);
     std::string getServoTest(std::string msgId, std::string macAddress, std::string controller, std::string data);
 };
+
+// Free parsers for inbound FW_* payloads. Live alongside the
+// AstrOsSerialMessageService class because they share the wire
+// grammar in this file. Pure C++; no allocations beyond the
+// returned struct's members.
+FwTransferBeginRecord parseFwTransferBegin(const std::string &payload);
 
 #endif

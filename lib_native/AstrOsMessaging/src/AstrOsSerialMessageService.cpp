@@ -1,8 +1,10 @@
 #include "AstrOsSerialMessageService.hpp"
 #include <AstrOsStringUtils.hpp>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -401,4 +403,57 @@ std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::str
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::SERVO_TEST, msgId);
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << data;
     return ss.str();
+}
+
+//================== FREE PARSERS FOR INBOUND FW_* PAYLOADS ==================
+
+FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
+{
+    FwTransferBeginRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 5)
+    {
+        return rec;
+    }
+
+    // size + chunk-size: parse with strtoul, catch parse failure via errno.
+    // The codebase avoids exceptions on the embedded target (CLAUDE.md), so
+    // use strtoul which signals errors via errno + endptr.
+    errno = 0;
+    char *endptr = nullptr;
+    auto totalSize = std::strtoul(parts[1].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
+    {
+        return rec;
+    }
+    errno = 0;
+    endptr = nullptr;
+    auto chunkSize = std::strtoul(parts[3].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[3].c_str() || *endptr != '\0' || chunkSize > 0xFFFFu)
+    {
+        return rec;
+    }
+
+    // sha256-hex must be exactly 64 chars
+    if (parts[2].size() != 64)
+    {
+        return rec;
+    }
+
+    // target-list: RS-split. Reject if empty (no targets).
+    auto targets = AstrOsStringUtils::splitString(parts[4], RECORD_SEPARATOR);
+    if (targets.empty() || (targets.size() == 1 && targets[0].empty()))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.totalSize = static_cast<uint32_t>(totalSize);
+    rec.sha256Hex = parts[2];
+    rec.chunkSize = static_cast<uint16_t>(chunkSize);
+    rec.targetIds = std::move(targets);
+    rec.valid = true;
+    return rec;
 }
