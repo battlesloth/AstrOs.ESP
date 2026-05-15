@@ -2,6 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Post-implementation amendments (commits `6123a6a`, `fe87535`, and the
+> PR-toolkit cleanup pass on `feature/ota-phase2-bulk-transport`):** the
+> original plan claimed `crc16_ccitt_false` was byte-identical to ESP-IDF's
+> `esp_crc16_le`. That is wrong — `esp_crc16_le` is CRC-16/CCITT
+> *reflected* with init=0 and produces different output. The correct
+> ESP-IDF equivalent is `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`.
+> The plan also said the single-zero-byte CRC value is `0x1EF0`; the
+> correct value is `0xE1F0` (nibbles transposed). The shipped README,
+> `.hpp`, and tests have the corrected forms; the historical text in this
+> plan is preserved with inline corrections (`~~strikethrough~~ →
+> correction`) so the original intent is auditable. Test totals also moved
+> (22 → 26 cases, 279 → 287 total) after `fe87535` added 4 strengthening
+> tests. Final PR-toolkit pass on the same branch added `BeginResult`,
+> `EndResult::Reason`, `ChunkResult` factory methods, totalSize/windowSize
+> validation, and a `seq >= totalChunks` overflow guard — see the cleanup
+> commits for the API redesign rationale.
+
 **Goal:** Build `lib_native/AstrOsBulkTransport` — a PURE, native-testable state machine that consumes parsed `FW_CHUNK` records and produces ACK/NAK decisions with sliding-window backpressure. No firmware behavior change; this is the algorithmic core that Phase 3 will wire into the `AstrOsSerialMsgHandler` dispatch path.
 
 **Architecture:** A small `BulkReceiver` class plus a standalone CRC-16/CCITT-FALSE helper. Sequential receive (no reorder buffer): every chunk must arrive with `seq == nextSeq_`; out-of-order chunks are NAK'd. `windowRemaining` returned on every ACK is always the configured `windowSize` — backpressure is a sender concern. CRC validation uses our own `crc16_ccitt_false` (PURE libs can't link `esp_crc16_le`). The lib does *not* touch payload bytes — `onChunk` receives a `const uint8_t*`/`uint16_t` pair and passes them straight back through `ChunkResult` on ACK so the caller can write them to wherever it wants (SD card in Phase 4, /dev/null in Phase 3).
@@ -33,7 +50,7 @@ No changes to `lib_native/AstrOsMessaging`, `lib_native/AstrOsSerialProtocol`, o
 - **The pre-commit hook runs clang-format** on staged C/C++ files. Expect it to reformat whitespace; the commit still succeeds.
 - **The CI native-purity guard** (`.github/workflows/pr-validation.yml`) greps for `#include <(freertos/|esp_|driver/|nvs_|sdmmc_)…>` across every path in `PURE_LIBS`. Don't include any of those, ever. The lib has no need to — we're not touching FreeRTOS, ESP-IDF, or hardware. Standard C++17 only.
 - **No exceptions.** CLAUDE.md and existing patterns: don't `throw`; don't `try/catch`. Return result structs.
-- **CRC-16/CCITT-FALSE:** poly `0x1021`, init `0xFFFF`, no input reflection, no output reflection, no XOR-out. Same as `esp_crc16_le` would compute on-device. Many online CRC calculators get this wrong (CCITT vs CCITT-FALSE vs XMODEM are all different) — the test in Task 2 uses the canonical "123456789" → `0x29B1` check vector.
+- **CRC-16/CCITT-FALSE:** poly `0x1021`, init `0xFFFF`, no input reflection, no output reflection, no XOR-out. **NOT `esp_crc16_le`** — that ESP-IDF helper is CRC-16/CCITT (*reflected*, init=0) and produces different output. The matching ESP-IDF form is `~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len)`. Many online CRC calculators get this wrong (CCITT vs CCITT-FALSE vs XMODEM are all different) — the test in Task 2 uses the canonical "123456789" → `0x29B1` check vector.
 - **`windowRemaining` semantics:** always returned as the configured `windowSize`. The receiver has zero state in-flight after a chunk is ACK'd (it's already validated and "consumed" by the caller). Backpressure is a sender-side optimization. Document this in the header.
 - **`xferId` mismatch / not-active:** NAK with `reason=OUT_OF_ORDER`. The wire-level reason codes are `CRC | SIZE | OUT_OF_ORDER | FLASH_FULL`; we map all structural rejection to `OUT_OF_ORDER`. The internal `NakReason` enum stays 1:1 with the wire-level set.
 - **`HASH_MISMATCH` in `EndResult::Status`:** reserved for the Phase 3+ MIXED layer that computes the hash. This Phase 2 implementation never returns `HASH_MISMATCH` — only `OK` or `IO_ERROR` (chunk-count mismatch).
@@ -88,12 +105,15 @@ messages and for any ESP_LOGW logging at the boundary.
 CRC
 ---
 
-This lib owns its own crc16_ccitt_false implementation. The CRC matches
-ESP-IDF's esp_crc16_le (poly 0x1021, init 0xFFFF, no reflection, no
-XOR-out) — they are byte-identical. The Phase 3 MIXED layer should call
-the PURE crc16_ccitt_false directly rather than esp_crc16_le; a single
-bench test confirming the two produce identical output for the same
-inputs is the only justification needed to keep both around.
+This lib owns its own crc16_ccitt_false implementation: CRC-16/CCITT-FALSE
+(poly 0x1021, init 0xFFFF, no input/output reflection, no XOR-out). This
+is NOT byte-identical to esp_crc16_le — that ESP-IDF helper is the
+*reflected* CCITT variant (init=0) and produces different output. The
+matching ESP-IDF form is ~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len).
+Canonical check vector: "123456789" → 0x29B1. The Phase 3 MIXED layer
+should call the PURE crc16_ccitt_false directly rather than reaching for
+the ESP-IDF helpers (none of which are byte-identical without the wrapper
+above).
 ```
 
 - [ ] **Step 2: Create the header skeleton**
@@ -109,9 +129,11 @@ inputs is the only justification needed to keep both around.
 namespace AstrOsBulkTransport
 {
     // Single-frame CRC-16/CCITT-FALSE. Poly 0x1021, init 0xFFFF, no input
-    // reflection, no output reflection, no XOR-out. Byte-identical to
-    // ESP-IDF's esp_crc16_le. Standalone (not a class method) so tests
-    // can pin behavior independently of the receiver state machine.
+    // reflection, no output reflection, no XOR-out. NOT esp_crc16_le (that
+    // helper is the reflected variant, init=0). The matching ESP-IDF form
+    // is ~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len). Standalone (not a
+    // class method) so tests can pin behavior independently of the
+    // receiver state machine.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len);
 } // namespace AstrOsBulkTransport
 ```
@@ -192,7 +214,7 @@ EOF
 - Modify: `lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp`
 - Create: `test/test_native/bulk_transport_tests.cpp`
 
-CRC-16/CCITT-FALSE: poly `0x1021`, init `0xFFFF`, no input/output reflection, no XOR-out. The canonical check vector is `"123456789"` (9 ASCII bytes) → `0x29B1`. Other useful pin-tests: empty input → `0xFFFF` (the init value); single zero byte → `0x1EF0`; `0xFF` byte → `0xFF00`.
+CRC-16/CCITT-FALSE: poly `0x1021`, init `0xFFFF`, no input/output reflection, no XOR-out. The canonical check vector is `"123456789"` (9 ASCII bytes) → `0x29B1`. Other useful pin-tests: empty input → `0xFFFF` (the init value); single zero byte → `0xE1F0`; `0xFF` byte → `0xFF00`.
 
 - [ ] **Step 1: Create the test file with failing tests**
 
@@ -232,9 +254,9 @@ TEST(BulkTransport, Crc16CanonicalCheckVector)
 
 TEST(BulkTransport, Crc16SingleZeroByte)
 {
-    // A single 0x00 byte: well-known CCITT-FALSE result 0x1EF0.
+    // A single 0x00 byte: well-known CCITT-FALSE result 0xE1F0.
     const uint8_t data[] = {0x00};
-    EXPECT_EQ(0x1EF0u, AstrOsBulkTransport::crc16_ccitt_false(data, 1));
+    EXPECT_EQ(0xE1F0u, AstrOsBulkTransport::crc16_ccitt_false(data, 1));
 }
 
 TEST(BulkTransport, Crc16SingleFfByte)
@@ -314,10 +336,10 @@ git commit -m "$(cat <<'EOF'
 feat(bulk-transport): crc16_ccitt_false standalone helper
 
 Bit-by-bit reference implementation of CRC-16/CCITT-FALSE (poly 0x1021,
-init 0xFFFF, no reflection, no XOR-out). Byte-identical to
-esp_crc16_le. Five native tests cover the canonical "123456789" check
-vector, empty-input init-value, single-zero/FF bytes, and call
-determinism.
+init 0xFFFF, no reflection, no XOR-out). NOT esp_crc16_le — that helper
+is the reflected variant and produces different output. Five native
+tests cover the canonical "123456789" check vector, empty-input
+init-value, single-zero/FF bytes, and call determinism.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -348,8 +370,9 @@ In `lib_native/AstrOsBulkTransport/include/AstrOsBulkTransport.hpp`, replace the
 namespace AstrOsBulkTransport
 {
     // Single-frame CRC-16/CCITT-FALSE. Poly 0x1021, init 0xFFFF, no input
-    // reflection, no output reflection, no XOR-out. Byte-identical to
-    // ESP-IDF's esp_crc16_le.
+    // reflection, no output reflection, no XOR-out. NOT esp_crc16_le (that
+    // helper is the reflected variant, init=0). The matching ESP-IDF form
+    // is ~esp_rom_crc16_be((uint16_t)~0xFFFF, buf, len).
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len);
 
     enum class Decision
@@ -1213,7 +1236,7 @@ TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
 - [ ] **Step 2: Run tests to verify the new test PASSES**
 
 Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
-Expected: 278 → 279. The integration test passes — and if any of the prior tasks left a subtle bug, this is likely where it surfaces.
+Expected: prior-test-count + 1. The integration test passes — and if any of the prior tasks left a subtle bug, this is likely where it surfaces.
 
 - [ ] **Step 3: Commit**
 
@@ -1243,7 +1266,7 @@ EOF
 - [ ] **Step 1: Run the full native test suite**
 
 Run: `/home/jeff/.platformio/penv/bin/pio test -e test`
-Expected: 257 → 279 (22 new BulkTransport tests). All pass.
+Expected: 261 → 287 (26 new BulkTransport tests, including the 4 strengthening cases added late by commit `fe87535`). All pass.
 
 - [ ] **Step 2: Build both board firmware variants**
 
@@ -1296,12 +1319,12 @@ Adds:
 - New PURE lib \`lib_native/AstrOsBulkTransport\` with \`BulkReceiver\` class + \`crc16_ccitt_false\` standalone helper
 - \`Decision\`, \`NakReason\`, \`ChunkResult\`, \`EndResult\` public types
 - Sequential chunk-receive state machine: in-order commit, structural rejections collapse to OUT_OF_ORDER, CRC + SIZE validation, short-last-chunk support
-- 22 new native tests covering CRC check vectors, in-order happy path, every rejection (CRC / SIZE / OUT_OF_ORDER / wrong-xferId / not-active / duplicate / skip-forward), onEnd OK and IO_ERROR paths, plus a 10-chunk end-to-end integration test with mid-stream CRC retransmit
+- 26 new native tests covering CRC check vectors, in-order happy path, every rejection (CRC / SIZE / OUT_OF_ORDER / wrong-xferId / not-active / duplicate / skip-forward), `begin()` input-validation guards (zero-`chunkSize`, zero-`totalChunks`, `totalSize` consistency, zero-`windowSize`), onEnd OK and per-reason IO_ERROR paths, plus a 10-chunk end-to-end integration test with mid-stream CRC retransmit
 - CI purity-guard registration for the new lib in \`.github/workflows/pr-validation.yml\`
 
 ## Test plan
 
-- [x] \`pio test -e test\` passes (279/279)
+- [x] \`pio test -e test\` passes (287/287 — Phase 2 added 26 tests on top of develop's 261)
 - [x] \`pio run -e metro_s3\` builds clean
 - [x] \`pio run -e lolin_d32_pro\` builds clean
 - [x] CI native-purity grep finds no forbidden includes in the new lib
@@ -1328,6 +1351,7 @@ EOF
   - `onEnd` OK + IO_ERROR (Tasks 7 + 8) ✓
   - End-to-end integration test (Task 9) ✓
   - Final verification + PR (Task 10) ✓
-- **Placeholder scan:** no TBDs, no "add appropriate handling", every code step shows the actual code.
+  - **Post-implementation hardening from PR-toolkit pass (not a numbered task)**: `begin()` input-validation guards (zero `chunkSize`/`totalChunks`/`windowSize`, `totalSize` ≈ `totalChunks * chunkSize` consistency); `seq >= totalChunks_` overflow guard on the SIZE math; `BeginResult` return value; `EndResult::Reason` enum (distinct IO_ERROR causes); `ChunkResult` factory methods preventing invalid field combinations; `writeResumePoint` helper folding the duplicated first-chunk-NAK contract into one place. ✓
+- **Placeholder scan:** the original plan was free of TBDs at task-execution time. The amendment header above flags the specific claims (CRC interop, single-zero-byte value, 22/279 test counts) that were superseded by the PR-toolkit cleanup; surgical corrections in-body keep the plan re-executable.
 - **Type consistency:** `BulkReceiver`, `ChunkResult`, `EndResult`, `Decision`, `NakReason` are used consistently across all tasks. `crc16_ccitt_false` lowercase-underscore naming is used everywhere.
 - **Scope check:** 10 tasks. Above the CLAUDE.md ~8-task warning, but each task is small (≤2 files, ≤30 min) and Phase 2 is genuinely one coherent unit — splitting into "scaffold" and "state machine" sub-phases would just add cross-PR coordination cost without value. If the scope grows past 10, escalate.
