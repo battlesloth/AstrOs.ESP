@@ -119,11 +119,13 @@ namespace AstrOsSerialProtocol
         void decodeFwInbound(DecodeResult &result, AstrOsSerialMessageType type, const std::string &msgId,
                              const std::string &payload)
         {
-            // FW_* inbound payloads are not parsed here — the MIXED OtaReceiver
-            // owns structured parsing via parseFwTransferBegin / parseFwChunk /
-            // parseFwTransferEnd / parseFwDeployBegin. We just route the raw
-            // payload through with the matching responseType so the handler
-            // task can hand it to OtaReceiver.
+            // FW_* inbound payloads are not parsed here. A later MIXED
+            // phase (the OTA receiver, not yet implemented) will own
+            // structured parsing via parseFwTransferBegin / parseFwChunk
+            // / parseFwTransferEnd / parseFwDeployBegin. For now we
+            // route the raw payload through with the matching
+            // responseType so the handler task can hand it to that
+            // future component once it lands.
             const auto responseType = mapResponseType(type, /*isMaster=*/true);
             appendCommand(result, responseType, msgId, "", "", payload);
         }

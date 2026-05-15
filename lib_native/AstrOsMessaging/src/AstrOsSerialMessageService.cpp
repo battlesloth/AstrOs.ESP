@@ -474,9 +474,9 @@ FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
         return rec;
     }
 
-    // size + chunk-size: parse with strtoul, catch parse failure via errno.
-    // The codebase avoids exceptions on the embedded target (CLAUDE.md), so
-    // use strtoul which signals errors via errno + endptr.
+    // size + chunk-size: parse with strtoul, catch failure via errno + endptr.
+    // ESP32 targets have exceptions disabled; strtoul with errno + endptr is
+    // the portable alternative to std::stoi.
     errno = 0;
     char *endptr = nullptr;
     auto totalSize = std::strtoul(parts[1].c_str(), &endptr, 10);

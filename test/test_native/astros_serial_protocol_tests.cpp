@@ -437,3 +437,30 @@ TEST(SerialProtocol, DecodeFwTransferBeginEmptyPayloadRejects)
     ASSERT_EQ(1u, result.rejects.size());
     EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
 }
+
+TEST(SerialProtocol, DecodeFwChunkEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_CHUNK, "mid-c", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, DecodeFwTransferEndEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_TRANSFER_END, "mid-e", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, DecodeFwDeployBeginEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, "mid-d", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}

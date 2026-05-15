@@ -303,11 +303,10 @@ TEST(SerialMessages, ServoTestAckMessage)
 
 namespace
 {
-    // Hand-craft a serial message that has only a header (no payload) for
-    // a given FW_* type, using the same shape generateHeader produces.
-    // We can't call the real generateHeader yet for FW_* types until the
-    // msgTypeMap entries land in Task 1, so this helper builds the raw
-    // string directly.
+    // Constructs the raw wire-format header directly (the same shape
+    // generateHeader produces) so tests can exercise validateSerialMsg
+    // at the wire level without going through a builder. Used because
+    // generateHeader is private on AstrOsSerialMessageService.
     std::string buildBareHeader(int typeInt, const char *validator, const std::string &msgId)
     {
         std::stringstream ss;
@@ -537,10 +536,14 @@ TEST(SerialMessages, ParseFwTransferBeginNonNumericSize)
 
 TEST(SerialMessages, ParseFwTransferBeginEmptyTargetList)
 {
+    // Trailing empty US-field is stripped by splitString, so this payload
+    // actually reaches the field-count guard, not the target-list-empty
+    // guard. See ParseFwTransferBeginRsOnlyTargetField below for the test
+    // that hits the target-list-empty branch.
     std::stringstream payload;
     payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR
             << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
-            << UNIT_SEPARATOR << ""; // empty target list
+            << UNIT_SEPARATOR << "";
     auto rec = parseFwTransferBegin(payload.str());
     EXPECT_FALSE(rec.valid);
 }
@@ -632,6 +635,10 @@ TEST(SerialMessages, ParseFwDeployBeginHappyPath)
 
 TEST(SerialMessages, ParseFwDeployBeginEmptyOrderList)
 {
+    // Trailing empty US-field is stripped by splitString, so this payload
+    // actually reaches the field-count guard, not the order-list-empty
+    // guard. See ParseFwDeployBeginRsOnlyOrderList below for the test
+    // that hits the order-list-empty branch.
     std::stringstream payload;
     payload << "7" << UNIT_SEPARATOR << "";
     auto rec = parseFwDeployBegin(payload.str());
@@ -765,4 +772,72 @@ TEST(SerialMessages, FwDeployDoneSingleResultMessage)
     EXPECT_EQ("OK", firstParts[2]);
     EXPECT_EQ("1.2.0", firstParts[3]);
     EXPECT_EQ("none", firstParts[4]);
+}
+
+//=================================================================================================
+// FW_* empty-list rejection branches (Cleanup commit B)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRsOnlyTargetField)
+{
+    // Reaches the targetIds-empty guard (not the field-count guard).
+    // 5 US-parts with a lone RS as parts[4], which splitString(part4, RS)
+    // turns into a single empty string -> rejected.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << RECORD_SEPARATOR;
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginRsOnlyOrderList)
+{
+    // Reaches the orderIds-empty guard (not the field-count guard).
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << RECORD_SEPARATOR;
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_* numeric overflow + non-numeric rejection coverage (Cleanup commit B)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginChunkSizeExceedsUint16)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1000000" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR
+            << "65536" // 0x10000, one over uint16 max
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkPayloadLenExceedsUint16)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "65536" << UNIT_SEPARATOR << "AQID" << UNIT_SEPARATOR
+            << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndNonNumericTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "abc" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkNonNumericSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "notanumber" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "AQID"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
 }

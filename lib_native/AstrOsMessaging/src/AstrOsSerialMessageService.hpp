@@ -129,7 +129,7 @@ typedef struct
     std::string transferId;
     uint32_t seq;
     uint16_t payloadLen;
-    std::string base64Payload; // not decoded here — Phase 3 MIXED handler decodes
+    std::string base64Payload; // not decoded here — Phase 2/3 MIXED handler decodes
     uint16_t crc16;
     bool valid;
 } FwChunkRecord;
