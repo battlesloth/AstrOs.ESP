@@ -11,6 +11,27 @@ namespace AstrOsBulkTransport
     static_assert(static_cast<uint8_t>(NakReason::OUT_OF_ORDER) == 3);
     static_assert(static_cast<uint8_t>(NakReason::FLASH_FULL) == 4);
 
+    // API-stable enums consumed by Phase 3 dispatch via switch statements.
+    // Not wire-serialized — these values won't end up on the bus — but a
+    // future reorder would silently change which `case` fires for which
+    // failure cause, with no compiler diagnostic to catch the bug. Pin
+    // them here so the build breaks, not the dispatch.
+    static_assert(static_cast<uint8_t>(BeginResult::Reason::OK) == 0);
+    static_assert(static_cast<uint8_t>(BeginResult::Reason::ZERO_CHUNK_SIZE) == 1);
+    static_assert(static_cast<uint8_t>(BeginResult::Reason::ZERO_TOTAL_CHUNKS) == 2);
+    static_assert(static_cast<uint8_t>(BeginResult::Reason::ZERO_WINDOW_SIZE) == 3);
+    static_assert(static_cast<uint8_t>(BeginResult::Reason::SIZE_INCONSISTENT) == 4);
+
+    static_assert(static_cast<uint8_t>(EndResult::Status::OK) == 0);
+    static_assert(static_cast<uint8_t>(EndResult::Status::HASH_MISMATCH) == 1);
+    static_assert(static_cast<uint8_t>(EndResult::Status::IO_ERROR) == 2);
+
+    static_assert(static_cast<uint8_t>(EndResult::Reason::NONE) == 0);
+    static_assert(static_cast<uint8_t>(EndResult::Reason::NOT_ACTIVE) == 1);
+    static_assert(static_cast<uint8_t>(EndResult::Reason::WRONG_XFER_ID) == 2);
+    static_assert(static_cast<uint8_t>(EndResult::Reason::SENDER_TOTAL_MISMATCH) == 3);
+    static_assert(static_cast<uint8_t>(EndResult::Reason::RECEIVER_SHORT_COUNT) == 4);
+
     // CRC-16/CCITT-FALSE. Bit-by-bit reference implementation:
     //   poly = 0x1021, init = 0xFFFF, refIn = false, refOut = false, xorOut = 0.
     // Table-based variants would be faster but the FW_CHUNK rate is bounded
@@ -18,12 +39,18 @@ namespace AstrOsBulkTransport
     // chunk's CRC completes in well under a millisecond). No table needed.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len)
     {
-        // Defensive: the loop is gated by `len` so `data` is never dereferenced
-        // when len==0, but a hypothetical future single-byte fast-path
-        // refactor (e.g. an unrolled first iteration outside the loop)
-        // would silently UB on nullptr. Returning the init value here pins
-        // the contract that (nullptr, 0) is well-defined.
-        if (data == nullptr || len == 0)
+        // (anything, 0) is the empty-input case and returns the init value
+        // 0xFFFFu. (nullptr, len > 0) is a caller programming error — the
+        // earlier (data == nullptr || len == 0) form silently returned
+        // 0xFFFFu in both cases, which made `payload=nullptr, payloadLen=K,
+        // crc16=0xFFFFu` a valid-looking ACK candidate (matching the empty-
+        // input CRC). Splitting the two cases makes the (nullptr, len>0)
+        // path explicit. The state-machine caller `onChunk` is responsible
+        // for rejecting nullptr-with-positive-len upstream (structural NAK);
+        // this function falls through to the loop for nullptr+positive-len
+        // and will UB on the deref, which is acceptable defense-in-depth
+        // because the upstream guard runs first.
+        if (len == 0)
         {
             return 0xFFFFu;
         }
@@ -124,14 +151,21 @@ namespace AstrOsBulkTransport
             return ChunkResult::nakInactive();
         }
 
-        // Structural rejections: wrong xferId, out-of-seq, or seq outside
-        // the chunk grid. Range guard prevents `seq * chunkSize_` from
-        // overflowing uint32_t in the SIZE math below — in well-behaved
-        // code the `seq != nextSeq_` reject catches this earlier (nextSeq_
-        // is bounded by totalChunks_), but defense-in-depth pins it as a
-        // structural property of onChunk rather than an emergent one. All
-        // three collapse to OUT_OF_ORDER per the wire-level reason-code set.
-        if (xferId != xferId_ || seq != nextSeq_ || seq >= totalChunks_)
+        // Structural rejections: wrong xferId, out-of-seq, seq outside the
+        // chunk grid, or null payload with non-zero length. Range guard
+        // prevents `seq * chunkSize_` from overflowing uint32_t in the SIZE
+        // math below — in well-behaved code the `seq != nextSeq_` reject
+        // catches this earlier (nextSeq_ is bounded by totalChunks_), but
+        // defense-in-depth pins it as a structural property of onChunk
+        // rather than an emergent one. The nullptr-payload check closes a
+        // genuine collision the CRC-empty-buffer guard would otherwise
+        // create: crc16_ccitt_false(nullptr, len) returns 0xFFFFu by
+        // contract, so a caller passing (payload=nullptr, payloadLen=K,
+        // crc16=0xFFFF) would pass SIZE (K matches expectedLen) AND CRC
+        // (computed == claimed), producing an ACK with payload=nullptr
+        // that Phase 3 would deref. All four cases collapse to
+        // OUT_OF_ORDER per the wire-level reason-code set.
+        if (xferId != xferId_ || seq != nextSeq_ || seq >= totalChunks_ || (payloadLen > 0 && payload == nullptr))
         {
             return ChunkResult::nakActive(NakReason::OUT_OF_ORDER, lastGoodSeq(), nextSeq_, windowSize_);
         }

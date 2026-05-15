@@ -411,6 +411,31 @@ TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
     EXPECT_EQ(nullptr, skipped.payload);
 }
 
+TEST(BulkTransport, OnChunkNullPayloadWithPositiveLenNaksOutOfOrder)
+{
+    // Regression guard for a real bug: crc16_ccitt_false's empty-input case
+    // returns 0xFFFFu. The naive `if (data == nullptr || len == 0)` form of
+    // that guard made (nullptr, K, 0xFFFFu) look like a valid ACK candidate
+    // because:
+    //   - payloadLen=K matches expectedLen (SIZE check passes),
+    //   - crc16_ccitt_false(nullptr, K) returns 0xFFFFu (CRC check passes),
+    //   - onChunk returns ACK with payload=nullptr → Phase 3 derefs null.
+    // Closed by the upstream structural guard in onChunk and by tightening
+    // crc16_ccitt_false to only short-circuit on len==0. This test pins
+    // both: a nullptr payload with positive payloadLen MUST NAK, and the
+    // ChunkResult MUST NOT carry a non-null payload pointer.
+    AstrOsBulkTransport::BulkReceiver r;
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
+
+    auto result = r.onChunk(/*xferId=*/7, /*seq=*/0, /*payloadLen=*/4, /*crc16=*/0xFFFFu, /*payload=*/nullptr);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
+    EXPECT_EQ(nullptr, result.payload);
+    EXPECT_EQ(0u, result.payloadLen);
+    EXPECT_EQ(0u, result.nextExpectedSeq); // first-chunk sentinel
+    EXPECT_EQ(16u, result.windowRemaining);
+}
+
 TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
 {
     AstrOsBulkTransport::BulkReceiver r;

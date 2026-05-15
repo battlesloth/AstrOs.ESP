@@ -185,9 +185,9 @@ namespace AstrOsBulkTransport
         // and returns OK on matching totals or IO_ERROR on mismatch.
         enum class Status : uint8_t
         {
-            OK,
-            HASH_MISMATCH,
-            IO_ERROR
+            OK = 0,
+            HASH_MISMATCH = 1,
+            IO_ERROR = 2
         };
 
         // Populated when status != OK. NONE on the success path. Mirrors
