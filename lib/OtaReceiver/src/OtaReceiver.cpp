@@ -178,7 +178,51 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 
 void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 {
-    // Task 5 implements this.
+    std::string transferIdIn = msg.transferId ? msg.transferId : "";
+    std::string msgId = msg.end.msgId ? msg.end.msgId : "";
+    std::string finalShaIn(msg.end.finalSha256Hex);
+
+    uint8_t xferId = 0;
+    {
+        errno = 0;
+        char *endp = nullptr;
+        unsigned long ul = strtoul(transferIdIn.c_str(), &endp, 10);
+        if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || ul > 255)
+        {
+            ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric", transferIdIn.c_str());
+            AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
+            active_ = false;
+            bulk_.reset();
+            free(msg.end.msgId);
+            free(msg.transferId);
+            return;
+        }
+        xferId = static_cast<uint8_t>(ul);
+    }
+
+    auto er = bulk_.onEnd(xferId, msg.end.totalChunks);
+
+    if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
+    {
+        // Phase 3: no streaming SHA, so we echo the server's stated hash back
+        // as the "computed" value. Phase 4 will replace this with the real
+        // mbedtls_sha256_finish output.
+        ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u", transferIdIn.c_str(),
+                 (unsigned)msg.end.totalChunks);
+        AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", finalShaIn);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_END IO_ERROR reason=%d (transferId=%s)", static_cast<int>(er.reason),
+                 transferIdIn.c_str());
+        AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
+    }
+
+    active_ = false;
+    transferIdStr_.clear();
+    beginMsgId_.clear();
+    bulk_.reset();
+
     free(msg.end.msgId);
     free(msg.transferId);
 }
