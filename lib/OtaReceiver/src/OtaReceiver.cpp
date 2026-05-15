@@ -229,7 +229,41 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
 void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
 {
-    // Task 6 implements this.
+    std::string transferIdIn = msg.transferId ? msg.transferId : "";
+    std::string msgId = msg.deploy.msgId ? msg.deploy.msgId : "";
+    std::string orderListStr = msg.deploy.orderList ? msg.deploy.orderList : "";
+
+    std::vector<astros_fw_deploy_result_t> results;
+    if (orderListStr.empty())
+    {
+        // Empty order list = server error. Don't send anything (sendFwDeployDone drops on empty).
+        ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
+    }
+    else
+    {
+        size_t start = 0;
+        while (start < orderListStr.size())
+        {
+            size_t end = orderListStr.find('\x1E', start);
+            std::string id =
+                (end == std::string::npos) ? orderListStr.substr(start) : orderListStr.substr(start, end - start);
+            if (!id.empty())
+            {
+                results.push_back({id, "FAILED", "", "not_implemented"});
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+    }
+
+    ESP_LOGI(TAG, "FW_DEPLOY_BEGIN stub: transferId=%s target-count=%zu — all-FAILED not_implemented",
+             transferIdIn.c_str(), results.size());
+
+    AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
+
     free(msg.deploy.msgId);
     free(msg.deploy.orderList);
     free(msg.transferId);
