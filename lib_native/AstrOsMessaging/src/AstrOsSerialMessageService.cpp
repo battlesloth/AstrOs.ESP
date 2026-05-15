@@ -208,17 +208,24 @@ std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, ui
 }
 
 /// @brief generates FW_CHUNK_NAK reply. Payload shape:
-///        transfer-id<US>last-good-seq<US>reason-code.
+///        transfer-id<US>last-good-seq<US>next-expected-seq<US>reason-code.
+///        `next-expected-seq` disambiguates the first-chunk NAK: when
+///        last-good-seq=0 alone, the server can't tell whether seq 0 was
+///        committed (resume from 1) or nothing was committed (resume
+///        from 0). next-expected-seq is unambiguous — the server resumes
+///        from it directly.
 /// @param transferId transfer id
-/// @param lastGoodSeq the last seq we committed (server resumes from N+1)
+/// @param lastGoodSeq the last seq we committed; 0 when nothing committed yet
+/// @param nextExpectedSeq the seq the server must (re)send next
 /// @param reasonCode "CRC" | "SIZE" | "OUT_OF_ORDER" | "FLASH_FULL"
 /// @return serial message
 std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, uint32_t lastGoodSeq,
-                                                      std::string reasonCode)
+                                                      uint32_t nextExpectedSeq, std::string reasonCode)
 {
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_CHUNK_NAK, "na");
-    ss << transferId << UNIT_SEPARATOR << std::to_string(lastGoodSeq) << UNIT_SEPARATOR << reasonCode;
+    ss << transferId << UNIT_SEPARATOR << std::to_string(lastGoodSeq) << UNIT_SEPARATOR
+       << std::to_string(nextExpectedSeq) << UNIT_SEPARATOR << reasonCode;
     return ss.str();
 }
 

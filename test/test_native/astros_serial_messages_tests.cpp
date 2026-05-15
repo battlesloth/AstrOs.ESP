@@ -396,7 +396,8 @@ TEST(SerialMessages, FwChunkAckMessage)
 TEST(SerialMessages, FwChunkNakCrcMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    auto value = msgSvc.getFwChunkNak("7", 40, "CRC");
+    // lastGoodSeq=40, nextExpectedSeq=41 — sender resumes from 41.
+    auto value = msgSvc.getFwChunkNak("7", 40, 41, "CRC");
 
     auto validation = msgSvc.validateSerialMsg(value);
     ASSERT_TRUE(validation.valid);
@@ -405,23 +406,43 @@ TEST(SerialMessages, FwChunkNakCrcMessage)
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3u, payloadParts.size());
+    ASSERT_EQ(4u, payloadParts.size());
     EXPECT_EQ("7", payloadParts[0]);
     EXPECT_EQ("40", payloadParts[1]);
-    EXPECT_EQ("CRC", payloadParts[2]);
+    EXPECT_EQ("41", payloadParts[2]);
+    EXPECT_EQ("CRC", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakFirstChunkDisambiguatesViaNextExpectedSeq)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    // First-chunk NAK: lastGoodSeq=0 is the protocol-ambiguous value, but
+    // nextExpectedSeq=0 unambiguously says "send seq 0 again". A naive
+    // server that computed lastGoodSeq+1 would have skipped to seq 1.
+    auto value = msgSvc.getFwChunkNak("7", 0, 0, "CRC");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("0", payloadParts[1]); // lastGoodSeq
+    EXPECT_EQ("0", payloadParts[2]); // nextExpectedSeq — the disambiguating field
+    EXPECT_EQ("CRC", payloadParts[3]);
 }
 
 TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    auto value = msgSvc.getFwChunkNak("7", 40, "OUT_OF_ORDER");
+    auto value = msgSvc.getFwChunkNak("7", 40, 41, "OUT_OF_ORDER");
 
     auto validation = msgSvc.validateSerialMsg(value);
     ASSERT_TRUE(validation.valid);
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3u, payloadParts.size());
-    EXPECT_EQ("OUT_OF_ORDER", payloadParts[2]);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("OUT_OF_ORDER", payloadParts[3]); // reason-code moved to slot 3 with the new field
 }
 
 TEST(SerialMessages, FwTransferEndAckOkMessage)

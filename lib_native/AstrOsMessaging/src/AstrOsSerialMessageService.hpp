@@ -172,7 +172,8 @@ public:
     std::string getFwTransferBeginAck(std::string msgId, std::string transferId, std::string status);
     std::string getFwChunkAck(std::string transferId, uint32_t highestContiguousSeq, uint32_t nextExpectedSeq,
                               uint8_t windowRemaining);
-    std::string getFwChunkNak(std::string transferId, uint32_t lastGoodSeq, std::string reasonCode);
+    std::string getFwChunkNak(std::string transferId, uint32_t lastGoodSeq, uint32_t nextExpectedSeq,
+                              std::string reasonCode);
     std::string getFwTransferEndAck(std::string msgId, std::string transferId, std::string status,
                                     std::string computedSha256Hex);
     std::string getFwDeployDone(std::string msgId, std::string transferId,
