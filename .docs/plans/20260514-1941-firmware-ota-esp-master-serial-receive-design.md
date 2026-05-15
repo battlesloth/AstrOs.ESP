@@ -131,7 +131,7 @@ Files:
   extend `AstrOsSC::` string table, add builders:
   - `getFwTransferBeginAck(msgId, transferId, status)` — payload `transfer-id<US>status` per `.docs/protocol.md` (no hash field on BEGIN_ACK).
   - `getFwChunkAck(transferId, highestContiguousSeq, nextExpectedSeq, windowRemaining)`
-  - `getFwChunkNak(transferId, lastGoodSeq, reasonCode)`
+  - `getFwChunkNak(transferId, lastGoodSeq, nextExpectedSeq, reasonCode)` — payload `transfer-id<US>last-good-seq<US>next-expected-seq<US>reason-code`. `nextExpectedSeq` disambiguates the first-chunk NAK case where `lastGoodSeq=0` alone cannot distinguish "seq 0 committed, want seq 1" from "nothing committed, want seq 0". Phase 3 callers should pass `bulkResult.highestContiguousSeq` as `lastGoodSeq` and `bulkResult.nextExpectedSeq` as `nextExpectedSeq` (`BulkReceiver` already produces both with the correct first-chunk-NAK semantics: both are 0 when nothing committed yet).
   - `getFwTransferEndAck(msgId, transferId, status, computedSha256Hex)` — payload `transfer-id<US>OK|HASH_MISMATCH|IO_ERROR<US>computed-sha256-hex`. `msgId` echoes the originating END's id.
   - `getFwDeployDone(msgId, transferId, perControllerResults)` — each result `controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty`, RS-separated between results.
 - Parsers returning POD result structs:
@@ -345,16 +345,16 @@ Server                                                    Master
 | BEGIN, SD unavailable / open fail | `FW_TRANSFER_BEGIN_ACK status=io_error` | no state change |
 | BEGIN, free space < total-size | `FW_TRANSFER_BEGIN_ACK status=sd_full` | no state change |
 | BEGIN OK | `FW_TRANSFER_BEGIN_ACK status=OK` | staging.bin opened, sha256 started |
-| CHUNK bad CRC-16 | `FW_CHUNK_NAK last-good-seq reason=CRC` | nothing committed |
-| CHUNK out of order | `FW_CHUNK_NAK reason=OUT_OF_ORDER` | nothing committed |
-| CHUNK payload-len mismatch | `FW_CHUNK_NAK reason=SIZE` | nothing committed |
-| CHUNK base64 decode fail (handler) | `FW_CHUNK_NAK reason=SIZE` | handler frees own buf |
-| CHUNK fwrite fails (Phase 4+) | `FW_CHUNK_NAK reason=FLASH_FULL` | transfer effectively dead |
+| CHUNK bad CRC-16 | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=CRC` | nothing committed |
+| CHUNK out of order | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=OUT_OF_ORDER` | nothing committed |
+| CHUNK payload-len mismatch | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=SIZE` | nothing committed |
+| CHUNK base64 decode fail (handler) | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=SIZE` | handler frees own buf |
+| CHUNK fwrite fails (Phase 4+) | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=FLASH_FULL` | transfer effectively dead |
 | END hash match | `FW_TRANSFER_END_ACK OK <hex>` | rename staging → `<sha-prefix>.bin`, reset state |
 | END hash mismatch | `FW_TRANSFER_END_ACK HASH_MISMATCH <hex>` | **keep staging.bin** for forensics, reset state |
 | END total-chunks mismatch | `FW_TRANSFER_END_ACK IO_ERROR <hex>` | keep staging.bin, reset state |
 | DEPLOY_BEGIN (Phase 3+) | `FW_DEPLOY_DONE` all-FAILED `not_implemented` | no state change |
-| `xQueueSend(otaQueue, …)` full | handler frees, emits `FW_CHUNK_NAK reason=CRC` | no state change |
+| `xQueueSend(otaQueue, …)` full | handler frees, emits `FW_CHUNK_NAK last-good-seq next-expected-seq reason=CRC` | no state change |
 
 ## Testing
 

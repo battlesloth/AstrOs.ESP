@@ -442,7 +442,48 @@ TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
     ASSERT_EQ(4u, payloadParts.size());
-    EXPECT_EQ("OUT_OF_ORDER", payloadParts[3]); // reason-code moved to slot 3 with the new field
+    EXPECT_EQ("7", payloadParts[0]);            // transferId
+    EXPECT_EQ("40", payloadParts[1]);           // lastGoodSeq
+    EXPECT_EQ("41", payloadParts[2]);           // nextExpectedSeq
+    EXPECT_EQ("OUT_OF_ORDER", payloadParts[3]); // reasonCode
+}
+
+TEST(SerialMessages, FwChunkNakSizeMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 5, 6, "SIZE");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("SIZE", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakFlashFullMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 100, 101, "FLASH_FULL");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("FLASH_FULL", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakRejectsInvalidReasonCode)
+{
+    // Caller programming error: an unrecognized reason string is silently
+    // unparseable on the server side. The builder returns "" to flag this
+    // at the source rather than emitting an unidentifiable frame.
+    auto msgSvc = AstrOsSerialMessageService();
+
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "WAT").empty());
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "").empty());
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "crc").empty()); // case-sensitive
 }
 
 TEST(SerialMessages, FwTransferEndAckOkMessage)

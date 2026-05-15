@@ -425,6 +425,16 @@ EOF
 
 ### Task 4: `getFwChunkNak` builder
 
+> **Amendment (commit `a91a7ab`):** Wire format extended to 4 fields by adding
+> `next-expected-seq` between `last-good-seq` and `reason-code`. Code blocks below
+> reflect the original 3-field implementation as it was checked in during Phase 1;
+> the current production signature is
+> `getFwChunkNak(transferId, lastGoodSeq, nextExpectedSeq, reasonCode)`. See the
+> `feature/fw-chunk-nak-next-expected-seq` branch for the amendment rationale
+> (cross-repo bug: AstrOs.Server's chunk_streamer computed
+> `nextToSend = lastGoodSeq + 1` which skipped seq 0 on first-chunk NAK,
+> deadlocking the transfer).
+
 **Files:**
 - Modify: `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp`
 - Modify: `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.cpp`
