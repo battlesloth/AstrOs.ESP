@@ -61,7 +61,7 @@ TEST(BulkTransport, Crc16DeterministicAcrossCalls)
 TEST(BulkTransport, BeginThenSingleChunkInOrderAcks)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/12, /*totalChunks=*/1, /*chunkSize=*/12, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/12, /*totalChunks=*/1, /*chunkSize=*/12, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd', '!'};
     uint16_t expectedCrc = AstrOsBulkTransport::crc16_ccitt_false(payload, sizeof(payload));
@@ -97,7 +97,7 @@ TEST(BulkTransport, OnChunkBeforeBeginNaksOutOfOrder)
 TEST(BulkTransport, ResetReturnsToInactive)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/100, /*windowSize=*/8);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/100, /*windowSize=*/8).valid);
     r.reset();
 
     const uint8_t payload[] = {0x01, 0x02};
@@ -113,7 +113,7 @@ TEST(BulkTransport, ResetReturnsToInactive)
 TEST(BulkTransport, BeginAfterEndReusesReceiver)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t firstPayload[] = {'a', 'b', 'c', 'd'};
     uint16_t firstCrc = AstrOsBulkTransport::crc16_ccitt_false(firstPayload, 4);
@@ -122,7 +122,7 @@ TEST(BulkTransport, BeginAfterEndReusesReceiver)
 
     // Reset, begin a new transfer with a different xferId, and accept its first chunk.
     r.reset();
-    r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t secondPayload[] = {'e', 'f', 'g', 'h'};
     uint16_t secondCrc = AstrOsBulkTransport::crc16_ccitt_false(secondPayload, 4);
@@ -138,7 +138,7 @@ TEST(BulkTransport, BeginOnActiveReceiverReinitializes)
     // The contract says begin() on an already-active receiver reinitializes
     // it as if reset() + begin() had been called.
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {'a', 'b', 'c', 'd'};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -146,7 +146,7 @@ TEST(BulkTransport, BeginOnActiveReceiverReinitializes)
 
     // Call begin() again with a different xferId mid-transfer, without
     // an intervening reset(). nextSeq_ should be zeroed back to 0.
-    r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     auto result = r.onChunk(/*xferId=*/9, /*seq=*/0, 4, crc, payload);
     EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, result.decision);
@@ -157,7 +157,13 @@ TEST(BulkTransport, BeginOnActiveReceiverReinitializes)
 TEST(BulkTransport, BeginWithZeroChunkSizeLeavesReceiverInactive)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/0, /*windowSize=*/16);
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/0, /*windowSize=*/16);
+
+    // BeginResult surfaces the specific rejection reason so Phase 3 can
+    // emit a matching FW_TRANSFER_BEGIN_ACK status code rather than
+    // silently NAK every subsequent chunk.
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::ZERO_CHUNK_SIZE, br.reason);
 
     // Receiver should be inactive — onChunk reports the not-active sentinel.
     const uint8_t payload[] = {0x01};
@@ -172,7 +178,10 @@ TEST(BulkTransport, BeginWithZeroChunkSizeLeavesReceiverInactive)
 TEST(BulkTransport, BeginWithZeroTotalChunksLeavesReceiverInactive)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/0, /*totalChunks=*/0, /*chunkSize=*/4, /*windowSize=*/16);
+    auto br = r.begin(/*xferId=*/7, /*totalSize=*/0, /*totalChunks=*/0, /*chunkSize=*/4, /*windowSize=*/16);
+
+    EXPECT_FALSE(br.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginResult::Reason::ZERO_TOTAL_CHUNKS, br.reason);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -181,9 +190,11 @@ TEST(BulkTransport, BeginWithZeroTotalChunksLeavesReceiverInactive)
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(0u, result.windowRemaining);
 
-    // onEnd on the inactive receiver should not return OK.
+    // onEnd on the inactive receiver should not return OK, and should
+    // surface NOT_ACTIVE as the distinct IO_ERROR reason.
     auto end = r.onEnd(7, 0);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Reason::NOT_ACTIVE, end.reason);
 }
 
 //=================================================================================================
@@ -193,7 +204,7 @@ TEST(BulkTransport, BeginWithZeroTotalChunksLeavesReceiverInactive)
 TEST(BulkTransport, OnChunkBadCrcNaks)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t realCrc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -213,7 +224,8 @@ TEST(BulkTransport, OnChunkPayloadLenMismatchNaksSize)
 {
     AstrOsBulkTransport::BulkReceiver r;
     // totalSize = 4096, chunkSize = 1024 -> 4 chunks of 1024 bytes each.
-    r.begin(/*xferId=*/7, /*totalSize=*/4096, /*totalChunks=*/4, /*chunkSize=*/1024, /*windowSize=*/16);
+    ASSERT_TRUE(
+        r.begin(/*xferId=*/7, /*totalSize=*/4096, /*totalChunks=*/4, /*chunkSize=*/1024, /*windowSize=*/16).valid);
 
     // Sender claims this is chunk 0 with len=500 — wrong; should be 1024.
     std::vector<uint8_t> payload(500, 0xAA);
@@ -234,7 +246,8 @@ TEST(BulkTransport, OnChunkLastShortChunkAcks)
 {
     AstrOsBulkTransport::BulkReceiver r;
     // totalSize = 2500, chunkSize = 1024 -> chunks of 1024, 1024, 452.
-    r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16);
+    ASSERT_TRUE(
+        r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16).valid);
 
     // Commit chunks 0 and 1.
     std::vector<uint8_t> fullChunk(1024, 0xCC);
@@ -257,7 +270,8 @@ TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
 {
     AstrOsBulkTransport::BulkReceiver r;
     // totalSize = 2500, chunkSize = 1024 -> last chunk expected = 452 bytes.
-    r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16);
+    ASSERT_TRUE(
+        r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16).valid);
 
     std::vector<uint8_t> fullChunk(1024, 0xCC);
     uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullChunk.data(), fullChunk.size());
@@ -287,7 +301,7 @@ TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
 TEST(BulkTransport, OnChunkDuplicateSeqNaksOutOfOrder)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -312,7 +326,7 @@ TEST(BulkTransport, OnChunkDuplicateSeqNaksOutOfOrder)
 TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -329,7 +343,7 @@ TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
 TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -356,7 +370,7 @@ TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
 TEST(BulkTransport, OnEndAfterAllChunksReturnsOk)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -382,7 +396,7 @@ TEST(BulkTransport, OnEndBeforeBeginReturnsIoError)
 TEST(BulkTransport, OnEndWrongXferIdReturnsIoError)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -396,7 +410,7 @@ TEST(BulkTransport, OnEndWrongXferIdReturnsIoError)
 TEST(BulkTransport, OnEndSenderTotalMismatchReturnsIoError)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -411,7 +425,7 @@ TEST(BulkTransport, OnEndSenderTotalMismatchReturnsIoError)
 TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
 {
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
@@ -435,7 +449,7 @@ TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
     constexpr uint8_t kWindowSize = 16;
 
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize);
+    ASSERT_TRUE(r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize).valid);
 
     // 9 full chunks + 1 short tail.
     std::vector<uint8_t> fullPayload(kChunkSize, 0xA5);
@@ -489,7 +503,7 @@ TEST(BulkTransport, EndToEndTransferWithMidStreamSizeRetransmit)
     constexpr uint8_t kWindowSize = 16;
 
     AstrOsBulkTransport::BulkReceiver r;
-    r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize);
+    ASSERT_TRUE(r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize).valid);
 
     const uint8_t fullPayload[] = {0xDE, 0xAD, 0xBE, 0xEF};
     uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullPayload, 4);

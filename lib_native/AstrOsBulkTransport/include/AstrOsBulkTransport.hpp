@@ -142,7 +142,39 @@ namespace AstrOsBulkTransport
         ChunkResult() = default;
     };
 
-    struct EndResult
+    // [[nodiscard]] forces every caller (including tests) to acknowledge
+    // the result — silently dropping `begin()` would leave the caller
+    // unable to distinguish "transfer started" from "BEGIN was rejected,
+    // receiver still inactive," which is precisely the silent-failure
+    // case the PR-toolkit pass flagged as Critical.
+    struct [[nodiscard]] BeginResult
+    {
+        // OK only when valid == true. Non-OK values describe why begin()
+        // refused to activate the receiver — caller should reject the
+        // wire-level FW_TRANSFER_BEGIN with a matching status code rather
+        // than silently NAK every subsequent chunk.
+        enum class Reason : uint8_t
+        {
+            OK = 0,
+            ZERO_CHUNK_SIZE = 1,
+            ZERO_TOTAL_CHUNKS = 2,
+            ZERO_WINDOW_SIZE = 3,
+            SIZE_INCONSISTENT = 4 // totalSize outside ((totalChunks - 1) * chunkSize, totalChunks * chunkSize]
+        };
+        bool valid = false;
+        Reason reason = Reason::ZERO_CHUNK_SIZE;
+
+        static BeginResult ok()
+        {
+            return {true, Reason::OK};
+        }
+        static BeginResult invalid(Reason r)
+        {
+            return {false, r};
+        }
+    };
+
+    struct [[nodiscard]] EndResult
     {
         // HASH_MISMATCH is reserved for the MIXED-layer caller (Phase 4
         // OtaReceiver, when the streaming SHA-256 context is added).
@@ -150,13 +182,36 @@ namespace AstrOsBulkTransport
         // HASH_MISMATCH; this PURE state machine never returns it either.
         // BulkReceiver::onEnd only validates chunk counts and returns
         // OK on matching totals or IO_ERROR on mismatch.
-        enum class Status
+        enum class Status : uint8_t
         {
             OK,
             HASH_MISMATCH,
             IO_ERROR
         };
+
+        // Populated when status != OK. NONE on the success path. Mirrors
+        // the NakReason pattern: distinct reasons that all happen to map
+        // to a single Status::IO_ERROR get surfaced so Phase 3 can log
+        // them and operators can debug WHICH IO_ERROR they hit.
+        enum class Reason : uint8_t
+        {
+            NONE = 0,
+            NOT_ACTIVE = 1,            // begin() not called or reset() was called
+            WRONG_XFER_ID = 2,         // xferId mismatch
+            SENDER_TOTAL_MISMATCH = 3, // sender's totalChunksSent != totalChunks_
+            RECEIVER_SHORT_COUNT = 4   // sender claims complete but nextSeq_ < totalChunks_
+        };
         Status status = Status::IO_ERROR;
+        Reason reason = Reason::NOT_ACTIVE;
+
+        static EndResult ok()
+        {
+            return {Status::OK, Reason::NONE};
+        }
+        static EndResult ioError(Reason r)
+        {
+            return {Status::IO_ERROR, r};
+        }
     };
 
     // Sequential chunk-receive state machine for the firmware OTA path.
@@ -179,7 +234,10 @@ namespace AstrOsBulkTransport
     //     transfer mid-stream.
     //   - `begin()` with `chunkSize == 0` or `totalChunks == 0` is treated
     //     as a protocol violation: the receiver is left inactive (callers
-    //     get OUT_OF_ORDER NAKs from `onChunk`).
+    //     get OUT_OF_ORDER NAKs from `onChunk`) AND `begin()` returns
+    //     `BeginResult { valid=false, reason=ZERO_CHUNK_SIZE | ZERO_TOTAL_CHUNKS }`.
+    //     The return value is `[[nodiscard]]`; the caller MUST check
+    //     `result.valid` before reporting a successful FW_TRANSFER_BEGIN_ACK.
     //
     // Usage:
     //   BulkReceiver r;
@@ -195,7 +253,8 @@ namespace AstrOsBulkTransport
     class BulkReceiver
     {
     public:
-        void begin(uint8_t xferId, uint32_t totalSize, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize);
+        BeginResult begin(uint8_t xferId, uint32_t totalSize, uint32_t totalChunks, uint16_t chunkSize,
+                          uint8_t windowSize);
         ChunkResult onChunk(uint8_t xferId, uint32_t seq, uint16_t payloadLen, uint16_t crc16, const uint8_t *payload);
         EndResult onEnd(uint8_t xferId, uint32_t totalChunksSent);
         void reset();

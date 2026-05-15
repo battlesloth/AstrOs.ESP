@@ -37,8 +37,8 @@ namespace AstrOsBulkTransport
         return crc;
     }
 
-    void BulkReceiver::begin(uint8_t xferId, uint32_t totalSize, uint32_t totalChunks, uint16_t chunkSize,
-                             uint8_t windowSize)
+    BeginResult BulkReceiver::begin(uint8_t xferId, uint32_t totalSize, uint32_t totalChunks, uint16_t chunkSize,
+                                    uint8_t windowSize)
     {
         // Reject protocol-illegal parameters by leaving the receiver inactive.
         // A zero chunkSize would make every chunk NAK with SIZE (because
@@ -46,11 +46,18 @@ namespace AstrOsBulkTransport
         // confusing the SIZE math; zero totalChunks would let onEnd return
         // OK without ever receiving a chunk. The MIXED caller's
         // FW_TRANSFER_BEGIN parser should catch these earlier, but the
-        // guard here keeps the state machine in a well-defined state.
-        if (chunkSize == 0 || totalChunks == 0)
+        // guard here keeps the state machine in a well-defined state and
+        // surfaces the specific rejection reason so Phase 3 can emit a
+        // matching FW_TRANSFER_BEGIN_ACK status code.
+        if (chunkSize == 0)
         {
             reset();
-            return;
+            return BeginResult::invalid(BeginResult::Reason::ZERO_CHUNK_SIZE);
+        }
+        if (totalChunks == 0)
+        {
+            reset();
+            return BeginResult::invalid(BeginResult::Reason::ZERO_TOTAL_CHUNKS);
         }
 
         xferId_ = xferId;
@@ -60,6 +67,7 @@ namespace AstrOsBulkTransport
         chunkSize_ = chunkSize;
         windowSize_ = windowSize;
         active_ = true;
+        return BeginResult::ok();
     }
 
     void BulkReceiver::reset()
@@ -116,23 +124,28 @@ namespace AstrOsBulkTransport
 
     EndResult BulkReceiver::onEnd(uint8_t xferId, uint32_t totalChunksSent)
     {
-        EndResult result{};
-        result.status = EndResult::Status::IO_ERROR;
-
-        if (!active_ || xferId != xferId_)
+        // Three distinct IO_ERROR causes — surface each with its own
+        // Reason so Phase 3 can log them distinctly. The four conditions
+        // intentionally check in order of caller-fault diagnosis: "is
+        // the receiver even live?" → "are we talking about the same
+        // transfer?" → "does the sender agree with us on the total?" →
+        // "did we actually receive all the chunks?"
+        if (!active_)
         {
-            return result;
+            return EndResult::ioError(EndResult::Reason::NOT_ACTIVE);
+        }
+        if (xferId != xferId_)
+        {
+            return EndResult::ioError(EndResult::Reason::WRONG_XFER_ID);
         }
         if (totalChunksSent != totalChunks_)
         {
-            return result;
+            return EndResult::ioError(EndResult::Reason::SENDER_TOTAL_MISMATCH);
         }
         if (nextSeq_ != totalChunks_)
         {
-            return result;
+            return EndResult::ioError(EndResult::Reason::RECEIVER_SHORT_COUNT);
         }
-
-        result.status = EndResult::Status::OK;
-        return result;
+        return EndResult::ok();
     }
 } // namespace AstrOsBulkTransport
