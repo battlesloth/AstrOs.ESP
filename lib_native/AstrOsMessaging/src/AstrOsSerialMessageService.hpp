@@ -124,6 +124,16 @@ typedef struct
     bool valid;
 } FwTransferBeginRecord;
 
+typedef struct
+{
+    std::string transferId;
+    uint32_t seq;
+    uint16_t payloadLen;
+    std::string base64Payload; // not decoded here — Phase 3 MIXED handler decodes
+    uint16_t crc16;
+    bool valid;
+} FwChunkRecord;
+
 class AstrOsSerialMessageService
 {
 private:
@@ -171,5 +181,6 @@ public:
 // grammar in this file. Pure C++; no allocations beyond the
 // returned struct's members.
 FwTransferBeginRecord parseFwTransferBegin(const std::string &payload);
+FwChunkRecord parseFwChunk(const std::string &payload);
 
 #endif

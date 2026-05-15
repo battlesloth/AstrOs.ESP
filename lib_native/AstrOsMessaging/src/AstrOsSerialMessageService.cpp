@@ -457,3 +457,73 @@ FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
     rec.valid = true;
     return rec;
 }
+
+namespace
+{
+    // Parses exactly 4 hex chars (lowercase or uppercase) into a uint16_t.
+    // Returns false on length mismatch or non-hex character.
+    bool parseHex16(const std::string &hex, uint16_t &out)
+    {
+        if (hex.size() != 4)
+        {
+            return false;
+        }
+        uint16_t v = 0;
+        for (char c : hex)
+        {
+            uint8_t nibble = 0;
+            if (c >= '0' && c <= '9')
+                nibble = c - '0';
+            else if (c >= 'a' && c <= 'f')
+                nibble = 10 + (c - 'a');
+            else if (c >= 'A' && c <= 'F')
+                nibble = 10 + (c - 'A');
+            else
+                return false;
+            v = static_cast<uint16_t>((v << 4) | nibble);
+        }
+        out = v;
+        return true;
+    }
+} // namespace
+
+FwChunkRecord parseFwChunk(const std::string &payload)
+{
+    FwChunkRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 5)
+    {
+        return rec;
+    }
+
+    errno = 0;
+    char *endptr = nullptr;
+    auto seq = std::strtoul(parts[1].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
+    {
+        return rec;
+    }
+    errno = 0;
+    endptr = nullptr;
+    auto plen = std::strtoul(parts[2].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[2].c_str() || *endptr != '\0' || plen > 0xFFFFu)
+    {
+        return rec;
+    }
+
+    uint16_t crc = 0;
+    if (!parseHex16(parts[4], crc))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.seq = static_cast<uint32_t>(seq);
+    rec.payloadLen = static_cast<uint16_t>(plen);
+    rec.base64Payload = parts[3];
+    rec.crc16 = crc;
+    rec.valid = true;
+    return rec;
+}

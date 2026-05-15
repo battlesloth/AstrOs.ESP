@@ -544,3 +544,45 @@ TEST(SerialMessages, ParseFwTransferBeginEmptyTargetList)
     auto rec = parseFwTransferBegin(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+TEST(SerialMessages, ParseFwChunkHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR // base64 of "Hello World!" (12 bytes)
+            << "abcd";
+
+    auto rec = parseFwChunk(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(42u, rec.seq);
+    EXPECT_EQ(12u, rec.payloadLen);
+    EXPECT_EQ("SGVsbG8gV29ybGQh", rec.base64Payload);
+    EXPECT_EQ(0xabcdu, rec.crc16);
+}
+
+TEST(SerialMessages, ParseFwChunkTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12"; // 3 fields
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkBadCrcHex)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "xyz1"; // not hex
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkCrcHexWrongLength)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abc"; // 3 chars, not 4
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
