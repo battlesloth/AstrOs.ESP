@@ -341,3 +341,56 @@ TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
     auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/2);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
 }
+
+//=================================================================================================
+// BulkReceiver — end-to-end happy path with one mid-stream CRC retransmit
+//=================================================================================================
+
+TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
+{
+    constexpr uint32_t kTotalSize = 9500;
+    constexpr uint16_t kChunkSize = 1024;
+    constexpr uint32_t kTotalChunks = 10; // 9 full chunks + 1 short (9500 - 9216 = 284 bytes)
+    constexpr uint8_t kXferId = 42;
+    constexpr uint8_t kWindowSize = 16;
+
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize);
+
+    // 9 full chunks + 1 short tail.
+    std::vector<uint8_t> fullPayload(kChunkSize, 0xA5);
+    uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullPayload.data(), fullPayload.size());
+
+    for (uint32_t seq = 0; seq < kTotalChunks - 1; seq++)
+    {
+        if (seq == 5)
+        {
+            // Mid-stream CRC error: sender sends correct payload with a corrupted CRC field.
+            auto nakResult =
+                r.onChunk(kXferId, seq, kChunkSize, static_cast<uint16_t>(fullCrc ^ 0x00FFu), fullPayload.data());
+            ASSERT_EQ(AstrOsBulkTransport::Decision::NAK, nakResult.decision);
+            ASSERT_EQ(AstrOsBulkTransport::NakReason::CRC, nakResult.reason);
+            EXPECT_EQ(4u, nakResult.highestContiguousSeq);
+            EXPECT_EQ(5u, nakResult.nextExpectedSeq);
+            // Sender retransmits seq=5 with the correct CRC.
+        }
+        auto okResult = r.onChunk(kXferId, seq, kChunkSize, fullCrc, fullPayload.data());
+        ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, okResult.decision) << "ACK failed at seq=" << seq;
+        ASSERT_EQ(seq + 1, okResult.nextExpectedSeq);
+    }
+
+    // Final short chunk: 9500 - 9 * 1024 = 9500 - 9216 = 284 bytes.
+    constexpr uint16_t kTailLen = 284;
+    std::vector<uint8_t> tail(kTailLen, 0xC3);
+    uint16_t tailCrc = AstrOsBulkTransport::crc16_ccitt_false(tail.data(), tail.size());
+    auto tailResult = r.onChunk(kXferId, kTotalChunks - 1, kTailLen, tailCrc, tail.data());
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, tailResult.decision);
+    EXPECT_EQ(kTotalChunks - 1, tailResult.highestContiguousSeq);
+    EXPECT_EQ(kTotalChunks, tailResult.nextExpectedSeq);
+
+    // End of transfer.
+    auto endResult = r.onEnd(kXferId, kTotalChunks);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, endResult.status);
+
+    r.reset();
+}
