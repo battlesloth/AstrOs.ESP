@@ -237,6 +237,41 @@ std::string AstrOsSerialMessageService::getFwTransferEndAck(std::string msgId, s
     return ss.str();
 }
 
+/// @brief generates FW_DEPLOY_DONE. Payload shape per .docs/protocol.md:
+///        transfer-id<US>per-controller-result-list, RS-separated results
+///        of controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty.
+///        Transfer-id is prepended once; it precedes the first result inline,
+///        which therefore has 5 US-separated fields on the wire while subsequent
+///        results have 4.
+/// @param msgId echo of the originating msgId (the DEPLOY_BEGIN that triggered this)
+/// @param transferId transfer id
+/// @param results per-target result records
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::string transferId,
+                                                        std::vector<astros_fw_deploy_result_t> results)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_DEPLOY_DONE, msgId);
+    ss << transferId;
+    for (size_t i = 0; i < results.size(); i++)
+    {
+        const auto &r = results[i];
+        if (i == 0)
+        {
+            // First result is inline with transferId, connected by US (5 US-sep fields total on this RS-record)
+            ss << UNIT_SEPARATOR << r.controllerId << UNIT_SEPARATOR << r.status << UNIT_SEPARATOR << r.finalVersion
+               << UNIT_SEPARATOR << r.errorOrEmpty;
+        }
+        else
+        {
+            // Subsequent results are RS-separated, 4 US-sep fields per record
+            ss << RECORD_SEPARATOR << r.controllerId << UNIT_SEPARATOR << r.status << UNIT_SEPARATOR << r.finalVersion
+               << UNIT_SEPARATOR << r.errorOrEmpty;
+        }
+    }
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message

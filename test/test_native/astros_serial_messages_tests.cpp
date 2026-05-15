@@ -458,3 +458,38 @@ TEST(SerialMessages, FwTransferEndAckHashMismatchMessage)
     EXPECT_EQ("HASH_MISMATCH", payloadParts[1]);
     EXPECT_EQ(computedHex, payloadParts[2]);
 }
+
+TEST(SerialMessages, FwDeployDoneAllFailedMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "FAILED", "", "not_implemented"});
+    results.push_back({"dome", "FAILED", "", "not_implemented"});
+
+    auto value = msgSvc.getFwDeployDone("mid-d", "7", results);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_DEPLOY_DONE, validation.type);
+    EXPECT_STREQ("mid-d", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto resultRecords = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+    ASSERT_EQ(2u, resultRecords.size());
+
+    // First record starts with transfer-id, then the first result's 4 fields:
+    auto firstParts = AstrOsStringUtils::splitString(resultRecords[0], UNIT_SEPARATOR);
+    ASSERT_EQ(5u, firstParts.size());
+    EXPECT_EQ("7", firstParts[0]);
+    EXPECT_EQ("core", firstParts[1]);
+    EXPECT_EQ("FAILED", firstParts[2]);
+    EXPECT_EQ("", firstParts[3]);
+    EXPECT_EQ("not_implemented", firstParts[4]);
+
+    auto secondParts = AstrOsStringUtils::splitString(resultRecords[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, secondParts.size());
+    EXPECT_EQ("dome", secondParts[0]);
+    EXPECT_EQ("FAILED", secondParts[1]);
+    EXPECT_EQ("", secondParts[2]);
+    EXPECT_EQ("not_implemented", secondParts[3]);
+}
