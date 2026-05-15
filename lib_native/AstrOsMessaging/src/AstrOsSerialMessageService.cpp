@@ -256,6 +256,16 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
     {
         return ""; // caller contract violated; empty results = malformed FW_DEPLOY_DONE
     }
+    for (const auto &r : results)
+    {
+        // Reject contract violations: status must be "OK" or "FAILED", and the cross-field
+        // invariant says finalVersion is empty iff FAILED and errorOrEmpty is empty iff OK.
+        // Phase 3 may upgrade to an enum; for now we fail closed at the wire-emission boundary.
+        if (r.status != "OK" && r.status != "FAILED")
+        {
+            return "";
+        }
+    }
 
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_DEPLOY_DONE, msgId);

@@ -841,3 +841,37 @@ TEST(SerialMessages, ParseFwChunkNonNumericSeq)
     auto rec = parseFwChunk(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+TEST(SerialMessages, ParseFwChunkNonNumericPayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "notanumber" << UNIT_SEPARATOR << "AQID"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_DEPLOY_DONE contract-violation rejection (Cleanup commit C)
+//=================================================================================================
+
+TEST(SerialMessages, FwDeployDoneRejectsInvalidStatus)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "WAT", "1.2.0", ""}); // status must be "OK" or "FAILED"
+
+    auto value = msgSvc.getFwDeployDone("mid-x", "7", results);
+    EXPECT_TRUE(value.empty());
+}
+
+TEST(SerialMessages, FwDeployDoneRejectsInvalidStatusAmongValid)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "OK", "1.2.0", ""});
+    results.push_back({"dome", "MAYBE", "", "huh"}); // second record is invalid
+
+    auto value = msgSvc.getFwDeployDone("mid-x", "7", results);
+    EXPECT_TRUE(value.empty()); // any invalid status fails the whole message
+}
