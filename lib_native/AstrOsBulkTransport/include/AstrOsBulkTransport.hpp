@@ -9,6 +9,11 @@ namespace AstrOsBulkTransport
     // reflection, no output reflection, no XOR-out. Canonical check value:
     // crc16_ccitt_false("123456789", 9) == 0x29B1.
     //
+    // Precondition: `data` must be non-null whenever `len > 0`. The
+    // (anything, 0) case is well-defined and returns the init value
+    // 0xFFFFu. Calling with (nullptr, len > 0) trips an assert (native
+    // tests) or panics + resets (target) — both deterministic, neither UB.
+    //
     // NOTE on ESP-IDF interop: this is NOT byte-identical to esp_crc16_le.
     // esp_crc16_le is CRC-16/CCITT (reflected, init=0) — a different
     // algorithm. The matching ESP-IDF variant is the big-endian one with a
@@ -80,18 +85,21 @@ namespace AstrOsBulkTransport
     // callers cannot aggregate-initialize impossible field combinations
     // (e.g. Decision::ACK with reason != NONE, or NAK with non-null
     // payload). Use the static factories: `ack`, `nakActive`,
-    // `nakInactive`. Fields stay public-readable so test code keeps the
-    // existing read-by-name idiom (`r.payload`, `r.reason`, etc.) —
-    // factories prevent the construction hazard without rewriting reads.
+    // `nakInactive`. Fields are public-readable AND `const` so that a
+    // returned result cannot be mutated into an invalid combination
+    // after the factory enforces consistency — test code keeps the
+    // read-by-name idiom (`r.payload`, `r.reason`, etc.) but cannot
+    // assign through it. Const fields disable copy/move assignment;
+    // copy-construction (`auto r = factory()`) still works.
     struct ChunkResult
     {
-        Decision decision = Decision::NAK;
-        uint32_t highestContiguousSeq = 0;
-        uint32_t nextExpectedSeq = 0;
-        uint8_t windowRemaining = 0;
-        NakReason reason = NakReason::NONE;
-        const uint8_t *payload = nullptr;
-        uint16_t payloadLen = 0;
+        const Decision decision;
+        const uint32_t highestContiguousSeq;
+        const uint32_t nextExpectedSeq;
+        const uint8_t windowRemaining;
+        const NakReason reason;
+        const uint8_t *const payload;
+        const uint16_t payloadLen;
 
         // ACK: the chunk committed. `committedSeq` is the seq we just
         // committed; `nextExpectedSeq` is committedSeq + 1; both go on
@@ -99,15 +107,8 @@ namespace AstrOsBulkTransport
         static ChunkResult ack(uint32_t committedSeq, uint32_t nextExpectedSeq, uint8_t windowSize,
                                const uint8_t *payload, uint16_t payloadLen)
         {
-            ChunkResult r;
-            r.decision = Decision::ACK;
-            r.reason = NakReason::NONE;
-            r.highestContiguousSeq = committedSeq;
-            r.nextExpectedSeq = nextExpectedSeq;
-            r.windowRemaining = windowSize;
-            r.payload = payload;
-            r.payloadLen = payloadLen;
-            return r;
+            return ChunkResult(Decision::ACK, committedSeq, nextExpectedSeq, windowSize, NakReason::NONE, payload,
+                               payloadLen);
         }
 
         // Active NAK: receiver is in a live transfer but the chunk was
@@ -117,13 +118,7 @@ namespace AstrOsBulkTransport
         static ChunkResult nakActive(NakReason reason, uint32_t highestContiguousSeq, uint32_t nextExpectedSeq,
                                      uint8_t windowSize)
         {
-            ChunkResult r;
-            r.decision = Decision::NAK;
-            r.reason = reason;
-            r.highestContiguousSeq = highestContiguousSeq;
-            r.nextExpectedSeq = nextExpectedSeq;
-            r.windowRemaining = windowSize;
-            return r;
+            return ChunkResult(Decision::NAK, highestContiguousSeq, nextExpectedSeq, windowSize, reason, nullptr, 0);
         }
 
         // Inactive NAK: chunk arrived while no transfer is live (begin()
@@ -131,15 +126,21 @@ namespace AstrOsBulkTransport
         // wire signal Phase 3 uses to say "abort + restart handshake."
         static ChunkResult nakInactive()
         {
-            ChunkResult r;
-            r.decision = Decision::NAK;
-            r.reason = NakReason::OUT_OF_ORDER;
-            // highestContiguousSeq, nextExpectedSeq, windowRemaining all 0.
-            return r;
+            return ChunkResult(Decision::NAK, /*highestContiguousSeq=*/0, /*nextExpectedSeq=*/0,
+                               /*windowRemaining=*/0, NakReason::OUT_OF_ORDER, /*payload=*/nullptr,
+                               /*payloadLen=*/0);
         }
 
     private:
-        ChunkResult() = default;
+        // Private all-args constructor — the factories are the only legal
+        // way to build a ChunkResult. Aggregate initialization is disabled
+        // by the user-declared constructor, so external code can't bypass
+        // the factory invariants by writing `ChunkResult{Decision::ACK, ...}`.
+        ChunkResult(Decision d, uint32_t hcs, uint32_t nes, uint8_t wr, NakReason r, const uint8_t *p, uint16_t pl)
+            : decision(d), highestContiguousSeq(hcs), nextExpectedSeq(nes), windowRemaining(wr), reason(r), payload(p),
+              payloadLen(pl)
+        {
+        }
     };
 
     // [[nodiscard]] forces every caller (including tests) to acknowledge

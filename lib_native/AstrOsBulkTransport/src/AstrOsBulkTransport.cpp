@@ -1,5 +1,8 @@
 #include "AstrOsBulkTransport.hpp"
 
+#include <cassert>
+#include <type_traits>
+
 namespace AstrOsBulkTransport
 {
     // NakReason wire stability: values CRC..FLASH_FULL are serialized into
@@ -32,6 +35,23 @@ namespace AstrOsBulkTransport
     static_assert(static_cast<uint8_t>(EndResult::Reason::SENDER_TOTAL_MISMATCH) == 3);
     static_assert(static_cast<uint8_t>(EndResult::Reason::RECEIVER_SHORT_COUNT) == 4);
 
+    // ChunkResult immutability: every public field must be const so a
+    // factory-produced result can be inspected by callers but not mutated
+    // into an invalid combination after construction. Implicitly disables
+    // copy/move assignment (`r1 = r2` won't compile) while preserving
+    // copy-construction (`auto r1 = factory()` still works) and prvalue
+    // returns from the factories. Pinned at compile time so a future
+    // refactor that drops `const` from any field breaks the build.
+    static_assert(std::is_const_v<decltype(ChunkResult::decision)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::highestContiguousSeq)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::nextExpectedSeq)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::windowRemaining)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::reason)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::payload)>);
+    static_assert(std::is_const_v<decltype(ChunkResult::payloadLen)>);
+    static_assert(!std::is_copy_assignable_v<ChunkResult>);
+    static_assert(std::is_copy_constructible_v<ChunkResult>);
+
     // CRC-16/CCITT-FALSE. Bit-by-bit reference implementation:
     //   poly = 0x1021, init = 0xFFFF, refIn = false, refOut = false, xorOut = 0.
     // Table-based variants would be faster but the FW_CHUNK rate is bounded
@@ -39,17 +59,23 @@ namespace AstrOsBulkTransport
     // chunk's CRC completes in well under a millisecond). No table needed.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len)
     {
-        // (anything, 0) is the empty-input case and returns the init value
-        // 0xFFFFu. (nullptr, len > 0) is a caller programming error — the
-        // earlier (data == nullptr || len == 0) form silently returned
-        // 0xFFFFu in both cases, which made `payload=nullptr, payloadLen=K,
-        // crc16=0xFFFFu` a valid-looking ACK candidate (matching the empty-
-        // input CRC). Splitting the two cases makes the (nullptr, len>0)
-        // path explicit. The state-machine caller `onChunk` is responsible
-        // for rejecting nullptr-with-positive-len upstream (structural NAK);
-        // this function falls through to the loop for nullptr+positive-len
-        // and will UB on the deref, which is acceptable defense-in-depth
-        // because the upstream guard runs first.
+        // Precondition: `data` must be non-null whenever `len > 0`.
+        //   - (anything, 0) is the legitimate empty-input case and returns
+        //     the init value 0xFFFFu.
+        //   - (nullptr, len > 0) is a caller programming error. We fail-fast
+        //     via assert rather than UB on the deref: native tests catch the
+        //     violation immediately; on ESP target assert() panics + resets,
+        //     which is louder than the silent garbage the deref would
+        //     produce. The earlier (data == nullptr || len == 0) form
+        //     silently returned 0xFFFFu in BOTH cases, which made a caller
+        //     passing `payload=nullptr, payloadLen=K, crc16=0xFFFFu` look
+        //     like a valid ACK candidate (computed CRC matched the claimed
+        //     CRC by coincidence). BulkReceiver::onChunk has its own
+        //     structural guard for nullptr-with-positive-len, but this
+        //     function is a public API — any future caller (including
+        //     code outside BulkReceiver) gets the same deterministic
+        //     failure mode.
+        assert(data != nullptr || len == 0);
         if (len == 0)
         {
             return 0xFFFFu;
