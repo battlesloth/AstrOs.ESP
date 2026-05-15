@@ -188,6 +188,23 @@ std::string AstrOsSerialMessageService::getFwTransferBeginAck(std::string msgId,
     return ss.str();
 }
 
+/// @brief generates FW_CHUNK_ACK reply. Payload shape:
+///        transfer-id<US>highest-contiguous-seq<US>next-expected-seq<US>window-remaining.
+/// @param transferId transfer id
+/// @param highestContiguousSeq highest seq we've committed in order
+/// @param nextExpectedSeq the seq we want next (always highestContiguousSeq + 1 in our impl)
+/// @param windowRemaining how many more in-flight frames the sender may have
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, uint32_t highestContiguousSeq,
+                                                      uint32_t nextExpectedSeq, uint8_t windowRemaining)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_CHUNK_ACK, "na");
+    ss << transferId << UNIT_SEPARATOR << std::to_string(highestContiguousSeq) << UNIT_SEPARATOR
+       << std::to_string(nextExpectedSeq) << UNIT_SEPARATOR << std::to_string(static_cast<unsigned>(windowRemaining));
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message

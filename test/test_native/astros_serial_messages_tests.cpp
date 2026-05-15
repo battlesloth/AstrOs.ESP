@@ -373,3 +373,23 @@ TEST(SerialMessages, FwTransferBeginAckSdFullMessage)
     ASSERT_EQ(2u, payloadParts.size());
     EXPECT_EQ("sd_full", payloadParts[1]);
 }
+
+TEST(SerialMessages, FwChunkAckMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkAck("7", 41, 42, 14);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_CHUNK_ACK, validation.type);
+    // FW_CHUNK_ACK is a server-bound unsolicited per-chunk reply; msgId is "na"
+    EXPECT_STREQ("na", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("41", payloadParts[1]);
+    EXPECT_EQ("42", payloadParts[2]);
+    EXPECT_EQ("14", payloadParts[3]);
+}
