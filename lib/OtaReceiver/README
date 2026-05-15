@@ -1,0 +1,36 @@
+OtaReceiver
+===========
+
+MIXED lib. Owns the master-side state machine for an in-flight firmware
+OTA transfer over serial: drains the otaQueue, calls into the PURE
+AstrOsBulkTransport state machine, and produces FW_*_ACK / NAK / DONE
+replies via AstrOs_SerialMsgHandler. Wraps Phase 2's PURE BulkReceiver
+with the FreeRTOS task, queue handle, and (Phase 4+) staging FILE* +
+streaming SHA-256 context that BulkReceiver intentionally does not own.
+
+Classification
+--------------
+
+MIXED — includes <freertos/...>, <esp_log.h>, and (Phase 4+)
+<mbedtls/sha256.h>. Does NOT compile under [env:test]. Native tests
+live alongside the PURE pieces in AstrOsBulkTransport / AstrOsMessaging.
+
+Queue ownership invariants
+--------------------------
+
+queue_ota_msg_t records carry malloc'd pointers (payload, targetList,
+orderList, msgId, transferId). The producer (AstrOsSerialMsgHandler)
+mallocs and on xQueueSend failure frees its own allocations. The
+consumer (otaReceiverTask) frees every malloc'd pointer in the
+discriminated union after processing the kind it actually receives.
+See OtaQueueMessage.h for the per-kind ownership notes.
+
+Phase 4 hooks
+-------------
+
+handleBegin will gain: SD free-space pre-check, staging.bin open, sha256
+context init. handleChunk will gain: fwrite(payload) + sha256_update.
+handleEnd will gain: sha256_finish, computed-hash echo on END_ACK,
+content-addressed rename of staging.bin. handleDeployBegin will
+eventually drive ESP-NOW mesh forwarding; the all-FAILED
+"not_implemented" stub Phase 3 returns is replaced wholesale.
