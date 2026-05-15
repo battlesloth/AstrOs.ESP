@@ -342,3 +342,34 @@ TEST(SerialMessages, FwTypesUseProtocolReservedRange)
     EXPECT_EQ(39, static_cast<int>(AstrOsSerialMessageType::FW_DEPLOY_DONE));
     EXPECT_EQ(40, static_cast<int>(AstrOsSerialMessageType::FW_BACKPRESSURE));
 }
+
+TEST(SerialMessages, FwTransferBeginAckOkMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwTransferBeginAck("mid-2", "7", "OK");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, validation.type);
+    EXPECT_STREQ("mid-2", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(2u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("OK", payloadParts[1]);
+}
+
+TEST(SerialMessages, FwTransferBeginAckSdFullMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwTransferBeginAck("mid-3", "7", "sd_full");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(2u, payloadParts.size());
+    EXPECT_EQ("sd_full", payloadParts[1]);
+}

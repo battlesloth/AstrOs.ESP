@@ -172,6 +172,22 @@ std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType t
     return ss.str();
 }
 
+/// @brief generates FW_TRANSFER_BEGIN_ACK reply. Payload shape per .docs/protocol.md:
+///        transfer-id<US>status where status is "OK" or a snake_case rejection code
+///        (sd_full, busy, unsupported_version, io_error).
+/// @param msgId echo of the BEGIN's msgId
+/// @param transferId transfer id assigned by the server (server's choice; opaque to us)
+/// @param status "OK" on success, otherwise a snake_case rejection code
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwTransferBeginAck(std::string msgId, std::string transferId,
+                                                              std::string status)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, msgId);
+    ss << transferId << UNIT_SEPARATOR << status;
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message
