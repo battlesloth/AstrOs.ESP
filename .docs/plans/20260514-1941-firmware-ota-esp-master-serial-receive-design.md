@@ -132,11 +132,11 @@ Files:
   - `getFwTransferBeginAck(msgId, transferId, status)` — payload `transfer-id<US>status` per `.docs/protocol.md` (no hash field on BEGIN_ACK).
   - `getFwChunkAck(transferId, highestContiguousSeq, nextExpectedSeq, windowRemaining)`
   - `getFwChunkNak(transferId, lastGoodSeq, reasonCode)`
-  - `getFwTransferEndAck(transferId, status, computedSha256Hex)` — payload `transfer-id<US>OK|HASH_MISMATCH|IO_ERROR<US>computed-sha256-hex`.
-  - `getFwDeployDone(transferId, perControllerResults)` — each result `controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty`, RS-separated between results.
+  - `getFwTransferEndAck(msgId, transferId, status, computedSha256Hex)` — payload `transfer-id<US>OK|HASH_MISMATCH|IO_ERROR<US>computed-sha256-hex`. `msgId` echoes the originating END's id.
+  - `getFwDeployDone(msgId, transferId, perControllerResults)` — each result `controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty`, RS-separated between results.
 - Parsers returning POD result structs:
   - `parseFwTransferBegin(payload) -> FwTransferBeginRecord { transferId, totalSize, sha256Hex, chunkSize, targetIds[] }`
-  - `parseFwChunk(payload) -> FwChunkRecord { transferId, seq, payloadLen, base64Payload, crc16Hex }`
+  - `parseFwChunk(payload) -> FwChunkRecord { transferId, seq, payloadLen, base64Payload, uint16_t crc16 }` — CRC field is parsed from its 4-char hex form into a `uint16_t`; the MIXED handler doesn't re-parse it.
   - `parseFwTransferEnd(payload) -> FwTransferEndRecord { transferId, totalChunks, finalSha256Hex }`
   - `parseFwDeployBegin(payload) -> FwDeployBeginRecord { transferId, orderIds[] }`
 - `lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp` — route the new
@@ -144,7 +144,10 @@ Files:
   type-to-response map.
 - `test/test_native/astros_serial_messages_tests.cpp` — round-trip tests for
   every builder; reject paths for every parser (truncated payload, wrong field
-  count, bad hex, bad base64, oversized payload-len, mismatched US/RS counts).
+  count, bad hex, oversized payload-len, mismatched US/RS counts). The
+  `base64Payload` field on FwChunkRecord is **not** validated at this layer —
+  base64 decoding and length-vs-content cross-checking is deferred to the
+  Phase 3 MIXED handler.
 
 Approx 5-7 files. No behavior change in firmware.
 
@@ -359,8 +362,11 @@ Server                                                    Master
 
 Phase 1 — `test/test_native/astros_serial_messages_tests.cpp`:
 - Round-trip per builder: build → `validateSerialMsg` → parse → assert fields.
-- Reject paths per parser: truncated, wrong field count, bad hex, bad base64,
-  oversized payload-len, mismatched separators.
+- Reject paths per parser: truncated, wrong field count, bad hex (sha256 +
+  crc16), oversized payload-len, mismatched separators. **Base64 payload
+  content is not validated here** — `parseFwChunk` stores the encoded string
+  as-is; the Phase 3 MIXED handler is responsible for decoding and cross-
+  checking length against `payloadLen`.
 - Existing `getPollAck` 4-field test continues to pass unchanged.
 
 Phase 2 — `test/test_native/bulk_transport_tests.cpp`:

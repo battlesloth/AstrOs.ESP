@@ -1,5 +1,13 @@
 # Firmware OTA Phase 1 — Wire format Implementation Plan
 
+> **Status: COMPLETE.** All 14 tasks below were implemented and merged on branch
+> `feature/ota-master-serial-receive`. Two multi-agent PR review passes (5 agents
+> each) plus external GitHub review feedback drove four cleanup commits that
+> hardened the parsers (strict-unsigned sign rejection, interior-empty list
+> rejection, SHA-256 character-set validation) and tightened documentation.
+> Final native-test count: 252 (190 baseline + 62 new). Both board builds clean.
+> This document is kept as a historical implementation record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the `FW_*` serial message types (BEGIN/CHUNK/END family + DEPLOY/BACKPRESSURE) to `lib_native/AstrOsMessaging` and route them through `lib_native/AstrOsSerialProtocol`, with native tests covering every builder and parser. No firmware behavior change yet — this phase is wire format only.
@@ -46,7 +54,7 @@ No new files created in Phase 1. All work extends existing PURE libs and tests.
 - Modify: `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.cpp`
 - Test: `test/test_native/astros_serial_messages_tests.cpp`
 
-- [ ] **Step 1: Write a failing test that asserts `validateSerialMsg` accepts a hand-crafted FW_TRANSFER_BEGIN header.**
+- [x] **Step 1: Write a failing test that asserts `validateSerialMsg` accepts a hand-crafted FW_TRANSFER_BEGIN header.**
 
 Append to `test/test_native/astros_serial_messages_tests.cpp` at the end of the file:
 
@@ -100,12 +108,12 @@ TEST(SerialMessages, FwTypesUseProtocolReservedRange)
 
 Note: this test file already includes `<sstream>` indirectly via `<AstrOsMessaging.hpp>`'s transitive includes. If compilation fails, add `#include <sstream>` to the top of the test file.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `AstrOsSerialMessageType::FW_TRANSFER_BEGIN` not declared.
 
-- [ ] **Step 3: Add string constants to `AstrOsSC::` namespace**
+- [x] **Step 3: Add string constants to `AstrOsSC::` namespace**
 
 In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp`, after `constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";` (line 38), append:
 
@@ -123,7 +131,7 @@ In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp`, after `const
     constexpr const static char *FW_BACKPRESSURE = "FW_BACKPRESSURE";
 ```
 
-- [ ] **Step 4: Add enum values with explicit numeric assignments**
+- [x] **Step 4: Add enum values with explicit numeric assignments**
 
 In the same file, replace the existing `AstrOsSerialMessageType` enum block (lines 41–66 currently) with this version. The existing entries stay in their current order with no explicit numbers (so the compiler still gives them 0..22); the new entries get explicit `= 30` through `= 40` to skip the 23–29 reservation gap.
 
@@ -169,7 +177,7 @@ enum class AstrOsSerialMessageType
 };
 ```
 
-- [ ] **Step 5: Register all FW_* types in `msgTypeMap`**
+- [x] **Step 5: Register all FW_* types in `msgTypeMap`**
 
 In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.cpp`, append to the initializer list inside the constructor (after the `{SERVO_TEST_ACK, …}` entry, line 34). Keep the trailing comma already on that line and add:
 
@@ -187,12 +195,12 @@ In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.cpp`, append to th
         {AstrOsSerialMessageType::FW_BACKPRESSURE, AstrOsSC::FW_BACKPRESSURE},
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS — including the two new tests `FwTransferBeginRecognized` and `FwTypesUseProtocolReservedRange`. All existing tests continue to pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -211,7 +219,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 8: Update plan checkbox**
+- [x] **Step 8: Update plan checkbox**
 
 In `.docs/plans/20260514-1948-firmware-ota-phase1-wire-format.md`, change `### Task 1: Add FW_* enum values and string constants` heading-line marker (or the "tasks completed" tracker if added later) to indicate this task is done. (Optional — if you add a top-of-file checklist later, check the box. Otherwise, the commit message is the artifact of record.)
 
@@ -226,7 +234,7 @@ In `.docs/plans/20260514-1948-firmware-ota-phase1-wire-format.md`, change `### T
 
 Payload shape per `.docs/protocol.md`: `transfer-id<US>status`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/test_native/astros_serial_messages_tests.cpp`:
 
@@ -263,12 +271,12 @@ TEST(SerialMessages, FwTransferBeginAckSdFullMessage)
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `getFwTransferBeginAck` not declared.
 
-- [ ] **Step 3: Declare the builder in the header**
+- [x] **Step 3: Declare the builder in the header**
 
 In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp`, inside the `class AstrOsSerialMessageService` public section, after `getBasicAckNak(...)` declaration (around line 101–102), append:
 
@@ -277,7 +285,7 @@ In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp`, inside the `
     std::string getFwTransferBeginAck(std::string msgId, std::string transferId, std::string status);
 ```
 
-- [ ] **Step 4: Implement the builder**
+- [x] **Step 4: Implement the builder**
 
 In `lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.cpp`, after `getBasicAckNak` (around line 162), append:
 
@@ -299,12 +307,12 @@ std::string AstrOsSerialMessageService::getFwTransferBeginAck(std::string msgId,
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -332,7 +340,7 @@ EOF
 
 Payload shape: `transfer-id<US>highest-contiguous-seq<US>next-expected-seq<US>window-remaining`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, FwChunkAckMessage)
@@ -356,12 +364,12 @@ TEST(SerialMessages, FwChunkAckMessage)
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `getFwChunkAck` not declared.
 
-- [ ] **Step 3: Declare and implement**
+- [x] **Step 3: Declare and implement**
 
 Header — append after `getFwTransferBeginAck`:
 
@@ -391,12 +399,12 @@ std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, ui
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -424,7 +432,7 @@ EOF
 
 Payload shape: `transfer-id<US>last-good-seq<US>reason-code` where reason-code is `CRC | SIZE | OUT_OF_ORDER | FLASH_FULL`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, FwChunkNakCrcMessage)
@@ -459,12 +467,12 @@ TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `getFwChunkNak` not declared.
 
-- [ ] **Step 3: Declare and implement**
+- [x] **Step 3: Declare and implement**
 
 Header — append:
 
@@ -491,12 +499,12 @@ std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, ui
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -524,7 +532,7 @@ EOF
 
 Payload shape: `transfer-id<US>status<US>computed-sha256-hex` where status is `OK | HASH_MISMATCH | IO_ERROR`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, FwTransferEndAckOkMessage)
@@ -562,12 +570,12 @@ TEST(SerialMessages, FwTransferEndAckHashMismatchMessage)
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `getFwTransferEndAck` not declared.
 
-- [ ] **Step 3: Declare and implement**
+- [x] **Step 3: Declare and implement**
 
 Header — append:
 
@@ -597,12 +605,12 @@ std::string AstrOsSerialMessageService::getFwTransferEndAck(std::string msgId, s
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -638,7 +646,7 @@ result      = controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty
 
 So the wire payload becomes: `7<US>core<US>FAILED<US><US>not_implemented<RS>dome<US>FAILED<US><US>not_implemented`. The transfer-id is prepended once, then the result records are RS-joined.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, FwDeployDoneAllFailedMessage)
@@ -677,12 +685,12 @@ TEST(SerialMessages, FwDeployDoneAllFailedMessage)
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `astros_fw_deploy_result_t` not declared.
 
-- [ ] **Step 3: Declare the result struct and the builder**
+- [x] **Step 3: Declare the result struct and the builder**
 
 Header — append after the existing `astros_serial_msg_validation_t` struct (around line 83):
 
@@ -703,7 +711,7 @@ Header — append in the public class section after `getFwTransferEndAck`:
                                 std::vector<astros_fw_deploy_result_t> results);
 ```
 
-- [ ] **Step 4: Implement the builder**
+- [x] **Step 4: Implement the builder**
 
 Source — append:
 
@@ -738,12 +746,12 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -776,7 +784,7 @@ Reality check: `validateSerialMsg` puts everything after `GROUP_SEPARATOR` into 
 
 The first 4 US-separated fields are simple. The 5th US-separated field is the RS-joined target list, which we then RS-split.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, ParseFwTransferBeginHappyPath)
@@ -834,12 +842,12 @@ TEST(SerialMessages, ParseFwTransferBeginEmptyTargetList)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `parseFwTransferBegin` not declared, `FwTransferBeginRecord` not declared.
 
-- [ ] **Step 3: Declare the record struct and the parser**
+- [x] **Step 3: Declare the record struct and the parser**
 
 Header — append after `astros_fw_deploy_result_t`:
 
@@ -865,7 +873,7 @@ Header — append as a free function declaration at the bottom of the file, **ou
 FwTransferBeginRecord parseFwTransferBegin(const std::string &payload);
 ```
 
-- [ ] **Step 4: Implement the parser**
+- [x] **Step 4: Implement the parser**
 
 Source — append at the bottom of `AstrOsSerialMessageService.cpp`:
 
@@ -924,12 +932,12 @@ FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
 
 Add `#include <cerrno>` and `#include <cstdlib>` at the top of the .cpp file if not already present (check existing includes — `<cstring>` is there but `<cstdlib>` may not be).
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -959,7 +967,7 @@ EOF
 
 Payload shape: `transfer-id<US>seq<US>payload-len<US>base64-bytes<US>crc16-hex`. Note: the parser does **not** base64-decode — it just extracts fields. Decoding happens in the MIXED handler in Phase 3. CRC-16 hex is exactly 4 lowercase hex chars.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, ParseFwChunkHappyPath)
@@ -1013,12 +1021,12 @@ TEST(SerialMessages, ParseFwChunkCrcHexWrongLength)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `parseFwChunk` not declared.
 
-- [ ] **Step 3: Declare the record struct and parser**
+- [x] **Step 3: Declare the record struct and parser**
 
 Header — append after `FwTransferBeginRecord`:
 
@@ -1040,7 +1048,7 @@ Header — append after `parseFwTransferBegin` declaration:
 FwChunkRecord parseFwChunk(const std::string &payload);
 ```
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Source — append:
 
@@ -1116,12 +1124,12 @@ FwChunkRecord parseFwChunk(const std::string &payload)
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -1150,7 +1158,7 @@ EOF
 
 Payload shape: `transfer-id<US>total-chunks<US>final-sha256-hex`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, ParseFwTransferEndHappyPath)
@@ -1186,12 +1194,12 @@ TEST(SerialMessages, ParseFwTransferEndTooFewFields)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL — `parseFwTransferEnd` not declared.
 
-- [ ] **Step 3: Declare and implement**
+- [x] **Step 3: Declare and implement**
 
 Header — append after `FwChunkRecord`:
 
@@ -1246,12 +1254,12 @@ FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -1279,7 +1287,7 @@ EOF
 
 Payload shape: `transfer-id<US>order-list` where `order-list = controllerId[RS]controllerId[RS]…`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 TEST(SerialMessages, ParseFwDeployBeginHappyPath)
@@ -1312,12 +1320,12 @@ TEST(SerialMessages, ParseFwDeployBeginTooFewFields)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: FAIL.
 
-- [ ] **Step 3: Declare and implement**
+- [x] **Step 3: Declare and implement**
 
 Header — append after `FwTransferEndRecord`:
 
@@ -1363,12 +1371,12 @@ FwDeployBeginRecord parseFwDeployBegin(const std::string &payload)
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsMessaging/src/AstrOsSerialMessageService.hpp \
@@ -1394,7 +1402,7 @@ EOF
 
 Four new values for the four inbound FW_* types master receives. No test for this task — the enum is consumed by `mapResponseType` (Task 12) and `decodeSerialMessage` (Task 13), whose tests will fail if any of these are missing.
 
-- [ ] **Step 1: Add the enum values**
+- [x] **Step 1: Add the enum values**
 
 In `lib/AstrOsQueueMessages/include/AstrOsInterfaceResponseMsg.hpp`, append before the closing `};` of the enum (after `SEND_SERVO_TEST_ACK`):
 
@@ -1422,7 +1430,7 @@ Note the leading comma — the existing last entry `SEND_SERVO_TEST_ACK` does no
 
 (That is: add the trailing comma to `SEND_SERVO_TEST_ACK`, then list the four new entries.)
 
-- [ ] **Step 2: Build to confirm compilation**
+- [x] **Step 2: Build to confirm compilation**
 
 Run: `pio test -e test --filter "*serial_messages*"`
 Expected: PASS — no test added but the enum addition must not break the existing test binary.
@@ -1432,7 +1440,7 @@ Also run a board build to confirm the firmware still compiles:
 Run: `pio run -e metro_s3`
 Expected: build succeeds.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add lib/AstrOsQueueMessages/include/AstrOsInterfaceResponseMsg.hpp
@@ -1458,7 +1466,7 @@ EOF
 
 The master-side path of `mapResponseType` lists every server→master type. Padawan path is unchanged — padawans don't receive FW_* over serial.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/test_native/astros_serial_protocol_tests.cpp` in the `MapResponseTypeMasterTable` test block, OR add a new dedicated test:
 
@@ -1489,12 +1497,12 @@ TEST(SerialProtocol, MapResponseTypePadawanFwAllUnknown)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_protocol*"`
 Expected: FAIL — master cases return UNKNOWN.
 
-- [ ] **Step 3: Extend the master-side switch in `mapResponseType`**
+- [x] **Step 3: Extend the master-side switch in `mapResponseType`**
 
 In `lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp`, in the `mapResponseType` function's master-side `switch` block (lines 124–144), add four cases before the `default:` line:
 
@@ -1511,12 +1519,12 @@ In `lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp`, in the `mapRe
 
 Do not modify the padawan-side switch — it correctly returns UNKNOWN for FW_* by default.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_protocol*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp \
@@ -1543,7 +1551,7 @@ EOF
 
 `decodeSerialMessage` produces a `DecodedCommand` carrying enough for the MIXED handler to route. For FW_* the structured parsing happens later (in Phase 3 OtaReceiver), so this dispatch packs the *raw payload* into `cmd.message` and sets `responseType` from `mapResponseType`. Tests verify single-command output and that the payload survives intact.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/test_native/astros_serial_protocol_tests.cpp`:
 
@@ -1623,12 +1631,12 @@ TEST(SerialProtocol, DecodeFwTransferBeginEmptyPayloadRejects)
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pio test -e test --filter "*serial_protocol*"`
 Expected: FAIL — `decodeSerialMessage` falls through to the default case (UNKNOWN_TYPE reject) for FW_* inputs.
 
-- [ ] **Step 3: Add a dispatcher for FW_* in `decodeSerialMessage`**
+- [x] **Step 3: Add a dispatcher for FW_* in `decodeSerialMessage`**
 
 In `lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp`, inside the anonymous namespace at the top, after `decodeBasicCommand`, add:
 
@@ -1659,12 +1667,12 @@ In `decodeSerialMessage`, add four cases to the `switch (type)` block before `de
 
 The empty-payload guard at the top of `decodeSerialMessage` already covers FW_* — it appends an `EMPTY_PAYLOAD` reject for any non-REGISTRATION_SYNC type with empty payload. No change needed there.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pio test -e test --filter "*serial_protocol*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib_native/AstrOsSerialProtocol/src/AstrOsSerialProtocol.cpp \
@@ -1688,12 +1696,12 @@ EOF
 
 **Files:** None modified — verification only.
 
-- [ ] **Step 1: Run the full native test suite**
+- [x] **Step 1: Run the full native test suite**
 
 Run: `pio test -e test`
 Expected: 100% pass. Note the new test count (was 190 before; should be ~220+ after Phase 1).
 
-- [ ] **Step 2: Build both board firmware variants**
+- [x] **Step 2: Build both board firmware variants**
 
 Run in parallel (separate terminals or sequentially):
 
@@ -1704,7 +1712,7 @@ pio run -e lolin_d32_pro
 
 Expected: both succeed with no new warnings related to the FW_* changes.
 
-- [ ] **Step 3: Verify clang-format clean on changed files**
+- [x] **Step 3: Verify clang-format clean on changed files**
 
 The pre-commit hook should have caught this if active. To double-check:
 
@@ -1714,7 +1722,7 @@ find lib_native/AstrOsMessaging lib_native/AstrOsSerialProtocol lib/AstrOsQueueM
 
 Expected: no output (clang-format clean).
 
-- [ ] **Step 4: Push branch + open PR**
+- [x] **Step 4: Push branch + open PR**
 
 The branch is `feature/ota-master-serial-receive` (already cut when the design doc was committed). Push and open the PR.
 
@@ -1745,11 +1753,11 @@ Adds:
 
 ## Test plan
 
-- [ ] `pio test -e test` passes 100%
-- [ ] `pio run -e metro_s3` builds clean
-- [ ] `pio run -e lolin_d32_pro` builds clean
-- [ ] CI native-purity guard passes (no new ESP-IDF includes in PURE libs)
-- [ ] clang-format clean on changed files
+- [x] `pio test -e test` passes 100%
+- [x] `pio run -e metro_s3` builds clean
+- [x] `pio run -e lolin_d32_pro` builds clean
+- [x] CI native-purity guard passes (no new ESP-IDF includes in PURE libs)
+- [x] clang-format clean on changed files
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -1764,7 +1772,7 @@ Expected: PR is created and CI runs. Watch:
 
 All four must pass before merge.
 
-- [ ] **Step 5: Update plan progress at top of this file**
+- [x] **Step 5: Update plan progress at top of this file**
 
 (Optional, if a top-level checklist was added.) Add a `## Status` section noting Phase 1 PR opened.
 
