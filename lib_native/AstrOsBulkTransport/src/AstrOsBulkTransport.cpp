@@ -116,9 +116,23 @@ namespace AstrOsBulkTransport
 
     EndResult BulkReceiver::onEnd(uint8_t xferId, uint32_t totalChunksSent)
     {
-        // Stub for Task 4: prevents linker error. Real implementation lands in Task 7.
-        (void)xferId;
-        (void)totalChunksSent;
-        return EndResult{};
+        EndResult result{};
+        result.status = EndResult::Status::IO_ERROR;
+
+        if (!active_ || xferId != xferId_)
+        {
+            return result;
+        }
+        if (totalChunksSent != totalChunks_)
+        {
+            return result;
+        }
+        if (nextSeq_ != totalChunks_)
+        {
+            return result;
+        }
+
+        result.status = EndResult::Status::OK;
+        return result;
     }
 } // namespace AstrOsBulkTransport

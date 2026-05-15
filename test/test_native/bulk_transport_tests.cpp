@@ -268,3 +268,21 @@ TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
     EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, recovery.decision);
     EXPECT_EQ(1u, recovery.nextExpectedSeq);
 }
+
+//=================================================================================================
+// BulkReceiver::onEnd — happy path
+//=================================================================================================
+
+TEST(BulkTransport, OnEndAfterAllChunksReturnsOk)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 1, 4, crc, payload).decision);
+
+    auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/2);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, end.status);
+}
