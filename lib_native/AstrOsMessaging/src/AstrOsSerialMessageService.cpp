@@ -252,6 +252,11 @@ std::string AstrOsSerialMessageService::getFwTransferEndAck(std::string msgId, s
 std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::string transferId,
                                                         std::vector<astros_fw_deploy_result_t> results)
 {
+    if (results.empty())
+    {
+        return ""; // caller contract violated; empty results = malformed FW_DEPLOY_DONE
+    }
+
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_DEPLOY_DONE, msgId);
     ss << transferId;
@@ -407,59 +412,25 @@ std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::str
 
 //================== FREE PARSERS FOR INBOUND FW_* PAYLOADS ==================
 
-FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
-{
-    FwTransferBeginRecord rec{};
-    rec.valid = false;
-
-    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
-    if (parts.size() != 5)
-    {
-        return rec;
-    }
-
-    // size + chunk-size: parse with strtoul, catch parse failure via errno.
-    // The codebase avoids exceptions on the embedded target (CLAUDE.md), so
-    // use strtoul which signals errors via errno + endptr.
-    errno = 0;
-    char *endptr = nullptr;
-    auto totalSize = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
-    {
-        return rec;
-    }
-    errno = 0;
-    endptr = nullptr;
-    auto chunkSize = std::strtoul(parts[3].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[3].c_str() || *endptr != '\0' || chunkSize > 0xFFFFu)
-    {
-        return rec;
-    }
-
-    // sha256-hex must be exactly 64 chars
-    if (parts[2].size() != 64)
-    {
-        return rec;
-    }
-
-    // target-list: RS-split. Reject if empty (no targets).
-    auto targets = AstrOsStringUtils::splitString(parts[4], RECORD_SEPARATOR);
-    if (targets.empty() || (targets.size() == 1 && targets[0].empty()))
-    {
-        return rec;
-    }
-
-    rec.transferId = parts[0];
-    rec.totalSize = static_cast<uint32_t>(totalSize);
-    rec.sha256Hex = parts[2];
-    rec.chunkSize = static_cast<uint16_t>(chunkSize);
-    rec.targetIds = std::move(targets);
-    rec.valid = true;
-    return rec;
-}
-
 namespace
 {
+    // Returns true iff `s` is exactly `expectedLen` hex characters (0-9, a-f, A-F).
+    bool isHexStringOfLength(const std::string &s, size_t expectedLen)
+    {
+        if (s.size() != expectedLen)
+        {
+            return false;
+        }
+        for (char c : s)
+        {
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Parses exactly 4 hex chars (lowercase or uppercase) into a uint16_t.
     // Returns false on length mismatch or non-hex character.
     bool parseHex16(const std::string &hex, uint16_t &out)
@@ -487,6 +458,62 @@ namespace
     }
 } // namespace
 
+FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
+{
+    FwTransferBeginRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 5)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
+    // size + chunk-size: parse with strtoul, catch parse failure via errno.
+    // The codebase avoids exceptions on the embedded target (CLAUDE.md), so
+    // use strtoul which signals errors via errno + endptr.
+    errno = 0;
+    char *endptr = nullptr;
+    auto totalSize = std::strtoul(parts[1].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || totalSize > 0xFFFFFFFFul)
+    {
+        return rec;
+    }
+    errno = 0;
+    endptr = nullptr;
+    auto chunkSize = std::strtoul(parts[3].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[3].c_str() || *endptr != '\0' || chunkSize > 0xFFFFu)
+    {
+        return rec;
+    }
+
+    // sha256-hex must be exactly 64 hex characters
+    if (!isHexStringOfLength(parts[2], 64))
+    {
+        return rec;
+    }
+
+    // target-list: RS-split. Reject if empty (no targets).
+    auto targets = AstrOsStringUtils::splitString(parts[4], RECORD_SEPARATOR);
+    if (targets.empty() || (targets.size() == 1 && targets[0].empty()))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.totalSize = static_cast<uint32_t>(totalSize);
+    rec.sha256Hex = parts[2];
+    rec.chunkSize = static_cast<uint16_t>(chunkSize);
+    rec.targetIds = std::move(targets);
+    rec.valid = true;
+    return rec;
+}
+
 FwChunkRecord parseFwChunk(const std::string &payload)
 {
     FwChunkRecord rec{};
@@ -498,10 +525,15 @@ FwChunkRecord parseFwChunk(const std::string &payload)
         return rec;
     }
 
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
     errno = 0;
     char *endptr = nullptr;
     auto seq = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || seq > 0xFFFFFFFFul)
     {
         return rec;
     }
@@ -539,15 +571,20 @@ FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
         return rec;
     }
 
-    errno = 0;
-    char *endptr = nullptr;
-    auto totalChunks = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
+    if (parts[0].empty())
     {
         return rec;
     }
 
-    if (parts[2].size() != 64)
+    errno = 0;
+    char *endptr = nullptr;
+    auto totalChunks = std::strtoul(parts[1].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || totalChunks > 0xFFFFFFFFul)
+    {
+        return rec;
+    }
+
+    if (!isHexStringOfLength(parts[2], 64))
     {
         return rec;
     }
@@ -566,6 +603,11 @@ FwDeployBeginRecord parseFwDeployBegin(const std::string &payload)
 
     auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
     if (parts.size() != 2)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
     {
         return rec;
     }

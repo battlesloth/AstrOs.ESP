@@ -643,3 +643,126 @@ TEST(SerialMessages, ParseFwDeployBeginTooFewFields)
     auto rec = parseFwDeployBegin("7"); // no separator, no order list
     EXPECT_FALSE(rec.valid);
 }
+
+//=================================================================================================
+// FW_* parser hardening (Cleanup commit A)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginEmptyTransferId)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginTotalSizeExceedsUint32)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" // > 4 GB
+            << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginInvalidHexSha256)
+{
+    // 64 chars but contains a non-hex char ('z')
+    std::string hash64 = "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkEmptyTransferId)
+{
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkSeqExceedsUint32)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndEmptyTransferId)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndTotalChunksExceedsUint32)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndInvalidHexSha256)
+{
+    // 64 chars but contains a non-hex char
+    std::string hash64 = "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginEmptyTransferId)
+{
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, FwDeployDoneEmptyResultsReturnsEmpty)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    auto value = msgSvc.getFwDeployDone("mid-empty", "7", results);
+    EXPECT_TRUE(value.empty());
+}
+
+TEST(SerialMessages, FwDeployDoneSingleResultMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    // Use a non-empty errorOrEmpty so splitString (which drops trailing empty tokens)
+    // preserves all 5 US-separated fields on the wire.
+    results.push_back({"core", "OK", "1.2.0", "none"});
+
+    auto value = msgSvc.getFwDeployDone("mid-s", "7", results);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto resultRecords = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+    ASSERT_EQ(1u, resultRecords.size()); // no RS separator emitted for single result
+
+    auto firstParts = AstrOsStringUtils::splitString(resultRecords[0], UNIT_SEPARATOR);
+    ASSERT_EQ(5u, firstParts.size());
+    EXPECT_EQ("7", firstParts[0]);
+    EXPECT_EQ("core", firstParts[1]);
+    EXPECT_EQ("OK", firstParts[2]);
+    EXPECT_EQ("1.2.0", firstParts[3]);
+    EXPECT_EQ("none", firstParts[4]);
+}
