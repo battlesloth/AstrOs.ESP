@@ -1,0 +1,38 @@
+AstrOsBulkTransport
+===================
+
+Pure, native-testable state machine for the chunk-based bulk transport
+used by the firmware OTA path. Consumes FW_CHUNK records (parsed by
+lib_native/AstrOsMessaging) and produces ACK/NAK decisions, with
+sliding-window backpressure metadata for the sender. Companion to the
+FW_* wire format that Phase 1 added to AstrOsMessaging; consumed by
+the MIXED OtaReceiver that Phase 3 will introduce.
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+The state machine returns ChunkResult / EndResult structs with explicit
+Decision and Status fields. No exceptions, no logger injection. The
+MIXED caller (Phase 3 OtaReceiver) is responsible for translating
+results into wire-level FW_CHUNK_ACK / FW_CHUNK_NAK / FW_TRANSFER_END_ACK
+messages and for any ESP_LOGW logging at the boundary.
+
+CRC
+---
+
+This lib owns its own crc16_ccitt_false implementation. The CRC matches
+ESP-IDF's esp_crc16_le (poly 0x1021, init 0xFFFF, no reflection, no
+XOR-out) — they are byte-identical. The Phase 3 MIXED layer should call
+the PURE crc16_ccitt_false directly rather than esp_crc16_le; a single
+bench test confirming the two produce identical output for the same
+inputs is the only justification needed to keep both around.
