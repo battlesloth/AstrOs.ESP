@@ -12,11 +12,15 @@ Purity rule
 -----------
 
 This library is unit-tested on the native host under [env:test], so it
-must not include any of:
+must not include any header whose path starts with one of:
 
-    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+    freertos/, esp_, driver/, nvs_, sdmmc_
 
-Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+The esp_ prefix is intentionally broad — it covers esp_now*, esp_wifi*,
+esp_vfs*, esp_log.h, esp_rom_*, and anything else under ESP-IDF's
+top-level esp_*.h namespace. Enforced by the CI purity guard in
+.github/workflows/pr-validation.yml; the regex there mirrors this list
+exactly.
 
 Error-channel convention
 ------------------------

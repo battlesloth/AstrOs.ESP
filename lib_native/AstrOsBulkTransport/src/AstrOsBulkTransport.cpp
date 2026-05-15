@@ -18,6 +18,15 @@ namespace AstrOsBulkTransport
     // chunk's CRC completes in well under a millisecond). No table needed.
     uint16_t crc16_ccitt_false(const uint8_t *data, size_t len)
     {
+        // Defensive: the loop is gated by `len` so `data` is never dereferenced
+        // when len==0, but a hypothetical future single-byte fast-path
+        // refactor (e.g. an unrolled first iteration outside the loop)
+        // would silently UB on nullptr. Returning the init value here pins
+        // the contract that (nullptr, 0) is well-defined.
+        if (data == nullptr || len == 0)
+        {
+            return 0xFFFFu;
+        }
         uint16_t crc = 0xFFFFu;
         for (size_t i = 0; i < len; i++)
         {

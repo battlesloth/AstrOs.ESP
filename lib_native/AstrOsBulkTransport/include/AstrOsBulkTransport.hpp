@@ -176,12 +176,13 @@ namespace AstrOsBulkTransport
 
     struct [[nodiscard]] EndResult
     {
-        // HASH_MISMATCH is reserved for the MIXED-layer caller (Phase 4
-        // OtaReceiver, when the streaming SHA-256 context is added).
-        // Phase 3 OtaReceiver sinks payload to /dev/null and never returns
-        // HASH_MISMATCH; this PURE state machine never returns it either.
-        // BulkReceiver::onEnd only validates chunk counts and returns
-        // OK on matching totals or IO_ERROR on mismatch.
+        // HASH_MISMATCH is reserved for the Phase 3+ MIXED layer once it
+        // has a hash context. The MIXED OtaReceiver introduced in Phase 3
+        // sinks payload to /dev/null and never returns HASH_MISMATCH;
+        // only the Phase 4 enhancement that adds the streaming SHA-256
+        // context will ever produce it. This PURE state machine itself
+        // never returns HASH_MISMATCH — onEnd only validates chunk counts
+        // and returns OK on matching totals or IO_ERROR on mismatch.
         enum class Status : uint8_t
         {
             OK,

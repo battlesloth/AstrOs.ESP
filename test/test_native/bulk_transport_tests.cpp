@@ -54,6 +54,18 @@ TEST(BulkTransport, Crc16DeterministicAcrossCalls)
     EXPECT_EQ(first, second);
 }
 
+TEST(BulkTransport, Crc16MultiByteNonStringVector)
+{
+    // Pin a multi-byte non-printable input to its known value. The canonical
+    // "123456789" -> 0x29B1 catches polynomial swaps; this catches more subtle
+    // bugs in the high-bit XOR feedback path where the polynomial is correct
+    // but, say, the shift direction or XOR mask gets flipped — those would
+    // still produce a deterministic-but-wrong value, which the determinism
+    // test alone would not detect.
+    const uint8_t data[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    EXPECT_EQ(0x4097u, AstrOsBulkTransport::crc16_ccitt_false(data, 4));
+}
+
 //=================================================================================================
 // BulkReceiver::begin + reset + minimal onChunk happy path
 //=================================================================================================
@@ -317,6 +329,12 @@ TEST(BulkTransport, OnChunkLastShortChunkAcks)
     EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, r2.decision);
     EXPECT_EQ(2u, r2.highestContiguousSeq);
     EXPECT_EQ(3u, r2.nextExpectedSeq);
+    // Pin payload pass-through on the short-tail chunk specifically: this is
+    // the only seq where the SIZE math computes a non-full expectedLen, and a
+    // hypothetical bug that assigned chunkSize_ to payloadLen instead of the
+    // caller's payloadLen would silently corrupt the final flash write.
+    EXPECT_EQ(tail.data(), r2.payload);
+    EXPECT_EQ(452u, r2.payloadLen);
 }
 
 TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
@@ -444,6 +462,7 @@ TEST(BulkTransport, OnEndBeforeBeginReturnsIoError)
     // No begin() called.
     auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/1);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Reason::NOT_ACTIVE, end.reason);
 }
 
 TEST(BulkTransport, OnEndWrongXferIdReturnsIoError)
@@ -458,6 +477,7 @@ TEST(BulkTransport, OnEndWrongXferIdReturnsIoError)
     // Caller claims this END is for a different xferId.
     auto end = r.onEnd(/*xferId=*/9, /*totalChunksSent=*/1);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Reason::WRONG_XFER_ID, end.reason);
 }
 
 TEST(BulkTransport, OnEndSenderTotalMismatchReturnsIoError)
@@ -473,6 +493,7 @@ TEST(BulkTransport, OnEndSenderTotalMismatchReturnsIoError)
     // Sender claims 3 chunks were sent, but begin() said 2.
     auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/3);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Reason::SENDER_TOTAL_MISMATCH, end.reason);
 }
 
 TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
@@ -487,6 +508,47 @@ TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
 
     auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/2);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+    // RECEIVER_SHORT_COUNT is distinct from SENDER_TOTAL_MISMATCH: here the
+    // sender's totalChunksSent agrees with the receiver's declared total,
+    // but the receiver actually committed fewer chunks (probably lost some
+    // to NAKs the sender didn't resend). Phase 3 needs the distinction so
+    // the operator log says "lost some chunks" vs "sender lied about total."
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT, end.reason);
+}
+
+TEST(BulkTransport, OnEndOkLeavesReceiverInPostOkState)
+{
+    // Contract pin: onEnd(OK) does NOT auto-reset the receiver. nextSeq_
+    // is left at totalChunks_, active_ stays true. The state machine remains
+    // queryable via onChunk — a stray retransmit chunk arriving after a
+    // successful END must produce a deterministic, well-defined NAK rather
+    // than corrupt internal state. Phase 3 is responsible for calling
+    // reset() before begin()-ing the next transfer (which begin() itself
+    // does internally on reinit, per the BeginOnActiveReceiverReinitializes
+    // contract).
+    AstrOsBulkTransport::BulkReceiver r;
+    ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16).valid);
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 1, 4, crc, payload).decision);
+    ASSERT_EQ(AstrOsBulkTransport::EndResult::Status::OK, r.onEnd(7, 2).status);
+
+    // A stray retransmit (seq=2 = totalChunks_) arrives after the OK END.
+    // The seq >= totalChunks_ structural guard from the hardening commit
+    // catches it as OUT_OF_ORDER, with the active-state sync fields
+    // (windowRemaining = configured windowSize, nextExpectedSeq = nextSeq_).
+    auto stray = r.onChunk(7, 2, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, stray.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, stray.reason);
+    EXPECT_EQ(16u, stray.windowRemaining); // still active — NOT the inactive sentinel
+    EXPECT_EQ(2u, stray.nextExpectedSeq);  // == totalChunks_; tells sender "no more chunks"
+
+    // A second onEnd is idempotent: returns OK again because all totals
+    // still match. This isn't a "transfer finished twice" — it just means
+    // the contract is "OK is the steady state after success."
+    auto secondEnd = r.onEnd(7, 2);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, secondEnd.status);
 }
 
 //=================================================================================================
