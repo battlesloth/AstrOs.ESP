@@ -527,3 +527,34 @@ FwChunkRecord parseFwChunk(const std::string &payload)
     rec.valid = true;
     return rec;
 }
+
+FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
+{
+    FwTransferEndRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 3)
+    {
+        return rec;
+    }
+
+    errno = 0;
+    char *endptr = nullptr;
+    auto totalChunks = std::strtoul(parts[1].c_str(), &endptr, 10);
+    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0')
+    {
+        return rec;
+    }
+
+    if (parts[2].size() != 64)
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.totalChunks = static_cast<uint32_t>(totalChunks);
+    rec.finalSha256Hex = parts[2];
+    rec.valid = true;
+    return rec;
+}

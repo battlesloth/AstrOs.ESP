@@ -134,6 +134,14 @@ typedef struct
     bool valid;
 } FwChunkRecord;
 
+typedef struct
+{
+    std::string transferId;
+    uint32_t totalChunks;
+    std::string finalSha256Hex;
+    bool valid;
+} FwTransferEndRecord;
+
 class AstrOsSerialMessageService
 {
 private:
@@ -182,5 +190,6 @@ public:
 // returned struct's members.
 FwTransferBeginRecord parseFwTransferBegin(const std::string &payload);
 FwChunkRecord parseFwChunk(const std::string &payload);
+FwTransferEndRecord parseFwTransferEnd(const std::string &payload);
 
 #endif

@@ -586,3 +586,32 @@ TEST(SerialMessages, ParseFwChunkCrcHexWrongLength)
     auto rec = parseFwChunk(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+TEST(SerialMessages, ParseFwTransferEndHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    auto rec = parseFwTransferEnd(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(9400u, rec.totalChunks);
+    EXPECT_EQ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rec.finalSha256Hex);
+}
+
+TEST(SerialMessages, ParseFwTransferEndWrongHashLength)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << "deadbeef"; // 8 chars, not 64
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400";
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
