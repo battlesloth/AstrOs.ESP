@@ -127,3 +127,82 @@ TEST(BulkTransport, BeginAfterEndReusesReceiver)
     EXPECT_EQ(0u, second.highestContiguousSeq);
     EXPECT_EQ(1u, second.nextExpectedSeq);
 }
+
+//=================================================================================================
+// BulkReceiver::onChunk — CRC + SIZE rejection
+//=================================================================================================
+
+TEST(BulkTransport, OnChunkBadCrcNaks)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t realCrc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    auto result = r.onChunk(7, 0, 4, /*crc16=*/static_cast<uint16_t>(realCrc ^ 0xFFFFu), payload);
+
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::CRC, result.reason);
+    // No chunk committed yet -> reported as 0/0.
+    EXPECT_EQ(0u, result.highestContiguousSeq);
+    EXPECT_EQ(0u, result.nextExpectedSeq);
+    EXPECT_EQ(16u, result.windowRemaining);
+}
+
+TEST(BulkTransport, OnChunkPayloadLenMismatchNaksSize)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    // totalSize = 4096, chunkSize = 1024 -> 4 chunks of 1024 bytes each.
+    r.begin(/*xferId=*/7, /*totalSize=*/4096, /*totalChunks=*/4, /*chunkSize=*/1024, /*windowSize=*/16);
+
+    // Sender claims this is chunk 0 with len=500 — wrong; should be 1024.
+    std::vector<uint8_t> payload(500, 0xAA);
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload.data(), payload.size());
+    auto result = r.onChunk(7, 0, static_cast<uint16_t>(payload.size()), crc, payload.data());
+
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::SIZE, result.reason);
+}
+
+TEST(BulkTransport, OnChunkLastShortChunkAcks)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    // totalSize = 2500, chunkSize = 1024 -> chunks of 1024, 1024, 452.
+    r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16);
+
+    // Commit chunks 0 and 1.
+    std::vector<uint8_t> fullChunk(1024, 0xCC);
+    uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullChunk.data(), fullChunk.size());
+    auto r0 = r.onChunk(7, 0, 1024, fullCrc, fullChunk.data());
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r0.decision);
+    auto r1 = r.onChunk(7, 1, 1024, fullCrc, fullChunk.data());
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r1.decision);
+
+    // Last chunk: 452 bytes — the short tail.
+    std::vector<uint8_t> tail(452, 0xDD);
+    uint16_t tailCrc = AstrOsBulkTransport::crc16_ccitt_false(tail.data(), tail.size());
+    auto r2 = r.onChunk(7, 2, 452, tailCrc, tail.data());
+    EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, r2.decision);
+    EXPECT_EQ(2u, r2.highestContiguousSeq);
+    EXPECT_EQ(3u, r2.nextExpectedSeq);
+}
+
+TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    // totalSize = 2500, chunkSize = 1024 -> last chunk expected = 452 bytes.
+    r.begin(/*xferId=*/7, /*totalSize=*/2500, /*totalChunks=*/3, /*chunkSize=*/1024, /*windowSize=*/16);
+
+    std::vector<uint8_t> fullChunk(1024, 0xCC);
+    uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullChunk.data(), fullChunk.size());
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 1024, fullCrc, fullChunk.data()).decision);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 1, 1024, fullCrc, fullChunk.data()).decision);
+
+    // Last chunk: sender sends 1024 bytes but only 452 are expected.
+    std::vector<uint8_t> wrongTail(1024, 0xDD);
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(wrongTail.data(), wrongTail.size());
+    auto result = r.onChunk(7, 2, 1024, crc, wrongTail.data());
+
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::SIZE, result.reason);
+}

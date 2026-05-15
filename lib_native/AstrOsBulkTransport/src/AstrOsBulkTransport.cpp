@@ -56,27 +56,58 @@ namespace AstrOsBulkTransport
     {
         ChunkResult result{};
         result.decision = Decision::NAK;
-        result.reason = NakReason::OUT_OF_ORDER;
-        // highestContiguousSeq / nextExpectedSeq / windowRemaining default to 0 for the not-active path.
+        // Reported window: always windowSize_ on every reply. The receiver
+        // tracks no in-flight state.
+        result.windowRemaining = active_ ? windowSize_ : 0;
 
+        // Structural rejections first: not-active, wrong xferId, out-of-seq.
+        // All collapse to OUT_OF_ORDER per the wire-level reason-code set.
         if (!active_ || xferId != xferId_ || seq != nextSeq_)
         {
-            // Subsequent tasks: explicit handling for CRC / SIZE / etc. For
-            // now, anything other than a matching in-order chunk on an
-            // active transfer NAKs as OUT_OF_ORDER.
+            result.reason = NakReason::OUT_OF_ORDER;
+            // highestContiguousSeq / nextExpectedSeq default to 0 on the
+            // not-active path; on an active mismatch they should reflect
+            // the receiver's actual state so the sender can resync.
+            if (active_)
+            {
+                result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
+                result.nextExpectedSeq = nextSeq_;
+            }
             return result;
         }
 
-        // Happy path: ACK and advance.
-        // CRC + SIZE validation come in Task 5/6; for now we trust the inputs
-        // to keep this task's diff focused on begin/reset/state.
-        (void)crc16;
-        (void)payloadLen;
+        // SIZE: compute the expected length for THIS seq. All chunks are
+        // chunkSize_ bytes except possibly the last one (totalSize_ may not
+        // be a clean multiple of chunkSize_).
+        uint32_t expectedLen = chunkSize_;
+        uint32_t committedBytes = static_cast<uint32_t>(seq) * chunkSize_;
+        if (committedBytes + chunkSize_ > totalSize_)
+        {
+            expectedLen = totalSize_ - committedBytes;
+        }
+        if (payloadLen != expectedLen)
+        {
+            result.reason = NakReason::SIZE;
+            result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
+            result.nextExpectedSeq = nextSeq_;
+            return result;
+        }
+
+        // CRC: recompute over the payload and compare.
+        uint16_t computed = crc16_ccitt_false(payload, payloadLen);
+        if (computed != crc16)
+        {
+            result.reason = NakReason::CRC;
+            result.highestContiguousSeq = (nextSeq_ == 0) ? 0 : (nextSeq_ - 1);
+            result.nextExpectedSeq = nextSeq_;
+            return result;
+        }
+
+        // ACK and advance.
         result.decision = Decision::ACK;
         result.reason = NakReason::NONE;
         result.highestContiguousSeq = seq;
         result.nextExpectedSeq = seq + 1;
-        result.windowRemaining = windowSize_;
         result.payload = payload;
         result.payloadLen = payloadLen;
         nextSeq_++;
