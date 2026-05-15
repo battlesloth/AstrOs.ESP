@@ -27,6 +27,8 @@
 #include <GpioModule.hpp>
 #include <I2cMaster.hpp>
 #include <I2cModule.hpp>
+#include <OtaQueueMessage.h>
+#include <OtaReceiver.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -75,6 +77,7 @@ static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
 static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
+static QueueHandle_t otaQueue;
 
 /**********************************
  * UART
@@ -178,6 +181,7 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
+void otaReceiverTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -215,6 +219,7 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1);
 
     // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
@@ -253,6 +258,7 @@ void init(void)
     i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
+    otaQueue = xQueueCreate(16, sizeof(queue_ota_msg_t));
 
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
@@ -267,7 +273,8 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, /*otaQueue=*/nullptr);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue);
+    AstrOs_OtaReceiver.Init();
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
@@ -1397,6 +1404,30 @@ void gpioQueueTask(void *arg)
             GpioMod.SendCommand(msg.data);
 
             free(msg.data);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void otaReceiverTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_msg_t msg;
+
+    while (1)
+    {
+        if (xQueueReceive(queue, &msg, 0))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "OTA Receiver Stack HWM: %d", highWaterMark);
+            }
+
+            // OtaReceiver::process is responsible for freeing every malloc'd
+            // pointer in the union arm; the task body does not free anything
+            // directly.
+            AstrOs_OtaReceiver.process(msg);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
