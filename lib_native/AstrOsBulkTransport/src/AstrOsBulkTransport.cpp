@@ -1,6 +1,7 @@
 #include "AstrOsBulkTransport.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <type_traits>
 
 namespace AstrOsBulkTransport
@@ -62,20 +63,27 @@ namespace AstrOsBulkTransport
         // Precondition: `data` must be non-null whenever `len > 0`.
         //   - (anything, 0) is the legitimate empty-input case and returns
         //     the init value 0xFFFFu.
-        //   - (nullptr, len > 0) is a caller programming error. We fail-fast
-        //     via assert rather than UB on the deref: native tests catch the
-        //     violation immediately; on ESP target assert() panics + resets,
-        //     which is louder than the silent garbage the deref would
-        //     produce. The earlier (data == nullptr || len == 0) form
-        //     silently returned 0xFFFFu in BOTH cases, which made a caller
-        //     passing `payload=nullptr, payloadLen=K, crc16=0xFFFFu` look
-        //     like a valid ACK candidate (computed CRC matched the claimed
-        //     CRC by coincidence). BulkReceiver::onChunk has its own
-        //     structural guard for nullptr-with-positive-len, but this
-        //     function is a public API — any future caller (including
-        //     code outside BulkReceiver) gets the same deterministic
-        //     failure mode.
-        assert(data != nullptr || len == 0);
+        //   - (nullptr, len > 0) is a caller programming error. The check
+        //     below uses an unconditional abort path (NOT bare assert) so
+        //     the precondition holds in NDEBUG/release builds too — assert()
+        //     alone would compile out and re-introduce the UB on deref.
+        //     The assert() is kept for the failure message (file:line +
+        //     expression text via __assert_func); abort() is the actual
+        //     terminator that runs regardless of NDEBUG.
+        //
+        // History: the earlier (data == nullptr || len == 0) form silently
+        // returned 0xFFFFu in BOTH cases, which made a caller passing
+        // `payload=nullptr, payloadLen=K, crc16=0xFFFFu` look like a valid
+        // ACK candidate (computed CRC matched the claimed CRC by
+        // coincidence). BulkReceiver::onChunk has its own structural guard
+        // for nullptr-with-positive-len, but this function is a public
+        // API — any future caller (including code outside BulkReceiver)
+        // gets the same deterministic failure mode.
+        if (data == nullptr && len > 0)
+        {
+            assert(false && "crc16_ccitt_false: data is nullptr but len > 0");
+            std::abort();
+        }
         if (len == 0)
         {
             return 0xFFFFu;
@@ -133,10 +141,13 @@ namespace AstrOsBulkTransport
         }
         // totalSize must be in the half-open interval
         // ((totalChunks - 1) * chunkSize, totalChunks * chunkSize].
-        // Outside this range, the SIZE math at onChunk lines 27/28 either
-        // overflows or produces a meaningless expectedLen (underflow when
-        // totalSize < committedBytes). Computed in uint64_t to avoid the
-        // overflow itself happening in the check.
+        // Outside this range, onChunk's `committedBytes` / `expectedLen`
+        // SIZE math either overflows (committedBytes + chunkSize_ wraps
+        // when totalSize is near UINT32_MAX) or underflows
+        // (totalSize_ - committedBytes when totalSize < committedBytes),
+        // producing meaningless expectedLen values and confusing SIZE
+        // NAKs. Computed in uint64_t to avoid the overflow itself
+        // happening in the check.
         const uint64_t maxBytes = static_cast<uint64_t>(totalChunks) * chunkSize;
         const uint64_t minBytes = (totalChunks == 1) ? 1u : (static_cast<uint64_t>(totalChunks - 1) * chunkSize) + 1u;
         if (totalSize == 0 || totalSize > maxBytes || totalSize < minBytes)

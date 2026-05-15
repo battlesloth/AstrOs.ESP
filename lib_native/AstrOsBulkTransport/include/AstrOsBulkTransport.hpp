@@ -11,8 +11,11 @@ namespace AstrOsBulkTransport
     //
     // Precondition: `data` must be non-null whenever `len > 0`. The
     // (anything, 0) case is well-defined and returns the init value
-    // 0xFFFFu. Calling with (nullptr, len > 0) trips an assert (native
-    // tests) or panics + resets (target) — both deterministic, neither UB.
+    // 0xFFFFu. Calling with (nullptr, len > 0) aborts via std::abort()
+    // unconditionally (NDEBUG-safe — does not rely on assert remaining
+    // compiled in). On native test builds the assert that fires first
+    // gives the file:line + message; on ESP target abort() panics + resets.
+    // Either way, deterministic loud failure, never UB.
     //
     // NOTE on ESP-IDF interop: this is NOT byte-identical to esp_crc16_le.
     // esp_crc16_le is CRC-16/CCITT (reflected, init=0) — a different
@@ -243,7 +246,14 @@ namespace AstrOsBulkTransport
     //
     // Usage:
     //   BulkReceiver r;
-    //   r.begin(xferId, totalSize, totalChunks, chunkSize, windowSize);
+    //   auto br = r.begin(xferId, totalSize, totalChunks, chunkSize, windowSize);
+    //   if (!br.valid) {
+    //       // Reject FW_TRANSFER_BEGIN with a status code derived from
+    //       // br.reason (ZERO_CHUNK_SIZE | ZERO_TOTAL_CHUNKS |
+    //       // ZERO_WINDOW_SIZE | SIZE_INCONSISTENT). Do NOT send a
+    //       // success ACK — the receiver is inactive.
+    //       return;
+    //   }
     //   for each FW_CHUNK arrival:
     //       auto cr = r.onChunk(xferId, seq, payloadLen, crc16, payload);
     //       // On ACK: write cr.payload[0..cr.payloadLen-1] to flash,
@@ -251,6 +261,9 @@ namespace AstrOsBulkTransport
     //       // On NAK: send FW_CHUNK_NAK(last-good-seq=highestContiguousSeq,
     //       //         reason=cr.reason). Sender retransmits cr.nextExpectedSeq.
     //   auto er = r.onEnd(xferId, totalChunksSent);
+    //   // er.status == OK on success; on IO_ERROR, er.reason names the
+    //   // specific cause (NOT_ACTIVE | WRONG_XFER_ID |
+    //   // SENDER_TOTAL_MISMATCH | RECEIVER_SHORT_COUNT).
     //   r.reset();  // safe to call anytime; required before the next begin().
     class BulkReceiver
     {

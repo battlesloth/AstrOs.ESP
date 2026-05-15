@@ -78,8 +78,8 @@ No changes to `lib_native/AstrOsMessaging`, `lib_native/AstrOsSerialProtocol`, o
 
 ## Background notes for the implementer
 
-- **`pio` is at `/home/jeff/.platformio/penv/bin/pio`** (not on default PATH). All test/build commands in this plan use the full path.
-- **Run native tests with**: `/home/jeff/.platformio/penv/bin/pio test -e test`. The `--filter "test_native"` matches the test folder, not test names; matching by test name uses `--filter "*BulkTransport*"` against the GoogleTest binary.
+- **`pio` should be on your PATH.** If the PlatformIO virtualenv isn't activated, invoke it via its full install path (commonly `~/.platformio/penv/bin/pio` for the per-user installer, or via your VS Code PlatformIO extension's bundled binary). The commands below all use bare `pio` — substitute the path that works for your setup.
+- **Run native tests with**: `pio test -e test`. The `--filter "test_native"` matches the test folder, not test names; matching by test name uses `--filter "*BulkTransport*"` against the GoogleTest binary.
 - **The pre-commit hook runs clang-format** on staged C/C++ files. Expect it to reformat whitespace; the commit still succeeds.
 - **The CI native-purity guard** (`.github/workflows/pr-validation.yml`) greps for `#include <(freertos/|esp_|driver/|nvs_|sdmmc_)…>` across every path in `PURE_LIBS`. Don't include any of those, ever. The lib has no need to — we're not touching FreeRTOS, ESP-IDF, or hardware. Standard C++17 only.
 - **No exceptions.** CLAUDE.md and existing patterns: don't `throw`; don't `try/catch`. Return result structs.
@@ -209,21 +209,21 @@ In `.github/workflows/pr-validation.yml`, find the `PURE_LIBS=(` array (around l
 
 - [ ] **Step 5: Verify the existing test suite still passes**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test`
+Run: `pio test -e test`
 Expected: 257/257 pass (Phase 1 baseline). The new lib has no tests yet but its presence under `lib_native/` should not break anything.
 
 - [ ] **Step 6: Verify both boards still build**
 
 ```bash
-/home/jeff/.platformio/penv/bin/pio run -e metro_s3
-/home/jeff/.platformio/penv/bin/pio run -e lolin_d32_pro
+pio run -e metro_s3
+pio run -e lolin_d32_pro
 ```
 Expected: both succeed.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/ .github/workflows/pr-validation.yml
 git commit -m "$(cat <<'EOF'
 feat(bulk-transport): scaffold lib_native/AstrOsBulkTransport
@@ -314,7 +314,7 @@ Add `#include <cstring>` at the top of the file too, since the helper uses `std:
 
 - [ ] **Step 2: Run tests to verify they FAIL**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: most CRC tests fail (the placeholder returns `0`). The empty-input test happens to pass coincidentally (placeholder `return 0` ≠ `0xFFFF`, so it actually fails too).
 
 - [ ] **Step 3: Implement `crc16_ccitt_false`**
@@ -356,13 +356,13 @@ namespace AstrOsBulkTransport
 
 - [ ] **Step 4: Run tests to verify they PASS**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 257 → 262 (5 new CRC tests). All pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp \
         test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
@@ -504,7 +504,7 @@ namespace AstrOsBulkTransport
 
 - [ ] **Step 2: Verify the lib still compiles**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 262/262 pass — CRC tests still green, no new tests added yet. The `BulkReceiver` class is declared but its methods aren't called from anywhere, so the linker won't complain about missing definitions yet.
 
 (If you get a linker error like "undefined reference to `AstrOsBulkTransport::BulkReceiver::begin`", that means a test file is already trying to use the class — check whether any later-task test was accidentally included.)
@@ -512,7 +512,7 @@ Expected: 262/262 pass — CRC tests still green, no new tests added yet. The `B
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/include/AstrOsBulkTransport.hpp
 git commit -m "$(cat <<'EOF'
 feat(bulk-transport): public type definitions + BulkReceiver shape
@@ -621,7 +621,7 @@ TEST(BulkTransport, BeginAfterEndReusesReceiver)
 
 - [ ] **Step 2: Run tests to verify they FAIL**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: link errors (`undefined reference to BulkReceiver::begin`, etc.) — the methods are declared but have no definitions yet.
 
 - [ ] **Step 3: Implement `begin`, `reset`, and a minimal `onChunk`**
@@ -689,13 +689,13 @@ Note: the public `EndResult BulkReceiver::onEnd(...)` is declared in the header 
 
 - [ ] **Step 4: Run tests to verify they PASS**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 262 → 266 (4 new tests). All pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp \
         test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
@@ -821,7 +821,7 @@ TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
 
 - [ ] **Step 2: Run tests to verify they FAIL**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: the new tests fail (the current `onChunk` ignores CRC/SIZE — bad CRC + wrong length both pass through as ACK).
 
 - [ ] **Step 3: Add SIZE + CRC checks to `onChunk`**
@@ -895,13 +895,13 @@ In `lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp`, replace the bod
 
 - [ ] **Step 4: Run tests to verify they PASS**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 266 → 270 (4 new tests). All pass including the existing happy-path test from Task 4.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp \
         test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
@@ -1001,13 +1001,13 @@ TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
 
 - [ ] **Step 2: Run tests to verify they PASS immediately**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 270 → 273. All new tests pass on first attempt because the structural-reject branch in Task 5's `onChunk` already collapses these cases to `OUT_OF_ORDER`. If any fail, *do not* "fix" them by editing the production code without first re-reading it carefully — the test is more likely to be wrong than the implementation, given Task 5 already covered the logic.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
 test(bulk-transport): duplicate + skip-forward + wrong-xferId coverage
@@ -1061,7 +1061,7 @@ TEST(BulkTransport, OnEndAfterAllChunksReturnsOk)
 
 - [ ] **Step 2: Run test to verify it FAILS**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: link error if Task 4 didn't include a stub for `onEnd`. Or, if Task 4's stub returned `{}` (default `Status::IO_ERROR`), the test fails with `Expected: equality of these values: AstrOsBulkTransport::EndResult::Status::OK ... Actual: 2 (IO_ERROR)`.
 
 - [ ] **Step 3: Implement `onEnd` happy path**
@@ -1094,13 +1094,13 @@ Append to `lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp` (or repla
 
 - [ ] **Step 4: Run test to verify it PASSES**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 273 → 274. The OK case passes.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add lib_native/AstrOsBulkTransport/src/AstrOsBulkTransport.cpp \
         test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
@@ -1188,13 +1188,13 @@ TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
 
 - [ ] **Step 2: Run tests to verify they PASS immediately**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: 274 → 278. All new tests pass on first attempt — the guards in Task 7's `onEnd` already handle each path.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
 test(bulk-transport): onEnd IO_ERROR reject paths
@@ -1279,13 +1279,13 @@ TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
 
 - [ ] **Step 2: Run tests to verify the new test PASSES**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test --filter "test_native"`
+Run: `pio test -e test --filter "test_native"`
 Expected: prior-test-count + 1. The integration test passes — and if any of the prior tasks left a subtle bug, this is likely where it surfaces.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/jeff/Source/astros/AstrOs.ESP
+cd <repo-root>
 git add test/test_native/bulk_transport_tests.cpp
 git commit -m "$(cat <<'EOF'
 test(bulk-transport): end-to-end 10-chunk transfer with CRC retransmit
@@ -1309,14 +1309,14 @@ EOF
 
 - [ ] **Step 1: Run the full native test suite**
 
-Run: `/home/jeff/.platformio/penv/bin/pio test -e test`
+Run: `pio test -e test`
 Expected: 261 → 293 (32 new BulkTransport tests — 22 from the original task-by-task TDD, 4 from `fe87535`'s strengthening pass, 6 more from the PR-toolkit cleanup pass — 4 begin-validation in `cc8b749` + `Crc16MultiByteNonStringVector` and `OnEndOkLeavesReceiverInPostOkState` in `cbd000a`). All pass.
 
 - [ ] **Step 2: Build both board firmware variants**
 
 ```bash
-/home/jeff/.platformio/penv/bin/pio run -e metro_s3
-/home/jeff/.platformio/penv/bin/pio run -e lolin_d32_pro
+pio run -e metro_s3
+pio run -e lolin_d32_pro
 ```
 Expected: both succeed. Phase 2 doesn't change firmware behavior; this just confirms the new lib doesn't accidentally break the on-device build (e.g., via header transitive includes that confuse the IDF build).
 

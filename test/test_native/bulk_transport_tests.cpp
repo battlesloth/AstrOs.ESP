@@ -122,8 +122,19 @@ TEST(BulkTransport, ResetReturnsToInactive)
     EXPECT_EQ(nullptr, result.payload);
 }
 
-TEST(BulkTransport, BeginAfterEndReusesReceiver)
+TEST(BulkTransport, ResetThenBeginAcceptsNewTransfer)
 {
+    // Pins that reset() returns the receiver to pre-begin state cleanly:
+    // a follow-up begin() with a different xferId activates a fresh
+    // transfer, and the first onChunk on that new transfer ACKs with
+    // the resume cursor reinitialized to (highestContiguousSeq=0,
+    // nextExpectedSeq=1).
+    //
+    // NOTE: this test does NOT cover the begin-after-end case (commit
+    // a successful transfer end-to-end, then begin a new one). That's
+    // covered by OnEndOkLeavesReceiverInPostOkState in combination with
+    // BeginOnActiveReceiverReinitializes (which pins that begin() on
+    // an already-active receiver reinit's correctly).
     AstrOsBulkTransport::BulkReceiver r;
     ASSERT_TRUE(r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
@@ -132,7 +143,8 @@ TEST(BulkTransport, BeginAfterEndReusesReceiver)
     auto first = r.onChunk(7, 0, 4, firstCrc, firstPayload);
     ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, first.decision);
 
-    // Reset, begin a new transfer with a different xferId, and accept its first chunk.
+    // Reset (without ending the transfer first), begin a new transfer
+    // with a different xferId, and accept its first chunk.
     r.reset();
     ASSERT_TRUE(r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16).valid);
 
