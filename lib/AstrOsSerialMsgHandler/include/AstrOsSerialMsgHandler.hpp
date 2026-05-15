@@ -22,6 +22,11 @@ private:
     void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac,
                               std::string peerName, std::string message);
 
+    void handleFwTransferBeginInbound(const std::string &msgId, const std::string &payload);
+    void handleFwChunkInbound(const std::string &payload);
+    void handleFwTransferEndInbound(const std::string &msgId, const std::string &payload);
+    void handleFwDeployBeginInbound(const std::string &msgId, const std::string &payload);
+
 public:
     AstrOsSerialMsgHandler();
     ~AstrOsSerialMsgHandler();

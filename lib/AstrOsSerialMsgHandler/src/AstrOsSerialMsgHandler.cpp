@@ -4,12 +4,33 @@
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsSerialProtocol.hpp>
 #include <AstrOsUtility.h>
+#include <OtaQueueMessage.h>
+#include <errno.h>
 #include <esp_log.h>
+#include <mbedtls/base64.h>
+#include <stdlib.h>
 #include <string.h>
 
 const char *TAG = "AstrOsSerialMsgHandler";
 
 AstrOsSerialMsgHandler AstrOs_SerialMsgHandler;
+
+namespace
+{
+    // Returns a malloc'd, NUL-terminated copy of `s`. Caller frees. Returns
+    // nullptr on malloc failure (caller must handle).
+    char *dupString(const std::string &s)
+    {
+        char *p = (char *)malloc(s.size() + 1);
+        if (p == nullptr)
+        {
+            return nullptr;
+        }
+        memcpy(p, s.c_str(), s.size());
+        p[s.size()] = '\0';
+        return p;
+    }
+} // namespace
 
 AstrOsSerialMsgHandler::AstrOsSerialMsgHandler() {}
 
@@ -41,6 +62,29 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
     }
 
     ESP_LOGD(TAG, "Received serial message type: %d", static_cast<int>(validation.type));
+
+    // FW_* OTA messages take a different path from the standard
+    // decodeSerialMessage -> interfaceResponseQueue pipeline: the OtaReceiver
+    // task owns its own queue and handles all four kinds directly. Phase 1's
+    // decodeFwInbound shim still exists in AstrOsSerialProtocol for the
+    // (eventual) ESP-NOW path; on the master serial path it is unreachable.
+    switch (validation.type)
+    {
+    case AstrOsSerialMessageType::FW_TRANSFER_BEGIN:
+        this->handleFwTransferBeginInbound(validation.msgId, validation.payload);
+        return;
+    case AstrOsSerialMessageType::FW_CHUNK:
+        this->handleFwChunkInbound(validation.payload);
+        return;
+    case AstrOsSerialMessageType::FW_TRANSFER_END:
+        this->handleFwTransferEndInbound(validation.msgId, validation.payload);
+        return;
+    case AstrOsSerialMessageType::FW_DEPLOY_BEGIN:
+        this->handleFwDeployBeginInbound(validation.msgId, validation.payload);
+        return;
+    default:
+        break;
+    }
 
     // The pure decoder owns all of the field splitting and
     // per-controller validation. Everything ESP-specific (queue handoff,
@@ -326,5 +370,225 @@ void AstrOsSerialMsgHandler::sendFwDeployDone(std::string msgId, std::string tra
     {
         ESP_LOGW(TAG, "Send serial queue fail (FW_DEPLOY_DONE)");
         free(serialMsg.data);
+    }
+}
+
+/************************************
+ * FW_* inbound dispatch helpers
+ *************************************/
+
+void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msgId, const std::string &payload)
+{
+    auto rec = parseFwTransferBegin(payload);
+    if (!rec.valid)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN parse rejected payload");
+        this->sendFwTransferBeginAck(msgId, /*transferId=*/"", "io_error");
+        return;
+    }
+
+    queue_ota_msg_t m;
+    memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_BEGIN;
+    m.transferId = dupString(rec.transferId);
+    m.begin.msgId = dupString(msgId);
+    m.begin.totalSize = rec.totalSize;
+    m.begin.totalChunks = (rec.totalSize + rec.chunkSize - 1) / rec.chunkSize;
+    m.begin.chunkSize = rec.chunkSize;
+    strncpy(m.begin.sha256Hex, rec.sha256Hex.c_str(), 64);
+    m.begin.sha256Hex[64] = '\0';
+
+    // Join targetIds back into a single RS-separated string. Phase 3 doesn't
+    // actually fan out to targets (no SD, no mesh), so OtaReceiver just frees
+    // this field after parsing it back if needed. Phase 4+ may keep it for
+    // the deploy stage.
+    std::string joined;
+    for (size_t i = 0; i < rec.targetIds.size(); i++)
+    {
+        if (i > 0)
+        {
+            joined += '\x1E'; // RECORD_SEPARATOR
+        }
+        joined += rec.targetIds[i];
+    }
+    m.begin.targetList = dupString(joined);
+
+    if (m.transferId == nullptr || m.begin.msgId == nullptr || m.begin.targetList == nullptr)
+    {
+        ESP_LOGE(TAG, "Malloc failed in FW_TRANSFER_BEGIN dispatch");
+        free(m.transferId);
+        free(m.begin.msgId);
+        free(m.begin.targetList);
+        this->sendFwTransferBeginAck(msgId, rec.transferId, "io_error");
+        return;
+    }
+
+    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(250)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "otaQueue full at FW_TRANSFER_BEGIN; rejecting with busy");
+        free(m.transferId);
+        free(m.begin.msgId);
+        free(m.begin.targetList);
+        this->sendFwTransferBeginAck(msgId, rec.transferId, "busy");
+    }
+}
+
+void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
+{
+    auto rec = parseFwChunk(payload);
+    if (!rec.valid)
+    {
+        ESP_LOGW(TAG, "FW_CHUNK parse rejected payload");
+        // No way to recover a transferId from a malformed payload — log and drop.
+        return;
+    }
+
+    // mbedtls_base64_decode requires dst sized for the decoded output. The
+    // declared wire-level payloadLen is the decoded byte count; allocate it
+    // exactly and treat any size mismatch from the decoder as SIZE failure.
+    uint8_t *decoded = (uint8_t *)malloc(rec.payloadLen);
+    if (decoded == nullptr)
+    {
+        ESP_LOGE(TAG, "Malloc failed in FW_CHUNK dispatch");
+        this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "SIZE");
+        return;
+    }
+
+    size_t outLen = 0;
+    int rc = mbedtls_base64_decode(decoded, rec.payloadLen, &outLen,
+                                   reinterpret_cast<const unsigned char *>(rec.base64Payload.data()),
+                                   rec.base64Payload.size());
+    if (rc != 0 || outLen != rec.payloadLen)
+    {
+        ESP_LOGW(TAG, "FW_CHUNK base64 decode failed rc=%d out=%zu expected=%u", rc, outLen, (unsigned)rec.payloadLen);
+        free(decoded);
+        this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "SIZE");
+        return;
+    }
+
+    queue_ota_msg_t m;
+    memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_CHUNK;
+    m.transferId = dupString(rec.transferId);
+    m.chunk.seq = rec.seq;
+    m.chunk.payloadLen = rec.payloadLen;
+    m.chunk.crc16 = rec.crc16;
+    m.chunk.payload = decoded;
+
+    if (m.transferId == nullptr)
+    {
+        ESP_LOGE(TAG, "Malloc failed in FW_CHUNK dispatch (transferId)");
+        free(decoded);
+        this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "SIZE");
+        return;
+    }
+
+    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(50)) != pdTRUE)
+    {
+        // Queue full = transient backpressure. Emit a CRC NAK so the server retransmits this
+        // seq once the receiver drains. Stays inside the contract; cleaner backpressure via
+        // FW_BACKPRESSURE is Phase 5. The decoded payload is freed here; the receiver never
+        // saw this chunk.
+        ESP_LOGW(TAG, "otaQueue full at FW_CHUNK seq=%u; emitting CRC NAK to force retransmit", (unsigned)rec.seq);
+        free(m.transferId);
+        free(decoded);
+        this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "CRC");
+    }
+}
+
+void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId, const std::string &payload)
+{
+    auto rec = parseFwTransferEnd(payload);
+    if (!rec.valid)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_END parse rejected payload");
+        this->sendFwTransferEndAck(msgId, /*transferId=*/"", "IO_ERROR",
+                                   "0000000000000000000000000000000000000000000000000000000000000000");
+        return;
+    }
+
+    queue_ota_msg_t m;
+    memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_END;
+    m.transferId = dupString(rec.transferId);
+    m.end.msgId = dupString(msgId);
+    m.end.totalChunks = rec.totalChunks;
+    strncpy(m.end.finalSha256Hex, rec.finalSha256Hex.c_str(), 64);
+    m.end.finalSha256Hex[64] = '\0';
+
+    if (m.transferId == nullptr || m.end.msgId == nullptr)
+    {
+        ESP_LOGE(TAG, "Malloc failed in FW_TRANSFER_END dispatch");
+        free(m.transferId);
+        free(m.end.msgId);
+        this->sendFwTransferEndAck(msgId, rec.transferId, "IO_ERROR", rec.finalSha256Hex);
+        return;
+    }
+
+    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "otaQueue full at FW_TRANSFER_END");
+        free(m.transferId);
+        free(m.end.msgId);
+        this->sendFwTransferEndAck(msgId, rec.transferId, "IO_ERROR", rec.finalSha256Hex);
+    }
+}
+
+void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId, const std::string &payload)
+{
+    auto rec = parseFwDeployBegin(payload);
+    if (!rec.valid)
+    {
+        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN parse rejected payload");
+        std::vector<astros_fw_deploy_result_t> empty; // sendFwDeployDone drops on empty, intentional
+        this->sendFwDeployDone(msgId, /*transferId=*/"", empty);
+        return;
+    }
+
+    std::string joined;
+    for (size_t i = 0; i < rec.orderIds.size(); i++)
+    {
+        if (i > 0)
+        {
+            joined += '\x1E';
+        }
+        joined += rec.orderIds[i];
+    }
+
+    queue_ota_msg_t m;
+    memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_DEPLOY_BEGIN;
+    m.transferId = dupString(rec.transferId);
+    m.deploy.msgId = dupString(msgId);
+    m.deploy.orderList = dupString(joined);
+
+    if (m.transferId == nullptr || m.deploy.msgId == nullptr || m.deploy.orderList == nullptr)
+    {
+        ESP_LOGE(TAG, "Malloc failed in FW_DEPLOY_BEGIN dispatch");
+        free(m.transferId);
+        free(m.deploy.msgId);
+        free(m.deploy.orderList);
+        // Synthesize a FAILED result per target so JobLock can release.
+        std::vector<astros_fw_deploy_result_t> failures;
+        for (const auto &id : rec.orderIds)
+        {
+            failures.push_back({id, "FAILED", "", "io_error"});
+        }
+        this->sendFwDeployDone(msgId, rec.transferId, failures);
+        return;
+    }
+
+    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "otaQueue full at FW_DEPLOY_BEGIN");
+        free(m.transferId);
+        free(m.deploy.msgId);
+        free(m.deploy.orderList);
+        std::vector<astros_fw_deploy_result_t> failures;
+        for (const auto &id : rec.orderIds)
+        {
+            failures.push_back({id, "FAILED", "", "io_error"});
+        }
+        this->sendFwDeployDone(msgId, rec.transferId, failures);
     }
 }
