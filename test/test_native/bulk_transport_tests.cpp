@@ -286,3 +286,58 @@ TEST(BulkTransport, OnEndAfterAllChunksReturnsOk)
     auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/2);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, end.status);
 }
+
+//=================================================================================================
+// BulkReceiver::onEnd — IO_ERROR reject paths
+//=================================================================================================
+
+TEST(BulkTransport, OnEndBeforeBeginReturnsIoError)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    // No begin() called.
+    auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/1);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+}
+
+TEST(BulkTransport, OnEndWrongXferIdReturnsIoError)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+
+    // Caller claims this END is for a different xferId.
+    auto end = r.onEnd(/*xferId=*/9, /*totalChunksSent=*/1);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+}
+
+TEST(BulkTransport, OnEndSenderTotalMismatchReturnsIoError)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 1, 4, crc, payload).decision);
+
+    // Sender claims 3 chunks were sent, but begin() said 2.
+    auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/3);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+}
+
+TEST(BulkTransport, OnEndReceiverShortChunkCountReturnsIoError)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+    // Only one chunk was sent; sender claims 2 to match the declared total.
+
+    auto end = r.onEnd(/*xferId=*/7, /*totalChunksSent=*/2);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+}
