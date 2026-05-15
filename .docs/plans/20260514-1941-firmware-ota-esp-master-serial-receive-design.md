@@ -131,7 +131,7 @@ Files:
   extend `AstrOsSC::` string table, add builders:
   - `getFwTransferBeginAck(msgId, transferId, status)` — payload `transfer-id<US>status` per `.docs/protocol.md` (no hash field on BEGIN_ACK).
   - `getFwChunkAck(transferId, highestContiguousSeq, nextExpectedSeq, windowRemaining)`
-  - `getFwChunkNak(transferId, lastGoodSeq, reasonCode)`
+  - `getFwChunkNak(transferId, lastGoodSeq, nextExpectedSeq, reasonCode)` — payload `transfer-id<US>last-good-seq<US>next-expected-seq<US>reason-code`. `nextExpectedSeq` disambiguates the first-chunk NAK case where `lastGoodSeq=0` alone cannot distinguish "seq 0 committed, want seq 1" from "nothing committed, want seq 0". Phase 3 callers should pass `bulkResult.highestContiguousSeq` as `lastGoodSeq` and `bulkResult.nextExpectedSeq` as `nextExpectedSeq`. Phase 2's `BulkReceiver` is *expected* to produce both fields with the correct first-chunk-NAK semantics — both 0 when nothing has been committed yet — and Phase 2 must verify this contract (covered by a `bulk_transport_tests.cpp` case on `feature/ota-phase2-bulk-transport`) before Phase 3 wires them together.
   - `getFwTransferEndAck(msgId, transferId, status, computedSha256Hex)` — payload `transfer-id<US>OK|HASH_MISMATCH|IO_ERROR<US>computed-sha256-hex`. `msgId` echoes the originating END's id.
   - `getFwDeployDone(msgId, transferId, perControllerResults)` — each result `controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty`, RS-separated between results.
 - Parsers returning POD result structs:
@@ -227,6 +227,16 @@ Files:
   `FW_CHUNK_NAK reason=SIZE`.
 - `src/main.cpp` — create `otaQueue` (size 16, item-size sizeof(queue_ota_msg_t)),
   spawn `otaReceiverTask` pinned to core 1.
+
+**Caller contract for FW_* builders (load-bearing).** Every `getFw*` builder
+in `AstrOsSerialMessageService` returns `""` on caller-side programming error
+(invalid `reasonCode` for NAK, invalid `status` for DEPLOY_DONE, etc.). Phase 3
+callers MUST check `.empty()` on the return value before queueing. The
+existing `sendXxxAck` pattern in `AstrOsSerialMsgHandler` does not check this
+and will happily queue a `'\n'`-only payload — which the server discards as
+junk, leaving the transfer hung with no diagnostic trail. Treat empty as a
+fatal local bug: `logError` it with a distinct error id and either abort the
+transfer or emit a fallback `FW_CHUNK_NAK reason=CRC` so progress can resume.
 
 Approx 4-6 files.
 
@@ -345,16 +355,16 @@ Server                                                    Master
 | BEGIN, SD unavailable / open fail | `FW_TRANSFER_BEGIN_ACK status=io_error` | no state change |
 | BEGIN, free space < total-size | `FW_TRANSFER_BEGIN_ACK status=sd_full` | no state change |
 | BEGIN OK | `FW_TRANSFER_BEGIN_ACK status=OK` | staging.bin opened, sha256 started |
-| CHUNK bad CRC-16 | `FW_CHUNK_NAK last-good-seq reason=CRC` | nothing committed |
-| CHUNK out of order | `FW_CHUNK_NAK reason=OUT_OF_ORDER` | nothing committed |
-| CHUNK payload-len mismatch | `FW_CHUNK_NAK reason=SIZE` | nothing committed |
-| CHUNK base64 decode fail (handler) | `FW_CHUNK_NAK reason=SIZE` | handler frees own buf |
-| CHUNK fwrite fails (Phase 4+) | `FW_CHUNK_NAK reason=FLASH_FULL` | transfer effectively dead |
+| CHUNK bad CRC-16 | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=CRC` | nothing committed |
+| CHUNK out of order | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=OUT_OF_ORDER` | nothing committed |
+| CHUNK payload-len mismatch | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=SIZE` | nothing committed |
+| CHUNK base64 decode fail (handler) | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=SIZE` | handler frees own buf |
+| CHUNK fwrite fails (Phase 4+) | `FW_CHUNK_NAK last-good-seq next-expected-seq reason=FLASH_FULL` | transfer effectively dead |
 | END hash match | `FW_TRANSFER_END_ACK OK <hex>` | rename staging → `<sha-prefix>.bin`, reset state |
 | END hash mismatch | `FW_TRANSFER_END_ACK HASH_MISMATCH <hex>` | **keep staging.bin** for forensics, reset state |
 | END total-chunks mismatch | `FW_TRANSFER_END_ACK IO_ERROR <hex>` | keep staging.bin, reset state |
 | DEPLOY_BEGIN (Phase 3+) | `FW_DEPLOY_DONE` all-FAILED `not_implemented` | no state change |
-| `xQueueSend(otaQueue, …)` full | handler frees, emits `FW_CHUNK_NAK reason=CRC` | no state change |
+| `xQueueSend(otaQueue, …)` full | handler frees, emits `FW_CHUNK_NAK last-good-seq next-expected-seq reason=CRC` | no state change |
 
 ## Testing
 

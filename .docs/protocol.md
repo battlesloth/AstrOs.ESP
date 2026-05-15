@@ -49,7 +49,7 @@ Existing framing is unchanged: `[type(int)][RS][validator-string][RS][msg-id][GS
 | 31 | `FW_TRANSFER_BEGIN_ACK` | master → server | Ready or reject (e.g. SD full). |
 | 32 | `FW_CHUNK` | server → master | One frame of base64-encoded bytes with seq + CRC-16. |
 | 33 | `FW_CHUNK_ACK` | master → server | Cumulative ACK with `next-expected-seq` and `window-remaining`. |
-| 34 | `FW_CHUNK_NAK` | master → server | Bad CRC / out-of-order, with `last-good-seq`. |
+| 34 | `FW_CHUNK_NAK` | master → server | Reject (CRC \| SIZE \| OUT_OF_ORDER \| FLASH_FULL) with `last-good-seq` and `next-expected-seq`. |
 | 35 | `FW_TRANSFER_END` | server → master | End-of-stream + final SHA-256. |
 | 36 | `FW_TRANSFER_END_ACK` | master → server | `OK` / `HASH_MISMATCH` / `IO_ERROR` + computed hash. |
 | 37 | `FW_DEPLOY_BEGIN` | server → master | Push staged SD copy to listed controllers, in given order. |
@@ -70,7 +70,13 @@ FW_TRANSFER_BEGIN_ACK: transfer-id<US>status
                       code (e.g., "sd_full", "busy", "unsupported_version")
 FW_CHUNK:             transfer-id<US>seq<US>payload-len<US>base64-bytes<US>crc16-hex
 FW_CHUNK_ACK:         transfer-id<US>highest-contiguous-seq<US>next-expected-seq<US>window-remaining
-FW_CHUNK_NAK:         transfer-id<US>last-good-seq<US>reason-code   // CRC|SIZE|OUT_OF_ORDER|FLASH_FULL
+FW_CHUNK_NAK:         transfer-id<US>last-good-seq<US>next-expected-seq<US>reason-code
+                      reason-code = CRC | SIZE | OUT_OF_ORDER | FLASH_FULL
+                      next-expected-seq disambiguates the first-chunk NAK:
+                      last-good-seq=0 alone cannot distinguish "seq 0
+                      committed, want seq 1" from "nothing committed,
+                      want seq 0". next-expected-seq says which seq the
+                      sender must resend next, unambiguously.
 FW_TRANSFER_END:      transfer-id<US>total-chunks<US>final-sha256-hex
 FW_TRANSFER_END_ACK:  transfer-id<US>OK|HASH_MISMATCH|IO_ERROR<US>computed-sha256-hex
 FW_DEPLOY_BEGIN:      transfer-id<US>order-list   // ordered ids, padawans first, master last
@@ -111,7 +117,7 @@ Server                                Master
 
 ### Failure modes
 
-- CRC fail → `FW_CHUNK_NAK` with `last-good-seq` → server resumes from N+1.
+- CRC fail → `FW_CHUNK_NAK` with `last-good-seq` and `next-expected-seq` → server resumes from `next-expected-seq` (do NOT compute as `last-good-seq + 1`; that breaks on first-chunk NAK).
 - Hash mismatch at end → `FW_TRANSFER_END_ACK HASH_MISMATCH` → server retries the whole transfer once, then fails the job.
 - SD full → `FW_TRANSFER_BEGIN_ACK` rejects → fail job fast.
 - Padawan unreachable / reboot timeout → master moves to next padawan, marks the failed one in `FW_DEPLOY_DONE`. ("Continue past failures" decision.)

@@ -396,7 +396,8 @@ TEST(SerialMessages, FwChunkAckMessage)
 TEST(SerialMessages, FwChunkNakCrcMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    auto value = msgSvc.getFwChunkNak("7", 40, "CRC");
+    // lastGoodSeq=40, nextExpectedSeq=41 — sender resumes from 41.
+    auto value = msgSvc.getFwChunkNak("7", 40, 41, "CRC");
 
     auto validation = msgSvc.validateSerialMsg(value);
     ASSERT_TRUE(validation.valid);
@@ -405,23 +406,93 @@ TEST(SerialMessages, FwChunkNakCrcMessage)
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3u, payloadParts.size());
+    ASSERT_EQ(4u, payloadParts.size());
     EXPECT_EQ("7", payloadParts[0]);
     EXPECT_EQ("40", payloadParts[1]);
-    EXPECT_EQ("CRC", payloadParts[2]);
+    EXPECT_EQ("41", payloadParts[2]);
+    EXPECT_EQ("CRC", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakFirstChunkDisambiguatesViaNextExpectedSeq)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    // First-chunk NAK: lastGoodSeq=0 is the protocol-ambiguous value, but
+    // nextExpectedSeq=0 unambiguously says "send seq 0 again". A naive
+    // server that computed lastGoodSeq+1 would have skipped to seq 1.
+    auto value = msgSvc.getFwChunkNak("7", 0, 0, "CRC");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("0", payloadParts[1]); // lastGoodSeq
+    EXPECT_EQ("0", payloadParts[2]); // nextExpectedSeq — the disambiguating field
+    EXPECT_EQ("CRC", payloadParts[3]);
 }
 
 TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    auto value = msgSvc.getFwChunkNak("7", 40, "OUT_OF_ORDER");
+    auto value = msgSvc.getFwChunkNak("7", 40, 41, "OUT_OF_ORDER");
 
     auto validation = msgSvc.validateSerialMsg(value);
     ASSERT_TRUE(validation.valid);
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
-    ASSERT_EQ(3u, payloadParts.size());
-    EXPECT_EQ("OUT_OF_ORDER", payloadParts[2]);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);            // transferId
+    EXPECT_EQ("40", payloadParts[1]);           // lastGoodSeq
+    EXPECT_EQ("41", payloadParts[2]);           // nextExpectedSeq
+    EXPECT_EQ("OUT_OF_ORDER", payloadParts[3]); // reasonCode
+}
+
+TEST(SerialMessages, FwChunkNakSizeMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 5, 6, "SIZE");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("SIZE", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakFlashFullMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 100, 101, "FLASH_FULL");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("FLASH_FULL", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakRejectsInvalidReasonCode)
+{
+    // Caller programming error: an unrecognized reason string is silently
+    // unparseable on the server side. The builder returns "" to flag this
+    // at the source rather than emitting an unidentifiable frame.
+    auto msgSvc = AstrOsSerialMessageService();
+
+    // Sanity foil: an otherwise-identical call with a valid reasonCode must
+    // NOT return empty. Pins that emptiness is reasonCode-driven, not a
+    // regression that short-circuits the whole builder.
+    EXPECT_FALSE(msgSvc.getFwChunkNak("7", 0, 0, "CRC").empty());
+
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "WAT").empty());
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "").empty());
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "crc").empty());          // case-sensitive
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "out_of_order").empty()); // case-sensitive
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, " CRC").empty());         // leading space
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "CRC ").empty());         // trailing space
+    EXPECT_TRUE(msgSvc.getFwChunkNak("7", 0, 0, "OUT-OF-ORDER").empty()); // wrong separator
 }
 
 TEST(SerialMessages, FwTransferEndAckOkMessage)
