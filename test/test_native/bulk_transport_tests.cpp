@@ -88,6 +88,10 @@ TEST(BulkTransport, OnChunkBeforeBeginNaksOutOfOrder)
 
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
+    // Not-active sentinel: windowRemaining == 0, no payload pass-through.
+    EXPECT_EQ(0u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
+    EXPECT_EQ(0u, result.payloadLen);
 }
 
 TEST(BulkTransport, ResetReturnsToInactive)
@@ -96,13 +100,14 @@ TEST(BulkTransport, ResetReturnsToInactive)
     r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/100, /*windowSize=*/8);
     r.reset();
 
-    // After reset, onChunk should behave the same as if begin() had never been called.
     const uint8_t payload[] = {0x01, 0x02};
     uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 2);
     auto result = r.onChunk(/*xferId=*/7, /*seq=*/0, 2, crc, payload);
 
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
+    EXPECT_EQ(0u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
 }
 
 TEST(BulkTransport, BeginAfterEndReusesReceiver)
@@ -128,6 +133,59 @@ TEST(BulkTransport, BeginAfterEndReusesReceiver)
     EXPECT_EQ(1u, second.nextExpectedSeq);
 }
 
+TEST(BulkTransport, BeginOnActiveReceiverReinitializes)
+{
+    // The contract says begin() on an already-active receiver reinitializes
+    // it as if reset() + begin() had been called.
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {'a', 'b', 'c', 'd'};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(7, 0, 4, crc, payload).decision);
+
+    // Call begin() again with a different xferId mid-transfer, without
+    // an intervening reset(). nextSeq_ should be zeroed back to 0.
+    r.begin(/*xferId=*/9, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+
+    auto result = r.onChunk(/*xferId=*/9, /*seq=*/0, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, result.decision);
+    EXPECT_EQ(0u, result.highestContiguousSeq);
+    EXPECT_EQ(1u, result.nextExpectedSeq);
+}
+
+TEST(BulkTransport, BeginWithZeroChunkSizeLeavesReceiverInactive)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/100, /*totalChunks=*/1, /*chunkSize=*/0, /*windowSize=*/16);
+
+    // Receiver should be inactive — onChunk reports the not-active sentinel.
+    const uint8_t payload[] = {0x01};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 1);
+    auto result = r.onChunk(7, 0, 1, crc, payload);
+
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
+    EXPECT_EQ(0u, result.windowRemaining); // not-active sentinel
+}
+
+TEST(BulkTransport, BeginWithZeroTotalChunksLeavesReceiverInactive)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/0, /*totalChunks=*/0, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+    auto result = r.onChunk(7, 0, 4, crc, payload);
+
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(0u, result.windowRemaining);
+
+    // onEnd on the inactive receiver should not return OK.
+    auto end = r.onEnd(7, 0);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::IO_ERROR, end.status);
+}
+
 //=================================================================================================
 // BulkReceiver::onChunk — CRC + SIZE rejection
 //=================================================================================================
@@ -147,6 +205,8 @@ TEST(BulkTransport, OnChunkBadCrcNaks)
     EXPECT_EQ(0u, result.highestContiguousSeq);
     EXPECT_EQ(0u, result.nextExpectedSeq);
     EXPECT_EQ(16u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
+    EXPECT_EQ(0u, result.payloadLen);
 }
 
 TEST(BulkTransport, OnChunkPayloadLenMismatchNaksSize)
@@ -162,6 +222,12 @@ TEST(BulkTransport, OnChunkPayloadLenMismatchNaksSize)
 
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::SIZE, result.reason);
+    // First-chunk NAK: highestContiguousSeq=0, nextExpectedSeq=0 (sentinel).
+    EXPECT_EQ(0u, result.highestContiguousSeq);
+    EXPECT_EQ(0u, result.nextExpectedSeq);
+    EXPECT_EQ(16u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
+    EXPECT_EQ(0u, result.payloadLen);
 }
 
 TEST(BulkTransport, OnChunkLastShortChunkAcks)
@@ -205,10 +271,17 @@ TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
 
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::SIZE, result.reason);
+    // Mid-stream NAK after committing seq 0 and 1: highestContiguousSeq=1,
+    // nextExpectedSeq=2, full window. Verifies the SIZE-NAK sync fields
+    // when nextSeq_ > 0.
+    EXPECT_EQ(1u, result.highestContiguousSeq);
+    EXPECT_EQ(2u, result.nextExpectedSeq);
+    EXPECT_EQ(16u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
 }
 
 //=================================================================================================
-// BulkReceiver::onChunk — duplicate + wrong-xferId rejection
+// BulkReceiver::onChunk — duplicate, skip-forward + wrong-xferId rejection
 //=================================================================================================
 
 TEST(BulkTransport, OnChunkDuplicateSeqNaksOutOfOrder)
@@ -231,6 +304,9 @@ TEST(BulkTransport, OnChunkDuplicateSeqNaksOutOfOrder)
     // Reports we last committed seq=0, expect seq=1 next.
     EXPECT_EQ(0u, duplicate.highestContiguousSeq);
     EXPECT_EQ(1u, duplicate.nextExpectedSeq);
+    EXPECT_EQ(16u, duplicate.windowRemaining); // active receiver -> full window
+    EXPECT_EQ(nullptr, duplicate.payload);
+    EXPECT_EQ(0u, duplicate.payloadLen);
 }
 
 TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
@@ -246,6 +322,8 @@ TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, skipped.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, skipped.reason);
     EXPECT_EQ(0u, skipped.nextExpectedSeq);
+    EXPECT_EQ(16u, skipped.windowRemaining);
+    EXPECT_EQ(nullptr, skipped.payload);
 }
 
 TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
@@ -261,6 +339,8 @@ TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
     EXPECT_EQ(0u, result.nextExpectedSeq);
+    EXPECT_EQ(16u, result.windowRemaining);
+    EXPECT_EQ(nullptr, result.payload);
 
     // The receiver state must not have been corrupted: a correct chunk for
     // xferId=7 still gets ACK'd cleanly afterward.
@@ -372,8 +452,9 @@ TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
             ASSERT_EQ(AstrOsBulkTransport::NakReason::CRC, nakResult.reason);
             EXPECT_EQ(4u, nakResult.highestContiguousSeq);
             EXPECT_EQ(5u, nakResult.nextExpectedSeq);
-            // Sender retransmits seq=5 with the correct CRC.
         }
+        // Falls through on every iteration: when seq == 5, this is the
+        // retransmit with the correct CRC. Otherwise it is the normal send.
         auto okResult = r.onChunk(kXferId, seq, kChunkSize, fullCrc, fullPayload.data());
         ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, okResult.decision) << "ACK failed at seq=" << seq;
         ASSERT_EQ(seq + 1, okResult.nextExpectedSeq);
@@ -393,4 +474,44 @@ TEST(BulkTransport, EndToEndTenChunkTransferWithMidStreamRetransmit)
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, endResult.status);
 
     r.reset();
+}
+
+//=================================================================================================
+// BulkReceiver — end-to-end happy path with one mid-stream SIZE retransmit
+//=================================================================================================
+
+TEST(BulkTransport, EndToEndTransferWithMidStreamSizeRetransmit)
+{
+    constexpr uint32_t kTotalSize = 12;
+    constexpr uint16_t kChunkSize = 4;
+    constexpr uint32_t kTotalChunks = 3;
+    constexpr uint8_t kXferId = 11;
+    constexpr uint8_t kWindowSize = 16;
+
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(kXferId, kTotalSize, kTotalChunks, kChunkSize, kWindowSize);
+
+    const uint8_t fullPayload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    uint16_t fullCrc = AstrOsBulkTransport::crc16_ccitt_false(fullPayload, 4);
+
+    // seq=0 ACK clean.
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(kXferId, 0, 4, fullCrc, fullPayload).decision);
+
+    // seq=1: sender erroneously claims 3 bytes (should be 4). NAK reason=SIZE.
+    // CRC is computed over the (truncated) buffer the sender actually sends.
+    const uint8_t shortPayload[] = {0xDE, 0xAD, 0xBE};
+    uint16_t shortCrc = AstrOsBulkTransport::crc16_ccitt_false(shortPayload, 3);
+    auto sizeNak = r.onChunk(kXferId, 1, 3, shortCrc, shortPayload);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::NAK, sizeNak.decision);
+    ASSERT_EQ(AstrOsBulkTransport::NakReason::SIZE, sizeNak.reason);
+    EXPECT_EQ(0u, sizeNak.highestContiguousSeq);
+    EXPECT_EQ(1u, sizeNak.nextExpectedSeq);
+
+    // Sender retransmits seq=1 with the correct 4-byte payload.
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(kXferId, 1, 4, fullCrc, fullPayload).decision);
+    // seq=2 final.
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, r.onChunk(kXferId, 2, 4, fullCrc, fullPayload).decision);
+
+    auto end = r.onEnd(kXferId, kTotalChunks);
+    EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, end.status);
 }
