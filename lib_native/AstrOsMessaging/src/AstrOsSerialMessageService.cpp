@@ -558,3 +558,26 @@ FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
     rec.valid = true;
     return rec;
 }
+
+FwDeployBeginRecord parseFwDeployBegin(const std::string &payload)
+{
+    FwDeployBeginRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 2)
+    {
+        return rec;
+    }
+
+    auto orderIds = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
+    if (orderIds.empty() || (orderIds.size() == 1 && orderIds[0].empty()))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.orderIds = std::move(orderIds);
+    rec.valid = true;
+    return rec;
+}

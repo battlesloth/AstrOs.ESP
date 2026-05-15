@@ -615,3 +615,31 @@ TEST(SerialMessages, ParseFwTransferEndTooFewFields)
     auto rec = parseFwTransferEnd(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+TEST(SerialMessages, ParseFwDeployBeginHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome" << RECORD_SEPARATOR << "master";
+
+    auto rec = parseFwDeployBegin(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    ASSERT_EQ(3u, rec.orderIds.size());
+    EXPECT_EQ("core", rec.orderIds[0]);
+    EXPECT_EQ("dome", rec.orderIds[1]);
+    EXPECT_EQ("master", rec.orderIds[2]);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginEmptyOrderList)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginTooFewFields)
+{
+    auto rec = parseFwDeployBegin("7"); // no separator, no order list
+    EXPECT_FALSE(rec.valid);
+}

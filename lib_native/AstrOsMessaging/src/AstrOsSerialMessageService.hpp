@@ -142,6 +142,13 @@ typedef struct
     bool valid;
 } FwTransferEndRecord;
 
+typedef struct
+{
+    std::string transferId;
+    std::vector<std::string> orderIds;
+    bool valid;
+} FwDeployBeginRecord;
+
 class AstrOsSerialMessageService
 {
 private:
@@ -191,5 +198,6 @@ public:
 FwTransferBeginRecord parseFwTransferBegin(const std::string &payload);
 FwChunkRecord parseFwChunk(const std::string &payload);
 FwTransferEndRecord parseFwTransferEnd(const std::string &payload);
+FwDeployBeginRecord parseFwDeployBegin(const std::string &payload);
 
 #endif
