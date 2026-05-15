@@ -34,7 +34,11 @@ enum class AstrOsInterfaceResponseType
     SERVO_TEST,
     SEND_SERVO_TEST,
     SERVO_TEST_ACK,
-    SEND_SERVO_TEST_ACK
+    SEND_SERVO_TEST_ACK,
+    FW_TRANSFER_BEGIN,
+    FW_CHUNK,
+    FW_TRANSFER_END,
+    FW_DEPLOY_BEGIN
 };
 
 typedef struct
