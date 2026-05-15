@@ -106,7 +106,72 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
 
 void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 {
-    // Task 4 implements this.
+    std::string transferIdIn = msg.transferId ? msg.transferId : "";
+
+    if (!active_)
+    {
+        ESP_LOGW(TAG, "FW_CHUNK while no transfer active; emitting inactive NAK");
+        AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0, "OUT_OF_ORDER");
+        free(msg.chunk.payload);
+        free(msg.transferId);
+        return;
+    }
+
+    // Re-derive the uint8_t form. transferIdStr_ is the authoritative running
+    // value — if the incoming string mismatches, BulkReceiver::onChunk's
+    // internal xferId check will return nakInactive() with reason=OUT_OF_ORDER.
+    uint8_t xferId = 0;
+    {
+        errno = 0;
+        char *endp = nullptr;
+        unsigned long ul = strtoul(transferIdIn.c_str(), &endp, 10);
+        if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || ul > 255)
+        {
+            // Wire form was numeric at BEGIN time; arriving as garbage now is a server bug.
+            ESP_LOGW(TAG, "FW_CHUNK transferId='%s' not numeric; emitting OUT_OF_ORDER", transferIdIn.c_str());
+            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0,
+                                                   "OUT_OF_ORDER");
+            free(msg.chunk.payload);
+            free(msg.transferId);
+            return;
+        }
+        xferId = static_cast<uint8_t>(ul);
+    }
+
+    auto cr = bulk_.onChunk(xferId, msg.chunk.seq, msg.chunk.payloadLen, msg.chunk.crc16, msg.chunk.payload);
+
+    if (cr.decision == AstrOsBulkTransport::Decision::ACK)
+    {
+        // Phase 3 sinks payload to /dev/null. Phase 4 fwrites cr.payload here.
+        AstrOs_SerialMsgHandler.sendFwChunkAck(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
+                                               cr.windowRemaining);
+    }
+    else
+    {
+        const char *reasonStr = "OUT_OF_ORDER";
+        switch (cr.reason)
+        {
+        case AstrOsBulkTransport::NakReason::CRC:
+            reasonStr = "CRC";
+            break;
+        case AstrOsBulkTransport::NakReason::SIZE:
+            reasonStr = "SIZE";
+            break;
+        case AstrOsBulkTransport::NakReason::OUT_OF_ORDER:
+            reasonStr = "OUT_OF_ORDER";
+            break;
+        case AstrOsBulkTransport::NakReason::FLASH_FULL:
+            reasonStr = "FLASH_FULL";
+            break;
+        case AstrOsBulkTransport::NakReason::NONE:
+            // Unreachable on the NAK path — log and force CRC for safe retransmit.
+            ESP_LOGE(TAG, "BulkReceiver returned NAK with reason=NONE; forcing CRC");
+            reasonStr = "CRC";
+            break;
+        }
+        AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq, reasonStr);
+    }
+
     free(msg.chunk.payload);
     free(msg.transferId);
 }
