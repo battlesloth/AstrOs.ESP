@@ -37,9 +37,16 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         handleDeployBegin(msg);
         break;
     default:
-        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d", static_cast<int>(msg.kind));
+        // Unknown kind means either memory corruption on the queue or a new
+        // OTA_MSG_* enumerator was added without extending this switch. Both
+        // are programmer errors: silently dropping the message would leak the
+        // union arm's pointers AND leave the server waiting for a reply. Fail
+        // loud — abort surfaces the panic trace through the existing
+        // esp32_exception_decoder pipeline.
+        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — protocol violation, aborting",
+                 static_cast<int>(msg.kind), msg.transferId ? msg.transferId : "(null)");
         free(msg.transferId);
-        break;
+        abort();
     }
 }
 
@@ -142,7 +149,12 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 
     if (cr.decision == AstrOsBulkTransport::Decision::ACK)
     {
-        // Phase 3 sinks payload to /dev/null. Phase 4 fwrites cr.payload here.
+        // Phase 3 sinks payload to /dev/null. Phase 4 will, in this branch,
+        // before the sendFwChunkAck call:
+        //   - fwrite(cr.payload, cr.payloadLen, 1, stagingFp_)
+        //   - mbedtls_sha256_update(&shaCtx_, cr.payload, cr.payloadLen)
+        // and on fwrite failure must NAK with reason=FLASH_FULL instead of
+        // ACK — DO NOT drop a bare fwrite in here without the failure branch.
         AstrOs_SerialMsgHandler.sendFwChunkAck(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                cr.windowRemaining);
     }
@@ -192,6 +204,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric", transferIdIn.c_str());
             AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
             active_ = false;
+            transferIdStr_.clear();
+            beginMsgId_.clear();
             bulk_.reset();
             free(msg.end.msgId);
             free(msg.transferId);
@@ -213,8 +227,42 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     }
     else
     {
-        ESP_LOGW(TAG, "FW_TRANSFER_END IO_ERROR reason=%d (transferId=%s)", static_cast<int>(er.reason),
-                 transferIdIn.c_str());
+        // Decode reason to a string and pick severity: WRONG_XFER_ID and
+        // SENDER_TOTAL_MISMATCH point at a server-state bug (the server confused
+        // its own books) and deserve LOGE so they surface in monitoring.
+        // RECEIVER_SHORT_COUNT and NOT_ACTIVE are transient-or-local conditions
+        // and stay at LOGW.
+        const char *reasonStr = "(unknown)";
+        bool serverBug = false;
+        switch (er.reason)
+        {
+        case AstrOsBulkTransport::EndResult::Reason::NONE:
+            reasonStr = "NONE";
+            break;
+        case AstrOsBulkTransport::EndResult::Reason::NOT_ACTIVE:
+            reasonStr = "NOT_ACTIVE";
+            break;
+        case AstrOsBulkTransport::EndResult::Reason::WRONG_XFER_ID:
+            reasonStr = "WRONG_XFER_ID";
+            serverBug = true;
+            break;
+        case AstrOsBulkTransport::EndResult::Reason::SENDER_TOTAL_MISMATCH:
+            reasonStr = "SENDER_TOTAL_MISMATCH";
+            serverBug = true;
+            break;
+        case AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT:
+            reasonStr = "RECEIVER_SHORT_COUNT";
+            break;
+        }
+        if (serverBug)
+        {
+            ESP_LOGE(TAG, "FW_TRANSFER_END IO_ERROR reason=%s (transferId=%s server-state bug)", reasonStr,
+                     transferIdIn.c_str());
+        }
+        else
+        {
+            ESP_LOGW(TAG, "FW_TRANSFER_END IO_ERROR reason=%s (transferId=%s)", reasonStr, transferIdIn.c_str());
+        }
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
     }
 

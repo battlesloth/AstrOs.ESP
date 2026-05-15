@@ -11,6 +11,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+// Threading: all members are accessed only from otaReceiverTask (core 1)
+// via `process(...)`. No synchronization is required. If a future change
+// adds a second caller (e.g. a panic-stop path), revisit this contract.
 class OtaReceiver
 {
 private:

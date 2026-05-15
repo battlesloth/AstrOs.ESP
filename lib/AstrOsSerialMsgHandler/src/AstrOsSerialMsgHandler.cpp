@@ -387,6 +387,18 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
         return;
     }
 
+    // Guard against chunkSize=0 before computing totalChunks. parseFwTransferBegin
+    // accepts 0 as a syntactically valid uint16_t, and dividing by it would trap
+    // on ESP32 (integer-divide exception → node reset). BulkReceiver::begin has
+    // its own ZERO_CHUNK_SIZE check, but it can't help us here because the
+    // divide happens first.
+    if (rec.chunkSize == 0)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN chunkSize=0 rejected (transferId=%s)", rec.transferId.c_str());
+        this->sendFwTransferBeginAck(msgId, rec.transferId, "io_error");
+        return;
+    }
+
     queue_ota_msg_t m;
     memset(&m, 0, sizeof(m));
     m.kind = OTA_MSG_BEGIN;
@@ -460,7 +472,25 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
                                    rec.base64Payload.size());
     if (rc != 0 || outLen != rec.payloadLen)
     {
-        ESP_LOGW(TAG, "FW_CHUNK base64 decode failed rc=%d out=%zu expected=%u", rc, outLen, (unsigned)rec.payloadLen);
+        // Split the diagnostic so bench debugging starts at the right hypothesis.
+        // INVALID_CHARACTER  = server sent corrupt base64
+        // BUFFER_TOO_SMALL   = server mis-declared payloadLen vs actual decoded length
+        // size-mismatch fall = decoder returned 0 but output count disagrees
+        if (rc == MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
+        {
+            ESP_LOGW(TAG, "FW_CHUNK base64 invalid character (seq=%u transferId=%s base64Len=%zu)", (unsigned)rec.seq,
+                     rec.transferId.c_str(), rec.base64Payload.size());
+        }
+        else if (rc == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
+        {
+            ESP_LOGW(TAG, "FW_CHUNK declared payloadLen=%u too small for base64 input=%zu (seq=%u transferId=%s)",
+                     (unsigned)rec.payloadLen, rec.base64Payload.size(), (unsigned)rec.seq, rec.transferId.c_str());
+        }
+        else
+        {
+            ESP_LOGW(TAG, "FW_CHUNK base64 size mismatch out=%zu expected=%u rc=%d (seq=%u transferId=%s)", outLen,
+                     (unsigned)rec.payloadLen, rc, (unsigned)rec.seq, rec.transferId.c_str());
+        }
         free(decoded);
         this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "SIZE");
         return;
