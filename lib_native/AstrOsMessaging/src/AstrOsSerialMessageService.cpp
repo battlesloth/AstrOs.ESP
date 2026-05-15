@@ -258,13 +258,15 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
     }
     for (const auto &r : results)
     {
-        // Reject contract violations: status must be "OK" or "FAILED", and the cross-field
-        // invariant says finalVersion is empty iff FAILED and errorOrEmpty is empty iff OK.
-        // Phase 3 may upgrade to an enum; for now we fail closed at the wire-emission boundary.
+        // Enforced: status must be exactly "OK" or "FAILED".
         if (r.status != "OK" && r.status != "FAILED")
         {
             return "";
         }
+        // NOT enforced here (Phase 3 follow-up): the cross-field invariant that
+        // finalVersion is non-empty iff OK and errorOrEmpty is non-empty iff FAILED.
+        // Phase 3 may close this gap by upgrading status to an enum or by adding
+        // explicit checks here once the caller contract is stable.
     }
 
     std::stringstream ss;

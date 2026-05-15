@@ -752,9 +752,12 @@ TEST(SerialMessages, FwDeployDoneSingleResultMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
     std::vector<astros_fw_deploy_result_t> results;
-    // Use a non-empty errorOrEmpty so splitString (which drops trailing empty tokens)
-    // preserves all 5 US-separated fields on the wire.
-    results.push_back({"core", "OK", "1.2.0", "none"});
+    // FAILED record with empty finalVersion + non-empty errorOrEmpty honors the
+    // cross-field convention documented in getFwDeployDone (finalVersion is empty
+    // when FAILED; errorOrEmpty is non-empty when FAILED). Non-empty errorOrEmpty
+    // also keeps the wire payload at 5 US-separated fields after splitString
+    // (which drops trailing empty tokens).
+    results.push_back({"core", "FAILED", "", "io_error"});
 
     auto value = msgSvc.getFwDeployDone("mid-s", "7", results);
 
@@ -769,9 +772,9 @@ TEST(SerialMessages, FwDeployDoneSingleResultMessage)
     ASSERT_EQ(5u, firstParts.size());
     EXPECT_EQ("7", firstParts[0]);
     EXPECT_EQ("core", firstParts[1]);
-    EXPECT_EQ("OK", firstParts[2]);
-    EXPECT_EQ("1.2.0", firstParts[3]);
-    EXPECT_EQ("none", firstParts[4]);
+    EXPECT_EQ("FAILED", firstParts[2]);
+    EXPECT_EQ("", firstParts[3]);
+    EXPECT_EQ("io_error", firstParts[4]);
 }
 
 //=================================================================================================
@@ -810,6 +813,17 @@ TEST(SerialMessages, ParseFwTransferBeginChunkSizeExceedsUint16)
     std::stringstream payload;
     payload << "7" << UNIT_SEPARATOR << "1000000" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR
             << "65536" // 0x10000, one over uint16 max
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginNonNumericChunkSize)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1000000" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR
+            << "abc" // non-numeric chunk size
             << UNIT_SEPARATOR << "core";
     auto rec = parseFwTransferBegin(payload.str());
     EXPECT_FALSE(rec.valid);
