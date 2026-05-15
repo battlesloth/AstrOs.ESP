@@ -267,7 +267,7 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, /*otaQueue=*/nullptr);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
