@@ -2,6 +2,7 @@
 #include <AstrOsUtility.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <sstream>
 
 // using ::testing::MatchesRegex;
 // using ::testing::StartsWith;
@@ -294,4 +295,728 @@ TEST(SerialMessages, FormatSDNakMessage)
 TEST(SerialMessages, ServoTestAckMessage)
 {
     RunAckNakTest(AstrOsSerialMessageType::SERVO_TEST_ACK);
+}
+
+//=================================================================================================
+// FW_* recognition (Phase 1 wire format)
+//=================================================================================================
+
+namespace
+{
+    // Constructs the raw wire-format header directly (the same shape
+    // generateHeader produces) so tests can exercise validateSerialMsg
+    // at the wire level without going through a builder. Used because
+    // generateHeader is private on AstrOsSerialMessageService.
+    std::string buildBareHeader(int typeInt, const char *validator, const std::string &msgId)
+    {
+        std::stringstream ss;
+        ss << typeInt << RECORD_SEPARATOR << validator << RECORD_SEPARATOR << msgId << GROUP_SEPARATOR;
+        return ss.str();
+    }
+} // namespace
+
+TEST(SerialMessages, FwTransferBeginRecognized)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = buildBareHeader(30, "FW_TRANSFER_BEGIN", "mid-1");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, validation.type);
+    EXPECT_STREQ("mid-1", validation.msgId.c_str());
+}
+
+TEST(SerialMessages, FwTypesUseProtocolReservedRange)
+{
+    EXPECT_EQ(30, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_BEGIN));
+    EXPECT_EQ(31, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK));
+    EXPECT_EQ(32, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK));
+    EXPECT_EQ(33, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK_ACK));
+    EXPECT_EQ(34, static_cast<int>(AstrOsSerialMessageType::FW_CHUNK_NAK));
+    EXPECT_EQ(35, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_END));
+    EXPECT_EQ(36, static_cast<int>(AstrOsSerialMessageType::FW_TRANSFER_END_ACK));
+    EXPECT_EQ(37, static_cast<int>(AstrOsSerialMessageType::FW_DEPLOY_BEGIN));
+    EXPECT_EQ(38, static_cast<int>(AstrOsSerialMessageType::FW_PROGRESS));
+    EXPECT_EQ(39, static_cast<int>(AstrOsSerialMessageType::FW_DEPLOY_DONE));
+    EXPECT_EQ(40, static_cast<int>(AstrOsSerialMessageType::FW_BACKPRESSURE));
+}
+
+TEST(SerialMessages, FwTransferBeginAckOkMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwTransferBeginAck("mid-2", "7", "OK");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, validation.type);
+    EXPECT_STREQ("mid-2", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(2u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("OK", payloadParts[1]);
+}
+
+TEST(SerialMessages, FwTransferBeginAckSdFullMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwTransferBeginAck("mid-3", "7", "sd_full");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(2u, payloadParts.size());
+    EXPECT_EQ("sd_full", payloadParts[1]);
+}
+
+TEST(SerialMessages, FwChunkAckMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkAck("7", 41, 42, 14);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_CHUNK_ACK, validation.type);
+    // FW_CHUNK_ACK is a server-bound unsolicited per-chunk reply; msgId is "na"
+    EXPECT_STREQ("na", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("41", payloadParts[1]);
+    EXPECT_EQ("42", payloadParts[2]);
+    EXPECT_EQ("14", payloadParts[3]);
+}
+
+TEST(SerialMessages, FwChunkNakCrcMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 40, "CRC");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_CHUNK_NAK, validation.type);
+    EXPECT_STREQ("na", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("40", payloadParts[1]);
+    EXPECT_EQ("CRC", payloadParts[2]);
+}
+
+TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getFwChunkNak("7", 40, "OUT_OF_ORDER");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("OUT_OF_ORDER", payloadParts[2]);
+}
+
+TEST(SerialMessages, FwTransferEndAckOkMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto computedHex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    auto value = msgSvc.getFwTransferEndAck("mid-9", "7", "OK", computedHex);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_END_ACK, validation.type);
+    EXPECT_STREQ("mid-9", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("OK", payloadParts[1]);
+    EXPECT_EQ(computedHex, payloadParts[2]);
+}
+
+TEST(SerialMessages, FwTransferEndAckHashMismatchMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto computedHex = "0000000000000000000000000000000000000000000000000000000000000001";
+    auto value = msgSvc.getFwTransferEndAck("mid-9", "7", "HASH_MISMATCH", computedHex);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("HASH_MISMATCH", payloadParts[1]);
+    EXPECT_EQ(computedHex, payloadParts[2]);
+}
+
+TEST(SerialMessages, FwDeployDoneAllFailedMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "FAILED", "", "not_implemented"});
+    results.push_back({"dome", "FAILED", "", "not_implemented"});
+
+    auto value = msgSvc.getFwDeployDone("mid-d", "7", results);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_DEPLOY_DONE, validation.type);
+    EXPECT_STREQ("mid-d", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto resultRecords = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+    ASSERT_EQ(2u, resultRecords.size());
+
+    // First record starts with transfer-id, then the first result's 4 fields:
+    auto firstParts = AstrOsStringUtils::splitString(resultRecords[0], UNIT_SEPARATOR);
+    ASSERT_EQ(5u, firstParts.size());
+    EXPECT_EQ("7", firstParts[0]);
+    EXPECT_EQ("core", firstParts[1]);
+    EXPECT_EQ("FAILED", firstParts[2]);
+    EXPECT_EQ("", firstParts[3]);
+    EXPECT_EQ("not_implemented", firstParts[4]);
+
+    auto secondParts = AstrOsStringUtils::splitString(resultRecords[1], UNIT_SEPARATOR);
+    ASSERT_EQ(4u, secondParts.size());
+    EXPECT_EQ("dome", secondParts[0]);
+    EXPECT_EQ("FAILED", secondParts[1]);
+    EXPECT_EQ("", secondParts[2]);
+    EXPECT_EQ("not_implemented", secondParts[3]);
+}
+
+//=================================================================================================
+// parseFwTransferBegin (Task 7)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1234567" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome" << RECORD_SEPARATOR << "master";
+
+    auto rec = parseFwTransferBegin(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(1234567u, rec.totalSize);
+    EXPECT_EQ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rec.sha256Hex);
+    EXPECT_EQ(4096u, rec.chunkSize);
+    ASSERT_EQ(3u, rec.targetIds.size());
+    EXPECT_EQ("core", rec.targetIds[0]);
+    EXPECT_EQ("dome", rec.targetIds[1]);
+    EXPECT_EQ("master", rec.targetIds[2]);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1234567"; // only 2 fields
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginNonNumericSize)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "abc" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginEmptyTargetList)
+{
+    // Trailing empty US-field is stripped by splitString, so this payload
+    // actually reaches the field-count guard, not the target-list-empty
+    // guard. See ParseFwTransferBeginRsOnlyTargetField below for the test
+    // that hits the target-list-empty branch.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR // base64 of "Hello World!" (12 bytes)
+            << "abcd";
+
+    auto rec = parseFwChunk(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(42u, rec.seq);
+    EXPECT_EQ(12u, rec.payloadLen);
+    EXPECT_EQ("SGVsbG8gV29ybGQh", rec.base64Payload);
+    EXPECT_EQ(0xabcdu, rec.crc16);
+}
+
+TEST(SerialMessages, ParseFwChunkTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12"; // 3 fields
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkBadCrcHex)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "xyz1"; // not hex
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkCrcHexWrongLength)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abc"; // 3 chars, not 4
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    auto rec = parseFwTransferEnd(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    EXPECT_EQ(9400u, rec.totalChunks);
+    EXPECT_EQ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", rec.finalSha256Hex);
+}
+
+TEST(SerialMessages, ParseFwTransferEndWrongHashLength)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << "deadbeef"; // 8 chars, not 64
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndTooFewFields)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400";
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginHappyPath)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome" << RECORD_SEPARATOR << "master";
+
+    auto rec = parseFwDeployBegin(payload.str());
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ("7", rec.transferId);
+    ASSERT_EQ(3u, rec.orderIds.size());
+    EXPECT_EQ("core", rec.orderIds[0]);
+    EXPECT_EQ("dome", rec.orderIds[1]);
+    EXPECT_EQ("master", rec.orderIds[2]);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginEmptyOrderList)
+{
+    // Trailing empty US-field is stripped by splitString, so this payload
+    // actually reaches the field-count guard, not the order-list-empty
+    // guard. See ParseFwDeployBeginRsOnlyOrderList below for the test
+    // that hits the order-list-empty branch.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginTooFewFields)
+{
+    auto rec = parseFwDeployBegin("7"); // no separator, no order list
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_* parser hardening (Cleanup commit A)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginEmptyTransferId)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginTotalSizeExceedsUint32)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" // > 4 GB
+            << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginInvalidHexSha256)
+{
+    // 64 chars but contains a non-hex char ('z')
+    std::string hash64 = "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkEmptyTransferId)
+{
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkSeqExceedsUint32)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndEmptyTransferId)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndTotalChunksExceedsUint32)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "5000000000" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndInvalidHexSha256)
+{
+    // 64 chars but contains a non-hex char
+    std::string hash64 = "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginEmptyTransferId)
+{
+    std::stringstream payload;
+    payload << "" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, FwDeployDoneEmptyResultsReturnsEmpty)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    auto value = msgSvc.getFwDeployDone("mid-empty", "7", results);
+    EXPECT_TRUE(value.empty());
+}
+
+TEST(SerialMessages, FwDeployDoneSingleResultMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    // FAILED record with empty finalVersion + non-empty errorOrEmpty honors the
+    // cross-field convention documented in getFwDeployDone (finalVersion is empty
+    // when FAILED; errorOrEmpty is non-empty when FAILED). Non-empty errorOrEmpty
+    // also keeps the wire payload at 5 US-separated fields after splitString
+    // (which drops trailing empty tokens).
+    results.push_back({"core", "FAILED", "", "io_error"});
+
+    auto value = msgSvc.getFwDeployDone("mid-s", "7", results);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto resultRecords = AstrOsStringUtils::splitString(records[1], RECORD_SEPARATOR);
+    ASSERT_EQ(1u, resultRecords.size()); // no RS separator emitted for single result
+
+    auto firstParts = AstrOsStringUtils::splitString(resultRecords[0], UNIT_SEPARATOR);
+    ASSERT_EQ(5u, firstParts.size());
+    EXPECT_EQ("7", firstParts[0]);
+    EXPECT_EQ("core", firstParts[1]);
+    EXPECT_EQ("FAILED", firstParts[2]);
+    EXPECT_EQ("", firstParts[3]);
+    EXPECT_EQ("io_error", firstParts[4]);
+}
+
+//=================================================================================================
+// FW_* empty-list rejection branches (Cleanup commit B)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRsOnlyTargetField)
+{
+    // Reaches the targetIds-empty guard (not the field-count guard).
+    // 5 US-parts with a lone RS as parts[4], which splitString(part4, RS)
+    // turns into a single empty string -> rejected.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << RECORD_SEPARATOR;
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginRsOnlyOrderList)
+{
+    // Reaches the orderIds-empty guard (not the field-count guard).
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << RECORD_SEPARATOR;
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_* numeric overflow + non-numeric rejection coverage (Cleanup commit B)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginChunkSizeExceedsUint16)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1000000" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR
+            << "65536" // 0x10000, one over uint16 max
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginNonNumericChunkSize)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1000000" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR
+            << "abc" // non-numeric chunk size
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkPayloadLenExceedsUint16)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "65536" << UNIT_SEPARATOR << "AQID" << UNIT_SEPARATOR
+            << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndNonNumericTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "abc" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkNonNumericSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "notanumber" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "AQID"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkNonNumericPayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "42" << UNIT_SEPARATOR << "notanumber" << UNIT_SEPARATOR << "AQID"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_DEPLOY_DONE contract-violation rejection (Cleanup commit C)
+//=================================================================================================
+
+TEST(SerialMessages, FwDeployDoneRejectsInvalidStatus)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "WAT", "1.2.0", ""}); // status must be "OK" or "FAILED"
+
+    auto value = msgSvc.getFwDeployDone("mid-x", "7", results);
+    EXPECT_TRUE(value.empty());
+}
+
+TEST(SerialMessages, FwDeployDoneRejectsInvalidStatusAmongValid)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    std::vector<astros_fw_deploy_result_t> results;
+    results.push_back({"core", "OK", "1.2.0", ""});
+    results.push_back({"dome", "MAYBE", "", "huh"}); // second record is invalid
+
+    auto value = msgSvc.getFwDeployDone("mid-x", "7", results);
+    EXPECT_TRUE(value.empty()); // any invalid status fails the whole message
+}
+
+//=================================================================================================
+// FW_* parser strict-unsigned + interior-empty list rejection (external PR feedback)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsNegativeTotalSize)
+{
+    // strtoul accepts "-1" and wraps it to ULONG_MAX. On 32-bit ESP targets
+    // that equals UINT32_MAX and would pass `> 0xFFFFFFFFul`. The strict
+    // sign-reject must catch this before strtoul runs.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsPlusPrefixedTotalSize)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "+100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsInteriorEmptyTarget)
+{
+    // "core<RS><RS>dome" produces targets {"core", "", "dome"}. Earlier code
+    // accepted this because splitString preserves interior empty entries.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core" << RECORD_SEPARATOR << RECORD_SEPARATOR << "dome";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsNegativeSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsNegativePayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsNegativeTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginRejectsInteriorEmptyOrder)
+{
+    // "core<RS><RS>master" produces orderIds {"core", "", "master"}.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << RECORD_SEPARATOR << "master";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+//=================================================================================================
+// FW_* parser uppercase-hex + leading-whitespace rejection (external PR feedback, second batch)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsUppercaseSha256)
+{
+    // protocol.md line 25 mandates SHA-256 is 64 *lowercase* hex chars.
+    // Accepting uppercase here would let a malformed wire hash slip through
+    // and later be misdiagnosed as HASH_MISMATCH when compared to the
+    // master's locally computed lowercase hash.
+    std::string upperHash64 = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << upperHash64 << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsUppercaseSha256)
+{
+    std::string upperHash64 = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR << upperHash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsLeadingWhitespaceTotalSize)
+{
+    // strtoul skips leading whitespace; the strict digit-first check rejects it.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsLeadingWhitespaceSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 42" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsLeadingWhitespaceTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << " 9400" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
 }

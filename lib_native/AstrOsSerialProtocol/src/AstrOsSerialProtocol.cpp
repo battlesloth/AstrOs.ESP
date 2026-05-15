@@ -115,6 +115,20 @@ namespace AstrOsSerialProtocol
                 appendCommand(result, responseType, msgId, peerMac, "", msgParts[2]);
             }
         }
+
+        void decodeFwInbound(DecodeResult &result, AstrOsSerialMessageType type, const std::string &msgId,
+                             const std::string &payload)
+        {
+            // FW_* inbound payloads are not parsed here. A later MIXED
+            // phase (the OTA receiver, not yet implemented) will own
+            // structured parsing via parseFwTransferBegin / parseFwChunk
+            // / parseFwTransferEnd / parseFwDeployBegin. For now we
+            // route the raw payload through with the matching
+            // responseType so the handler task can hand it to that
+            // future component once it lands.
+            const auto responseType = mapResponseType(type, /*isMaster=*/true);
+            appendCommand(result, responseType, msgId, "", "", payload);
+        }
     } // namespace
 
     AstrOsInterfaceResponseType mapResponseType(AstrOsSerialMessageType type, bool isMaster)
@@ -139,6 +153,14 @@ namespace AstrOsSerialProtocol
                 return AstrOsInterfaceResponseType::COMMAND;
             case AstrOsSerialMessageType::SERVO_TEST:
                 return AstrOsInterfaceResponseType::SERVO_TEST;
+            case AstrOsSerialMessageType::FW_TRANSFER_BEGIN:
+                return AstrOsInterfaceResponseType::FW_TRANSFER_BEGIN;
+            case AstrOsSerialMessageType::FW_CHUNK:
+                return AstrOsInterfaceResponseType::FW_CHUNK;
+            case AstrOsSerialMessageType::FW_TRANSFER_END:
+                return AstrOsInterfaceResponseType::FW_TRANSFER_END;
+            case AstrOsSerialMessageType::FW_DEPLOY_BEGIN:
+                return AstrOsInterfaceResponseType::FW_DEPLOY_BEGIN;
             default:
                 return AstrOsInterfaceResponseType::UNKNOWN;
             }
@@ -197,6 +219,12 @@ namespace AstrOsSerialProtocol
         case AstrOsSerialMessageType::RUN_COMMAND:
         case AstrOsSerialMessageType::SERVO_TEST:
             decodeBasicCommand(result, type, msgId, payload);
+            break;
+        case AstrOsSerialMessageType::FW_TRANSFER_BEGIN:
+        case AstrOsSerialMessageType::FW_CHUNK:
+        case AstrOsSerialMessageType::FW_TRANSFER_END:
+        case AstrOsSerialMessageType::FW_DEPLOY_BEGIN:
+            decodeFwInbound(result, type, msgId, payload);
             break;
         default:
             appendReject(result, payload, DecodeRejectReason::UNKNOWN_TYPE);

@@ -1,8 +1,10 @@
 #include "AstrOsSerialMessageService.hpp"
 #include <AstrOsStringUtils.hpp>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -32,6 +34,17 @@ AstrOsSerialMessageService::AstrOsSerialMessageService()
         {AstrOsSerialMessageType::PANIC_STOP, AstrOsSC::PANIC_STOP},
         {AstrOsSerialMessageType::SERVO_TEST, AstrOsSC::SERVO_TEST},
         {AstrOsSerialMessageType::SERVO_TEST_ACK, AstrOsSC::SERVO_TEST_ACK},
+        {AstrOsSerialMessageType::FW_TRANSFER_BEGIN, AstrOsSC::FW_TRANSFER_BEGIN},
+        {AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, AstrOsSC::FW_TRANSFER_BEGIN_ACK},
+        {AstrOsSerialMessageType::FW_CHUNK, AstrOsSC::FW_CHUNK},
+        {AstrOsSerialMessageType::FW_CHUNK_ACK, AstrOsSC::FW_CHUNK_ACK},
+        {AstrOsSerialMessageType::FW_CHUNK_NAK, AstrOsSC::FW_CHUNK_NAK},
+        {AstrOsSerialMessageType::FW_TRANSFER_END, AstrOsSC::FW_TRANSFER_END},
+        {AstrOsSerialMessageType::FW_TRANSFER_END_ACK, AstrOsSC::FW_TRANSFER_END_ACK},
+        {AstrOsSerialMessageType::FW_DEPLOY_BEGIN, AstrOsSC::FW_DEPLOY_BEGIN},
+        {AstrOsSerialMessageType::FW_PROGRESS, AstrOsSC::FW_PROGRESS},
+        {AstrOsSerialMessageType::FW_DEPLOY_DONE, AstrOsSC::FW_DEPLOY_DONE},
+        {AstrOsSerialMessageType::FW_BACKPRESSURE, AstrOsSC::FW_BACKPRESSURE},
     };
 }
 
@@ -158,6 +171,123 @@ std::string AstrOsSerialMessageService::getBasicAckNak(AstrOsSerialMessageType t
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(type, msgId);
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << data;
+    return ss.str();
+}
+
+/// @brief generates FW_TRANSFER_BEGIN_ACK reply. Payload shape per .docs/protocol.md:
+///        transfer-id<US>status where status is "OK" or a snake_case rejection code
+///        (sd_full, busy, unsupported_version, io_error).
+/// @param msgId echo of the BEGIN's msgId
+/// @param transferId transfer id assigned by the server (server's choice; opaque to us)
+/// @param status "OK" on success, otherwise a snake_case rejection code
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwTransferBeginAck(std::string msgId, std::string transferId,
+                                                              std::string status)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_TRANSFER_BEGIN_ACK, msgId);
+    ss << transferId << UNIT_SEPARATOR << status;
+    return ss.str();
+}
+
+/// @brief generates FW_CHUNK_ACK reply. Payload shape:
+///        transfer-id<US>highest-contiguous-seq<US>next-expected-seq<US>window-remaining.
+/// @param transferId transfer id
+/// @param highestContiguousSeq highest seq we've committed in order
+/// @param nextExpectedSeq the seq we want next (always highestContiguousSeq + 1 in our impl)
+/// @param windowRemaining how many more in-flight frames the sender may have
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, uint32_t highestContiguousSeq,
+                                                      uint32_t nextExpectedSeq, uint8_t windowRemaining)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_CHUNK_ACK, "na");
+    ss << transferId << UNIT_SEPARATOR << std::to_string(highestContiguousSeq) << UNIT_SEPARATOR
+       << std::to_string(nextExpectedSeq) << UNIT_SEPARATOR << std::to_string(static_cast<unsigned>(windowRemaining));
+    return ss.str();
+}
+
+/// @brief generates FW_CHUNK_NAK reply. Payload shape:
+///        transfer-id<US>last-good-seq<US>reason-code.
+/// @param transferId transfer id
+/// @param lastGoodSeq the last seq we committed (server resumes from N+1)
+/// @param reasonCode "CRC" | "SIZE" | "OUT_OF_ORDER" | "FLASH_FULL"
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, uint32_t lastGoodSeq,
+                                                      std::string reasonCode)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_CHUNK_NAK, "na");
+    ss << transferId << UNIT_SEPARATOR << std::to_string(lastGoodSeq) << UNIT_SEPARATOR << reasonCode;
+    return ss.str();
+}
+
+/// @brief generates FW_TRANSFER_END_ACK reply. Payload shape:
+///        transfer-id<US>status<US>computed-sha256-hex where status is
+///        OK | HASH_MISMATCH | IO_ERROR (SCREAMING per .docs/protocol.md).
+/// @param msgId echo of the END's msgId
+/// @param transferId transfer id
+/// @param status OK | HASH_MISMATCH | IO_ERROR
+/// @param computedSha256Hex 64 lowercase hex chars of master's computed hash
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwTransferEndAck(std::string msgId, std::string transferId,
+                                                            std::string status, std::string computedSha256Hex)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_TRANSFER_END_ACK, msgId);
+    ss << transferId << UNIT_SEPARATOR << status << UNIT_SEPARATOR << computedSha256Hex;
+    return ss.str();
+}
+
+/// @brief generates FW_DEPLOY_DONE. Payload shape per .docs/protocol.md:
+///        transfer-id<US>per-controller-result-list, RS-separated results
+///        of controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty.
+///        Transfer-id is prepended once; it precedes the first result inline,
+///        which therefore has 5 US-separated fields on the wire while subsequent
+///        results have 4.
+/// @param msgId echo of the originating msgId (the DEPLOY_BEGIN that triggered this)
+/// @param transferId transfer id
+/// @param results per-target result records
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::string transferId,
+                                                        std::vector<astros_fw_deploy_result_t> results)
+{
+    if (results.empty())
+    {
+        return ""; // caller contract violated; empty results = malformed FW_DEPLOY_DONE
+    }
+    for (const auto &r : results)
+    {
+        // Enforced: status must be exactly "OK" or "FAILED".
+        if (r.status != "OK" && r.status != "FAILED")
+        {
+            return "";
+        }
+        // NOT enforced here (Phase 3 follow-up): the cross-field invariant that
+        // finalVersion is non-empty iff OK and errorOrEmpty is non-empty iff FAILED.
+        // Phase 3 may close this gap by upgrading status to an enum or by adding
+        // explicit checks here once the caller contract is stable.
+    }
+
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_DEPLOY_DONE, msgId);
+    ss << transferId;
+    for (size_t i = 0; i < results.size(); i++)
+    {
+        const auto &r = results[i];
+        if (i == 0)
+        {
+            // First result is inline with transferId, connected by US (5 US-sep fields total on this RS-record)
+            ss << UNIT_SEPARATOR << r.controllerId << UNIT_SEPARATOR << r.status << UNIT_SEPARATOR << r.finalVersion
+               << UNIT_SEPARATOR << r.errorOrEmpty;
+        }
+        else
+        {
+            // Subsequent results are RS-separated, 4 US-sep fields per record
+            ss << RECORD_SEPARATOR << r.controllerId << UNIT_SEPARATOR << r.status << UNIT_SEPARATOR << r.finalVersion
+               << UNIT_SEPARATOR << r.errorOrEmpty;
+        }
+    }
     return ss.str();
 }
 
@@ -290,4 +420,252 @@ std::string AstrOsSerialMessageService::getServoTest(std::string msgId, std::str
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::SERVO_TEST, msgId);
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << data;
     return ss.str();
+}
+
+//================== FREE PARSERS FOR INBOUND FW_* PAYLOADS ==================
+
+namespace
+{
+    // Returns true iff `s` is exactly `expectedLen` LOWERCASE hex characters
+    // (0-9, a-f). Per .docs/protocol.md line 25, all SHA-256 hashes on the wire
+    // are lowercase. Accepting uppercase here would let a malformed wire hash
+    // slip through the parser and later be miscategorized as HASH_MISMATCH
+    // when the master's locally computed lowercase hash didn't match — wrong
+    // diagnostic for the actual problem (malformed wire input).
+    bool isHexStringOfLength(const std::string &s, size_t expectedLen)
+    {
+        if (s.size() != expectedLen)
+        {
+            return false;
+        }
+        for (char c : s)
+        {
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Parses exactly 4 hex chars (lowercase or uppercase) into a uint16_t.
+    // Returns false on length mismatch or non-hex character.
+    bool parseHex16(const std::string &hex, uint16_t &out)
+    {
+        if (hex.size() != 4)
+        {
+            return false;
+        }
+        uint16_t v = 0;
+        for (char c : hex)
+        {
+            uint8_t nibble = 0;
+            if (c >= '0' && c <= '9')
+                nibble = c - '0';
+            else if (c >= 'a' && c <= 'f')
+                nibble = 10 + (c - 'a');
+            else if (c >= 'A' && c <= 'F')
+                nibble = 10 + (c - 'A');
+            else
+                return false;
+            v = static_cast<uint16_t>((v << 4) | nibble);
+        }
+        out = v;
+        return true;
+    }
+
+    // Parses a non-negative decimal integer with strict semantics. strtoul
+    // by itself accepts leading whitespace and leading '+'/'-' (the latter
+    // wraps "-1" to ULONG_MAX on overflow-wraparound, which on the 32-bit
+    // ESP target equals UINT32_MAX and would slip past a `> 0xFFFFFFFFul`
+    // bound check). Requiring the first character to be a digit rejects
+    // signed prefixes, leading whitespace, and any other non-digit lead.
+    // Trailing non-digits and overflow are still caught by the endptr +
+    // errno checks below. Caller is responsible for the upper-bound check
+    // on `out`.
+    bool parseStrictUint(const std::string &s, unsigned long &out)
+    {
+        if (s.empty() || s[0] < '0' || s[0] > '9')
+        {
+            return false;
+        }
+        errno = 0;
+        char *endptr = nullptr;
+        out = std::strtoul(s.c_str(), &endptr, 10);
+        if (errno != 0 || endptr == s.c_str() || *endptr != '\0')
+        {
+            return false;
+        }
+        return true;
+    }
+} // namespace
+
+FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
+{
+    FwTransferBeginRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 5)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
+    unsigned long totalSize = 0;
+    if (!parseStrictUint(parts[1], totalSize) || totalSize > 0xFFFFFFFFul)
+    {
+        return rec;
+    }
+    unsigned long chunkSize = 0;
+    if (!parseStrictUint(parts[3], chunkSize) || chunkSize > 0xFFFFu)
+    {
+        return rec;
+    }
+
+    // sha256-hex must be exactly 64 hex characters
+    if (!isHexStringOfLength(parts[2], 64))
+    {
+        return rec;
+    }
+
+    // target-list: RS-split. Reject if empty (no targets) or if any controller
+    // id is empty (e.g. "core<RS><RS>dome" would leave a blank in the middle).
+    auto targets = AstrOsStringUtils::splitString(parts[4], RECORD_SEPARATOR);
+    if (targets.empty())
+    {
+        return rec;
+    }
+    for (const auto &id : targets)
+    {
+        if (id.empty())
+        {
+            return rec;
+        }
+    }
+
+    rec.transferId = parts[0];
+    rec.totalSize = static_cast<uint32_t>(totalSize);
+    rec.sha256Hex = parts[2];
+    rec.chunkSize = static_cast<uint16_t>(chunkSize);
+    rec.targetIds = std::move(targets);
+    rec.valid = true;
+    return rec;
+}
+
+FwChunkRecord parseFwChunk(const std::string &payload)
+{
+    FwChunkRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 5)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
+    unsigned long seq = 0;
+    if (!parseStrictUint(parts[1], seq) || seq > 0xFFFFFFFFul)
+    {
+        return rec;
+    }
+    unsigned long plen = 0;
+    if (!parseStrictUint(parts[2], plen) || plen > 0xFFFFu)
+    {
+        return rec;
+    }
+
+    uint16_t crc = 0;
+    if (!parseHex16(parts[4], crc))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.seq = static_cast<uint32_t>(seq);
+    rec.payloadLen = static_cast<uint16_t>(plen);
+    rec.base64Payload = parts[3];
+    rec.crc16 = crc;
+    rec.valid = true;
+    return rec;
+}
+
+FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
+{
+    FwTransferEndRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 3)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
+    unsigned long totalChunks = 0;
+    if (!parseStrictUint(parts[1], totalChunks) || totalChunks > 0xFFFFFFFFul)
+    {
+        return rec;
+    }
+
+    if (!isHexStringOfLength(parts[2], 64))
+    {
+        return rec;
+    }
+
+    rec.transferId = parts[0];
+    rec.totalChunks = static_cast<uint32_t>(totalChunks);
+    rec.finalSha256Hex = parts[2];
+    rec.valid = true;
+    return rec;
+}
+
+FwDeployBeginRecord parseFwDeployBegin(const std::string &payload)
+{
+    FwDeployBeginRecord rec{};
+    rec.valid = false;
+
+    auto parts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
+    if (parts.size() != 2)
+    {
+        return rec;
+    }
+
+    if (parts[0].empty())
+    {
+        return rec;
+    }
+
+    // order-list: RS-split. Reject if empty or if any controller id is empty
+    // (e.g. "core<RS><RS>master" would leave a blank in the middle).
+    auto orderIds = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
+    if (orderIds.empty())
+    {
+        return rec;
+    }
+    for (const auto &id : orderIds)
+    {
+        if (id.empty())
+        {
+            return rec;
+        }
+    }
+
+    rec.transferId = parts[0];
+    rec.orderIds = std::move(orderIds);
+    rec.valid = true;
+    return rec;
 }
