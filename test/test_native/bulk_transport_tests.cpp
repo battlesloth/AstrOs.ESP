@@ -206,3 +206,65 @@ TEST(BulkTransport, OnChunkWrongPayloadLenOnLastChunkNaksSize)
     EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
     EXPECT_EQ(AstrOsBulkTransport::NakReason::SIZE, result.reason);
 }
+
+//=================================================================================================
+// BulkReceiver::onChunk — duplicate + wrong-xferId rejection
+//=================================================================================================
+
+TEST(BulkTransport, OnChunkDuplicateSeqNaksOutOfOrder)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+
+    // ACK seq=0 cleanly.
+    auto first = r.onChunk(7, 0, 4, crc, payload);
+    ASSERT_EQ(AstrOsBulkTransport::Decision::ACK, first.decision);
+    EXPECT_EQ(1u, first.nextExpectedSeq);
+
+    // Sender retransmits seq=0 — receiver has already moved on.
+    auto duplicate = r.onChunk(7, 0, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, duplicate.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, duplicate.reason);
+    // Reports we last committed seq=0, expect seq=1 next.
+    EXPECT_EQ(0u, duplicate.highestContiguousSeq);
+    EXPECT_EQ(1u, duplicate.nextExpectedSeq);
+}
+
+TEST(BulkTransport, OnChunkSkipForwardNaksOutOfOrder)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/8, /*totalChunks=*/2, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+
+    // Sender jumps to seq=1 without sending seq=0.
+    auto skipped = r.onChunk(7, 1, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, skipped.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, skipped.reason);
+    EXPECT_EQ(0u, skipped.nextExpectedSeq);
+}
+
+TEST(BulkTransport, OnChunkWrongXferIdNaksOutOfOrder)
+{
+    AstrOsBulkTransport::BulkReceiver r;
+    r.begin(/*xferId=*/7, /*totalSize=*/4, /*totalChunks=*/1, /*chunkSize=*/4, /*windowSize=*/16);
+
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payload, 4);
+
+    // Send a chunk claiming xferId=9 on a receiver bound to xferId=7.
+    auto result = r.onChunk(/*xferId=*/9, 0, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::NAK, result.decision);
+    EXPECT_EQ(AstrOsBulkTransport::NakReason::OUT_OF_ORDER, result.reason);
+    EXPECT_EQ(0u, result.nextExpectedSeq);
+
+    // The receiver state must not have been corrupted: a correct chunk for
+    // xferId=7 still gets ACK'd cleanly afterward.
+    auto recovery = r.onChunk(7, 0, 4, crc, payload);
+    EXPECT_EQ(AstrOsBulkTransport::Decision::ACK, recovery.decision);
+    EXPECT_EQ(1u, recovery.nextExpectedSeq);
+}
