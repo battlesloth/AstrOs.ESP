@@ -889,3 +889,78 @@ TEST(SerialMessages, FwDeployDoneRejectsInvalidStatusAmongValid)
     auto value = msgSvc.getFwDeployDone("mid-x", "7", results);
     EXPECT_TRUE(value.empty()); // any invalid status fails the whole message
 }
+
+//=================================================================================================
+// FW_* parser strict-unsigned + interior-empty list rejection (external PR feedback)
+//=================================================================================================
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsNegativeTotalSize)
+{
+    // strtoul accepts "-1" and wraps it to ULONG_MAX. On 32-bit ESP targets
+    // that equals UINT32_MAX and would pass `> 0xFFFFFFFFul`. The strict
+    // sign-reject must catch this before strtoul runs.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsPlusPrefixedTotalSize)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "+100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferBeginRejectsInteriorEmptyTarget)
+{
+    // "core<RS><RS>dome" produces targets {"core", "", "dome"}. Earlier code
+    // accepted this because splitString preserves interior empty entries.
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "100" << UNIT_SEPARATOR << hash64 << UNIT_SEPARATOR << "4096" << UNIT_SEPARATOR
+            << "core" << RECORD_SEPARATOR << RECORD_SEPARATOR << "dome";
+    auto rec = parseFwTransferBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsNegativeSeq)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << "12" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwChunkRejectsNegativePayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << "SGVsbG8gV29ybGQh"
+            << UNIT_SEPARATOR << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwTransferEndRejectsNegativeTotalChunks)
+{
+    std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "-1" << UNIT_SEPARATOR << hash64;
+    auto rec = parseFwTransferEnd(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+TEST(SerialMessages, ParseFwDeployBeginRejectsInteriorEmptyOrder)
+{
+    // "core<RS><RS>master" produces orderIds {"core", "", "master"}.
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << RECORD_SEPARATOR << "master";
+    auto rec = parseFwDeployBegin(payload.str());
+    EXPECT_FALSE(rec.valid);
+}

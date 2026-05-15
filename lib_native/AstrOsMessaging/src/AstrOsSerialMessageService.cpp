@@ -468,6 +468,28 @@ namespace
         out = v;
         return true;
     }
+
+    // Parses a non-negative decimal integer with strict semantics. strtoul
+    // by itself accepts leading '+' or '-' (turning "-1" into ULONG_MAX on
+    // overflow-wraparound), which on the 32-bit ESP target would slip past
+    // a `> 0xFFFFFFFFul` bound check as exactly UINT32_MAX. This helper
+    // rejects signed prefixes, empty input, and trailing non-digit chars.
+    // Caller is responsible for the upper-bound check on `out`.
+    bool parseStrictUint(const std::string &s, unsigned long &out)
+    {
+        if (s.empty() || s[0] == '-' || s[0] == '+')
+        {
+            return false;
+        }
+        errno = 0;
+        char *endptr = nullptr;
+        out = std::strtoul(s.c_str(), &endptr, 10);
+        if (errno != 0 || endptr == s.c_str() || *endptr != '\0')
+        {
+            return false;
+        }
+        return true;
+    }
 } // namespace
 
 FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
@@ -486,20 +508,13 @@ FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
         return rec;
     }
 
-    // size + chunk-size: parse with strtoul, catch failure via errno + endptr.
-    // ESP32 targets have exceptions disabled; strtoul with errno + endptr is
-    // the portable alternative to std::stoi.
-    errno = 0;
-    char *endptr = nullptr;
-    auto totalSize = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || totalSize > 0xFFFFFFFFul)
+    unsigned long totalSize = 0;
+    if (!parseStrictUint(parts[1], totalSize) || totalSize > 0xFFFFFFFFul)
     {
         return rec;
     }
-    errno = 0;
-    endptr = nullptr;
-    auto chunkSize = std::strtoul(parts[3].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[3].c_str() || *endptr != '\0' || chunkSize > 0xFFFFu)
+    unsigned long chunkSize = 0;
+    if (!parseStrictUint(parts[3], chunkSize) || chunkSize > 0xFFFFu)
     {
         return rec;
     }
@@ -510,11 +525,19 @@ FwTransferBeginRecord parseFwTransferBegin(const std::string &payload)
         return rec;
     }
 
-    // target-list: RS-split. Reject if empty (no targets).
+    // target-list: RS-split. Reject if empty (no targets) or if any controller
+    // id is empty (e.g. "core<RS><RS>dome" would leave a blank in the middle).
     auto targets = AstrOsStringUtils::splitString(parts[4], RECORD_SEPARATOR);
-    if (targets.empty() || (targets.size() == 1 && targets[0].empty()))
+    if (targets.empty())
     {
         return rec;
+    }
+    for (const auto &id : targets)
+    {
+        if (id.empty())
+        {
+            return rec;
+        }
     }
 
     rec.transferId = parts[0];
@@ -542,17 +565,13 @@ FwChunkRecord parseFwChunk(const std::string &payload)
         return rec;
     }
 
-    errno = 0;
-    char *endptr = nullptr;
-    auto seq = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || seq > 0xFFFFFFFFul)
+    unsigned long seq = 0;
+    if (!parseStrictUint(parts[1], seq) || seq > 0xFFFFFFFFul)
     {
         return rec;
     }
-    errno = 0;
-    endptr = nullptr;
-    auto plen = std::strtoul(parts[2].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[2].c_str() || *endptr != '\0' || plen > 0xFFFFu)
+    unsigned long plen = 0;
+    if (!parseStrictUint(parts[2], plen) || plen > 0xFFFFu)
     {
         return rec;
     }
@@ -588,10 +607,8 @@ FwTransferEndRecord parseFwTransferEnd(const std::string &payload)
         return rec;
     }
 
-    errno = 0;
-    char *endptr = nullptr;
-    auto totalChunks = std::strtoul(parts[1].c_str(), &endptr, 10);
-    if (errno != 0 || endptr == parts[1].c_str() || *endptr != '\0' || totalChunks > 0xFFFFFFFFul)
+    unsigned long totalChunks = 0;
+    if (!parseStrictUint(parts[1], totalChunks) || totalChunks > 0xFFFFFFFFul)
     {
         return rec;
     }
@@ -624,10 +641,19 @@ FwDeployBeginRecord parseFwDeployBegin(const std::string &payload)
         return rec;
     }
 
+    // order-list: RS-split. Reject if empty or if any controller id is empty
+    // (e.g. "core<RS><RS>master" would leave a blank in the middle).
     auto orderIds = AstrOsStringUtils::splitString(parts[1], RECORD_SEPARATOR);
-    if (orderIds.empty() || (orderIds.size() == 1 && orderIds[0].empty()))
+    if (orderIds.empty())
     {
         return rec;
+    }
+    for (const auto &id : orderIds)
+    {
+        if (id.empty())
+        {
+            return rec;
+        }
     }
 
     rec.transferId = parts[0];
