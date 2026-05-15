@@ -424,3 +424,37 @@ TEST(SerialMessages, FwChunkNakOutOfOrderMessage)
     ASSERT_EQ(3u, payloadParts.size());
     EXPECT_EQ("OUT_OF_ORDER", payloadParts[2]);
 }
+
+TEST(SerialMessages, FwTransferEndAckOkMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto computedHex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    auto value = msgSvc.getFwTransferEndAck("mid-9", "7", "OK", computedHex);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_TRANSFER_END_ACK, validation.type);
+    EXPECT_STREQ("mid-9", validation.msgId.c_str());
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("7", payloadParts[0]);
+    EXPECT_EQ("OK", payloadParts[1]);
+    EXPECT_EQ(computedHex, payloadParts[2]);
+}
+
+TEST(SerialMessages, FwTransferEndAckHashMismatchMessage)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto computedHex = "0000000000000000000000000000000000000000000000000000000000000001";
+    auto value = msgSvc.getFwTransferEndAck("mid-9", "7", "HASH_MISMATCH", computedHex);
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_TRUE(validation.valid);
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(3u, payloadParts.size());
+    EXPECT_EQ("HASH_MISMATCH", payloadParts[1]);
+    EXPECT_EQ(computedHex, payloadParts[2]);
+}

@@ -220,6 +220,23 @@ std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, ui
     return ss.str();
 }
 
+/// @brief generates FW_TRANSFER_END_ACK reply. Payload shape:
+///        transfer-id<US>status<US>computed-sha256-hex where status is
+///        OK | HASH_MISMATCH | IO_ERROR (SCREAMING per .docs/protocol.md).
+/// @param msgId echo of the END's msgId
+/// @param transferId transfer id
+/// @param status OK | HASH_MISMATCH | IO_ERROR
+/// @param computedSha256Hex 64 lowercase hex chars of master's computed hash
+/// @return serial message
+std::string AstrOsSerialMessageService::getFwTransferEndAck(std::string msgId, std::string transferId,
+                                                            std::string status, std::string computedSha256Hex)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_TRANSFER_END_ACK, msgId);
+    ss << transferId << UNIT_SEPARATOR << status << UNIT_SEPARATOR << computedSha256Hex;
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message
