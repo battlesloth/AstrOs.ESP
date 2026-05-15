@@ -504,3 +504,4 @@ lib_native/AstrOsUtility/src/version_generated.hpp
 
 
 .tmp
+dependencies.lock
