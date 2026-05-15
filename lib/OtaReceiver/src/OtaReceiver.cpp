@@ -1,6 +1,9 @@
 #include <OtaReceiver.hpp>
 
+#include <AstrOsSerialMsgHandler.hpp>
+#include <errno.h>
 #include <esp_log.h>
+#include <stdlib.h>
 
 static const char *TAG = "OtaReceiver";
 
@@ -42,7 +45,60 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
 
 void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
 {
-    // Task 3 implements this.
+    std::string msgId = msg.begin.msgId ? msg.begin.msgId : "";
+    std::string transferIdIn = msg.transferId ? msg.transferId : "";
+
+    if (active_)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN while transfer %s active; replying busy", transferIdStr_.c_str());
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "busy");
+        free(msg.begin.msgId);
+        free(msg.begin.targetList);
+        free(msg.transferId);
+        return;
+    }
+
+    // Convert the wire-level opaque string transferId to BulkReceiver's uint8_t form.
+    errno = 0;
+    char *endp = nullptr;
+    unsigned long xidUL = strtoul(transferIdIn.c_str(), &endp, 10);
+    if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || xidUL > 255)
+    {
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN transferId='%s' is not 0..255 numeric", transferIdIn.c_str());
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        free(msg.begin.msgId);
+        free(msg.begin.targetList);
+        free(msg.transferId);
+        return;
+    }
+    uint8_t xferId = static_cast<uint8_t>(xidUL);
+
+    // Phase 3 sliding window: hard-coded to 16 (matches the server's nominal sender window).
+    // Phase 5 may make this configurable.
+    constexpr uint8_t kPhase3WindowSize = 16;
+
+    auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kPhase3WindowSize);
+    if (!br.valid)
+    {
+        ESP_LOGW(TAG, "BulkReceiver::begin rejected: reason=%d (totalSize=%u chunks=%u chunkSize=%u)",
+                 static_cast<int>(br.reason), (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks,
+                 (unsigned)msg.begin.chunkSize);
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        free(msg.begin.msgId);
+        free(msg.begin.targetList);
+        free(msg.transferId);
+        return;
+    }
+
+    active_ = true;
+    transferIdStr_ = transferIdIn;
+    beginMsgId_ = msgId;
+
+    ESP_LOGI(TAG, "FW_TRANSFER_BEGIN accepted: transferId=%s totalSize=%u chunks=%u sha=%s", transferIdIn.c_str(),
+             (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, msg.begin.sha256Hex);
+
+    AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "OK");
+
     free(msg.begin.msgId);
     free(msg.begin.targetList);
     free(msg.transferId);

@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "MIXED lib wrapping AstrOsBulkTransport with a FreeRTOS task and queue. Phase 3 of the firmware-OTA path.",
   "dependencies": {
-    "AstrOsBulkTransport": "*"
+    "AstrOsBulkTransport": "*",
+    "AstrOsSerialMsgHandler": "*",
+    "AstrOsMessaging": "*",
+    "AstrOsQueueMessages": "*"
   },
   "build": {
     "flags": [
