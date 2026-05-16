@@ -59,4 +59,10 @@ namespace AstrOsSerialProtocol
     // format argument (e.g. ESP_LOGW(TAG, "Invalid %s: %s", ...)). Strings
     // are process-lifetime; callers must not free them.
     const char *describeRejectReason(DecodeRejectReason reason);
+
+    // Ceil-divide totalSize by chunkSize for OTA transfers. Used to compute
+    // the receiver-side totalChunks from the server's declared totalSize.
+    // Returns 0 when totalSize is 0. chunkSize must be non-zero; callers
+    // are expected to reject chunkSize=0 before invoking.
+    uint32_t chunksForSize(uint32_t totalSize, uint16_t chunkSize);
 } // namespace AstrOsSerialProtocol

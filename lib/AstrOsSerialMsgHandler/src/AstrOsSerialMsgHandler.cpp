@@ -399,7 +399,7 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
     m.transferId = dupString(rec.transferId);
     m.begin.msgId = dupString(msgId);
     m.begin.totalSize = rec.totalSize;
-    m.begin.totalChunks = (rec.totalSize + rec.chunkSize - 1) / rec.chunkSize;
+    m.begin.totalChunks = AstrOsSerialProtocol::chunksForSize(rec.totalSize, rec.chunkSize);
     m.begin.chunkSize = rec.chunkSize;
     strncpy(m.begin.sha256Hex, rec.sha256Hex.c_str(), 64);
     m.begin.sha256Hex[64] = '\0';

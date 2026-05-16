@@ -21,7 +21,7 @@ class of fix. Each commit is independently shippable and reviewable.
     - S5: defensively `free(msg.transferId)` in the WATCHDOG_FIRE arm of `process()`
     - S6: check `xQueueCreate` and `xTaskCreatePinnedToCore` return values in `init()` for OTA
 
-- [ ] **Commit 3 — Extract `chunksForSize()` to PURE + tests (TDD)**
+- [x] **Commit 3 — Extract `chunksForSize()` to PURE + tests (TDD)**
     - I7: move the ceil-divide out of `AstrOsSerialMsgHandler.cpp:402` into `AstrOsSerialProtocol` (PURE)
     - 4 unit tests: exact multiple, +1 byte, totalSize < chunkSize, totalSize == 0
 

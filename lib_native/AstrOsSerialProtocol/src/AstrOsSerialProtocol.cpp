@@ -251,4 +251,13 @@ namespace AstrOsSerialProtocol
         }
         return "unknown";
     }
+
+    uint32_t chunksForSize(uint32_t totalSize, uint16_t chunkSize)
+    {
+        if (totalSize == 0)
+        {
+            return 0;
+        }
+        return (totalSize + chunkSize - 1u) / chunkSize;
+    }
 } // namespace AstrOsSerialProtocol
