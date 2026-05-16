@@ -138,12 +138,18 @@ std::string AstrOsSerialMessageService::getRegistrationSyncAck(std::string msgId
 /// @param firmwareVersion peer firmware version (may be empty for legacy peers; server treats empty as incompatible)
 /// @return serial message
 std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::string controller,
-                                                   std::string fingerprint, std::string firmwareVersion)
+                                                   std::string fingerprint, std::string firmwareVersion,
+                                                   std::string variant)
 {
+    // Wire format: header | mac<US>name<US>fingerprint<US>version<US>variant
+    // The server's parser (message_handler.ts) accepts 3, 4, or 5 fields after
+    // the header — `variant` is appended at the tail per the c.6c.1 protocol
+    // amendment. Empty variant is forwarded as an explicit empty field so the
+    // server's "skip empty variant" cache guard fires cleanly.
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint << UNIT_SEPARATOR
-       << firmwareVersion;
+       << firmwareVersion << UNIT_SEPARATOR << variant;
     return ss.str();
 }
 

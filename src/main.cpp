@@ -436,8 +436,11 @@ static void pollingTimerCallback(void *arg)
             {
                 ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
             }
+            // Master self-POLL_ACK: report its own build variant (baked into the
+            // binary at compile time via scripts/version_gen.py from $PIOENV) so
+            // the server can pick the right firmware asset for master at flash time.
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
-                                                   AstrOsConstants::Version, true);
+                                                   AstrOsConstants::Version, AstrOsConstants::Variant, true);
         }
         else
         {
@@ -836,18 +839,20 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SEND_POLL_ACK:
             {
                 // The interface queue's `message` field for SEND_POLL_ACK is packed by
-                // AstrOsEspNow::handlePollAck as `fingerprint` (legacy peer, no version)
-                // or `fingerprint<US>version` (Phase 1+ peer). splitString() strips any
-                // trailing empty part, so a missing version yields a single piece.
+                // AstrOsEspNow::handlePollAck as `fingerprint<US>version<US>variant`
+                // (c.6c.1 peer) or fewer pieces for legacy peers (splitString strips
+                // trailing empties). Missing pieces fall back to "" — the server then
+                // skips populating its variant cache for legacy peers.
                 auto pieces = AstrOsStringUtils::splitString(std::string(msg.message), UNIT_SEPARATOR);
                 std::string fp = pieces.size() > 0 ? pieces[0] : "";
                 std::string ver = pieces.size() > 1 ? pieces[1] : "";
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, true);
+                std::string variant = pieces.size() > 2 ? pieces[2] : "";
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, variant, true);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_POLL_NAK:
             {
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", false);
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", "", false);
                 break;
             }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:

@@ -34,7 +34,7 @@ public:
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
     void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
-                        bool isAck);
+                        std::string variant, bool isAck);
     void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name,
                                  std::string payload);
 
