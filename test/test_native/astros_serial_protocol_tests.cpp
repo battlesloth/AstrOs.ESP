@@ -484,3 +484,10 @@ TEST(SerialProtocol, ChunksForSizeZeroTotalReturnsZero)
 {
     EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(0, 4096));
 }
+
+// Defensive guard. Callers are documented as rejecting chunkSize=0 before invoking,
+// but a future caller that forgot would otherwise divide by zero. Pin the contract.
+TEST(SerialProtocol, ChunksForSizeZeroChunkSizeReturnsZero)
+{
+    EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(40960, 0));
+}

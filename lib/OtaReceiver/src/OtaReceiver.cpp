@@ -26,6 +26,16 @@ OtaReceiver::~OtaReceiver()
 
 void OtaReceiver::Init(QueueHandle_t otaQueue)
 {
+    // Idempotent: a second Init() would leak the first esp_timer handle. Not
+    // a reachable path today (main.cpp calls Init once at boot), but cheap to
+    // guard against future refactors that move Init into a setup-on-demand
+    // pattern.
+    if (watchdog_ != nullptr)
+    {
+        ESP_LOGW(TAG, "Init() called twice — ignoring second call");
+        return;
+    }
+
     otaQueue_ = otaQueue;
 
     const esp_timer_create_args_t args = {
@@ -346,15 +356,11 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
     }
 
-    // Only tear down in-flight state when bulk_.onEnd indicates the END applied
-    // to our running transfer. WRONG_XFER_ID / NOT_ACTIVE mean the END was stray
-    // (server bug, late retry, or no transfer in flight) and must NOT clobber a
-    // healthy in-progress transfer.
-    const bool endForOurTransfer = er.status == AstrOsBulkTransport::EndResult::Status::OK ||
-                                   er.reason == AstrOsBulkTransport::EndResult::Reason::SENDER_TOTAL_MISMATCH ||
-                                   er.reason == AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT;
-
-    if (endForOurTransfer)
+    // PURE seam: shouldTeardownOnEndResult encodes the "tear down only if the
+    // END applied to our running transfer" rule. See its docstring for the
+    // teardown vs preserve set; tests in bulk_transport_tests.cpp pin every
+    // enum value so a future regression that flips a branch fails loudly.
+    if (AstrOsBulkTransport::shouldTeardownOnEndResult(er))
     {
         active_ = false;
         transferIdStr_.clear();

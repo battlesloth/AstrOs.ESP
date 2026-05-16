@@ -219,6 +219,26 @@ namespace AstrOsBulkTransport
         }
     };
 
+    // Decides whether the caller's in-flight state should be torn down after
+    // BulkReceiver::onEnd returns. Used by OtaReceiver to gate cleanup so a
+    // stray END (server bug, late retry, or no transfer in flight) doesn't
+    // clobber a healthy in-progress transfer.
+    //
+    // Teardown set: Status::OK, plus the two reasons that mean "the END
+    // applied to OUR running xferId and confirmed it ended" —
+    // SENDER_TOTAL_MISMATCH (sender's count != ours, our transfer is done)
+    // and RECEIVER_SHORT_COUNT (we got fewer chunks than END says).
+    //
+    // Preserve set: NOT_ACTIVE (no in-flight transfer to tear down) and
+    // WRONG_XFER_ID (the END is for some other transferId). NONE is also
+    // preserve — by the current onEnd contract, NONE only ever pairs with
+    // Status::OK, so this branch is unreachable today but kept defensive.
+    //
+    // Leads with Status so a future Status enumerator (e.g. HASH_MISMATCH
+    // when the streaming SHA lands) is forced through the explicit case
+    // analysis rather than silently falling into one branch.
+    bool shouldTeardownOnEndResult(const EndResult &er);
+
     // Sequential chunk-receive state machine for the firmware OTA path.
     // The receiver commits chunks strictly in seq order — sliding window
     // is a sender optimization, not a reorder buffer.

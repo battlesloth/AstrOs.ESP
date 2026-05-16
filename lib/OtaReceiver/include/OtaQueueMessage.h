@@ -46,7 +46,12 @@ extern "C"
     // need freeing. SHA256_HEX_LEN names the hex-string length so the
     // strncpy(buf, src, SHA256_HEX_LEN) + buf[SHA256_HEX_LEN]='\0' idiom
     // reads as one constant instead of a 64/65 magic-number pair.
-#define SHA256_HEX_LEN 64
+    // Defined as an enum (not #define) to keep it scoped — the macro form
+    // would leak into every translation unit that includes this header.
+    enum
+    {
+        SHA256_HEX_LEN = 64
+    };
 
     typedef struct
     {
@@ -123,6 +128,14 @@ extern "C"
             break;
         case OTA_MSG_WATCHDOG_FIRE:
             // No union arm; transferId is nullptr by contract.
+            break;
+        default:
+            // Unknown kind — caller (e.g. OtaReceiver::process) has already
+            // logged the missed enumerator. We can't know which union arm is
+            // live, so only the transferId is freed below. The union arm
+            // leaks; this is the price of an out-of-range kind, and it's
+            // unreachable in normal operation (the kind is set by the
+            // producer immediately before send).
             break;
         }
         free(m->transferId);

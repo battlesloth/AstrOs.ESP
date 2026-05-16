@@ -87,6 +87,96 @@ TEST(OtaQueueMessage, WatchdogFireArmHasNoOwnedPointers)
     EXPECT_EQ(nullptr, m.transferId);
 }
 
+// freeOtaMsg is the single source of truth for the per-kind ownership contract.
+// The 5 tests below pin each arm — a future regression that drops a free() would
+// also drop the matching null-assignment, so the post-call nullptr check is a
+// faithful proxy for the free behavior. malloc() of real memory means free()
+// doesn't UB.
+
+static char *dupCStr(const char *src)
+{
+    size_t len = std::strlen(src) + 1;
+    char *buf = static_cast<char *>(std::malloc(len));
+    std::memcpy(buf, src, len);
+    return buf;
+}
+
+TEST(OtaQueueMessage, FreeOtaMsgBeginArmNullsAllOwnedPointers)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_BEGIN;
+    m.transferId = dupCStr("7");
+    m.begin.msgId = dupCStr("mid-b");
+    m.begin.targetList = dupCStr("controllerA\x1econtrollerB");
+
+    freeOtaMsg(&m);
+
+    EXPECT_EQ(nullptr, m.transferId);
+    EXPECT_EQ(nullptr, m.begin.msgId);
+    EXPECT_EQ(nullptr, m.begin.targetList);
+}
+
+TEST(OtaQueueMessage, FreeOtaMsgChunkArmNullsAllOwnedPointers)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_CHUNK;
+    m.transferId = dupCStr("7");
+    m.chunk.payload = static_cast<uint8_t *>(std::malloc(4096));
+
+    freeOtaMsg(&m);
+
+    EXPECT_EQ(nullptr, m.transferId);
+    EXPECT_EQ(nullptr, m.chunk.payload);
+}
+
+TEST(OtaQueueMessage, FreeOtaMsgEndArmNullsAllOwnedPointers)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_END;
+    m.transferId = dupCStr("7");
+    m.end.msgId = dupCStr("mid-e");
+
+    freeOtaMsg(&m);
+
+    EXPECT_EQ(nullptr, m.transferId);
+    EXPECT_EQ(nullptr, m.end.msgId);
+}
+
+TEST(OtaQueueMessage, FreeOtaMsgDeployArmNullsAllOwnedPointers)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_DEPLOY_BEGIN;
+    m.transferId = dupCStr("7");
+    m.deploy.msgId = dupCStr("mid-d");
+    m.deploy.orderList = dupCStr("controllerA\x1econtrollerB");
+
+    freeOtaMsg(&m);
+
+    EXPECT_EQ(nullptr, m.transferId);
+    EXPECT_EQ(nullptr, m.deploy.msgId);
+    EXPECT_EQ(nullptr, m.deploy.orderList);
+}
+
+// WATCHDOG_FIRE has no owned pointers, but defensive free(transferId) lets a future
+// producer accidentally setting it not leak. Pin the no-crash behavior.
+TEST(OtaQueueMessage, FreeOtaMsgWatchdogFireArmIsNoCrashWithDefensiveFree)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_WATCHDOG_FIRE;
+    // Defensive case: producer set transferId despite the contract. freeOtaMsg
+    // should still free it cleanly.
+    m.transferId = dupCStr("99");
+
+    freeOtaMsg(&m);
+
+    EXPECT_EQ(nullptr, m.transferId);
+}
+
 // Every arm of the anonymous union must share the same starting address — pins the union
 // contract so a future refactor that accidentally promotes the arms to separate fields fails.
 TEST(OtaQueueMessage, UnionArmsShareStartingAddress)

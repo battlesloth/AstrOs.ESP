@@ -30,7 +30,7 @@ I OtaReceiver: OtaReceiver initialized                            (at boot)
 I OtaReceiver: FW_TRANSFER_BEGIN accepted: transferId=<id> totalSize=1228800 chunks=300 sha=<hex>
                                                                   (no per-chunk INFO log)
 I OtaReceiver: FW_TRANSFER_END OK: transferId=<id> totalChunks=300
-I OtaReceiver: FW_DEPLOY_BEGIN stub: transferId=<id> target-count=<N> — all-FAILED not_implemented
+I OtaReceiver: FW_DEPLOY_BEGIN: transferId=<id> target-count=<N> — all-FAILED not_implemented
 ```
 
 - Server-side console: `transfer complete`, then `deploy failed: not_implemented`.
@@ -82,14 +82,14 @@ I OtaReceiver: FW_DEPLOY_BEGIN stub: transferId=<id> target-count=<N> — all-FA
 
 **Pass/Fail:** Pass if the LOGE fires exactly once per corruption and the transfer recovers.
 
-### Negative path 4 — Invalid BEGIN parameters
+### Negative path 4 — Invalid transfer parameters
 
 **Preconditions:** Master idle.
 
 **Steps:**
 1. Send `FW_TRANSFER_BEGIN` with `chunkSize=0`.
 2. Send `FW_TRANSFER_BEGIN` with `totalChunks=0`.
-3. Send `FW_TRANSFER_BEGIN` with `payloadLen=0` (via a hand-crafted `FW_CHUNK`).
+3. Send a hand-crafted `FW_CHUNK` with `payloadLen=0`.
 
 **Expected:**
 - Cases 1+2: `FW_TRANSFER_BEGIN_ACK status=io_error` from BulkReceiver rejection.
@@ -107,7 +107,7 @@ I OtaReceiver: FW_DEPLOY_BEGIN stub: transferId=<id> target-count=<N> — all-FA
 
 **Expected:**
 - `FW_TRANSFER_END_ACK status=IO_ERROR transferId=99`.
-- Master log: `WRONG_XFER_ID (transferId=99 server-state bug)`.
+- Master log (LOGE): `FW_TRANSFER_END IO_ERROR reason=WRONG_XFER_ID (transferId=99 server-state bug)`.
 - The in-flight transfer (5) continues to its OK end. **State is not torn down by the stray END.**
 
 **Pass/Fail:** Pass if the original transfer's END reaches OK after the stray END.

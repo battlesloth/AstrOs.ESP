@@ -33,6 +33,17 @@ class of fix. Each commit is independently shippable and reviewable.
     - S8: introduce `kSha256HexLen` constant for the 64/65 magic in `OtaQueueMessage.h`
 
 - [x] **Commit 5 — Type design tightening + QA + remaining tests**
+
+- [x] **Commit 6 — Round-2 polish (PR-toolkit re-review findings)**
+    - QA-1: fix 3 log-string mismatches in `ota-master-serial-receive.md`
+    - S5: convert `SHA256_HEX_LEN` macro → scoped enum constant
+    - S1: defensive `chunkSize == 0` guard in `chunksForSize` + native test
+    - S3: 5 native tests for `freeOtaMsg` (one per `ota_msg_kind_t`)
+    - S6: explicit `default:` arm in `freeOtaMsg` switch with rationale comment
+    - S7: idempotency guard in `OtaReceiver::Init()` (LOGW + early return)
+    - S4 + S8: extract `shouldTeardownOnEndResult()` to `AstrOsBulkTransport` (PURE),
+      lead with `Status` for future-enumerator safety, 5 native tests pin every
+      EndResult case, wire into `OtaReceiver::handleEnd`
     - S7: add `freeOtaMsg(queue_ota_msg_t&)` helper and use from `process()` arms + producer failure branches
     - S9: delete copy/move ctors on `OtaReceiver`; release timer in `~OtaReceiver()`
     - S11: expand `.docs/qa/ota-master-serial-receive.md` negative-case rigor to match `ota-receiver-watchdog.md`
