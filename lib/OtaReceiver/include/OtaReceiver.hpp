@@ -11,9 +11,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-// Threading: all members are accessed only from otaReceiverTask (core 1)
-// via `process(...)`. No synchronization is required. If a future change
-// adds a second caller (e.g. a panic-stop path), revisit this contract.
+// Threading: all members of this class are accessed only from otaReceiverTask
+// (core 1) via `process(...)`. No synchronization is required for this class's
+// own state. If a future change adds a second caller (e.g. a panic-stop path),
+// revisit this contract.
+//
+// Note: handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)` to
+// emit FW_*_ACK / NAK / DONE replies. That cross-singleton call is independently
+// thread-safe — the receiving end is a FreeRTOS queue producer protected by
+// xQueueSend, which is the standard producer/consumer pattern this codebase
+// uses everywhere. The threading constraint above does NOT propagate through it.
 class OtaReceiver
 {
 private:

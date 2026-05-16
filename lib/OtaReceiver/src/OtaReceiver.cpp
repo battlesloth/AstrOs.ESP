@@ -171,6 +171,12 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
             ESP_LOGE(TAG, "BulkReceiver returned NAK with reason=NONE; forcing CRC");
             reasonStr = "CRC";
             break;
+        default:
+            // Forward-compat: if Phase 4+ adds a new NakReason enumerator and forgets to
+            // extend this switch, surface it loud instead of silently downgrading to CRC.
+            ESP_LOGE(TAG, "Unknown NakReason value %d — forcing CRC for safe retransmit", static_cast<int>(cr.reason));
+            reasonStr = "CRC";
+            break;
         }
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq, reasonStr);
     }
@@ -238,6 +244,13 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             break;
         case AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT:
             reasonStr = "RECEIVER_SHORT_COUNT";
+            break;
+        default:
+            // Forward-compat: a new Reason enumerator added without extending this switch
+            // would silently log at LOGW with reasonStr="(unknown)". Surface it loud so the
+            // miss is caught in monitoring instead of slipping past as a benign warning.
+            ESP_LOGE(TAG, "Unknown EndResult::Reason value %d — please extend the switch", static_cast<int>(er.reason));
+            serverBug = true;
             break;
         }
         if (serverBug)
