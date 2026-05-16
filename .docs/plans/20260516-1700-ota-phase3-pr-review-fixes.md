@@ -8,7 +8,7 @@ class of fix. Each commit is independently shippable and reviewable.
 
 ## Tasks
 
-- [ ] **Commit 1 — Critical: `handleEnd` parse-failure must not clobber a live transfer**
+- [x] **Commit 1 — Critical: `handleEnd` parse-failure must not clobber a live transfer**
     - C1: `OtaReceiver.cpp:285-298` — gate cleanup on `active_` + transferId match before tearing down state
     - I8 partial: native test for `OTA_MSG_WATCHDOG_FIRE` layout (nullptr transferId, no union arm)
 

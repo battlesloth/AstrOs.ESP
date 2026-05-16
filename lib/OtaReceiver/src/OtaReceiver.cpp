@@ -285,13 +285,12 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     auto parsedEnd = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsedEnd.has_value())
     {
-        ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric", transferIdIn.c_str());
+        // Unparseable transferId — we can't tell whether this END is for our
+        // in-flight transfer or a stray. NAK without touching state so a real
+        // transfer in progress isn't torn down by a malformed END.
+        ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric; emitting IO_ERROR (state preserved)",
+                 transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
-        active_ = false;
-        transferIdStr_.clear();
-        beginMsgId_.clear();
-        bulk_.reset();
-        watchdogStop();
         free(msg.end.msgId);
         free(msg.transferId);
         return;
@@ -351,15 +350,26 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
     }
 
-    active_ = false;
-    transferIdStr_.clear();
-    beginMsgId_.clear();
-    bulk_.reset();
+    // Only tear down in-flight state when bulk_.onEnd indicates the END applied
+    // to our running transfer. WRONG_XFER_ID / NOT_ACTIVE mean the END was stray
+    // (server bug, late retry, or no transfer in flight) and must NOT clobber a
+    // healthy in-progress transfer.
+    const bool endForOurTransfer = er.status == AstrOsBulkTransport::EndResult::Status::OK ||
+                                   er.reason == AstrOsBulkTransport::EndResult::Reason::SENDER_TOTAL_MISMATCH ||
+                                   er.reason == AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT;
 
-    // Transfer complete — stop the idle watchdog so a stale fire doesn't
-    // arrive after we've already cleared state. handleWatchdogFire is
-    // idempotent against !active_, but stopping is the explicit signal.
-    watchdogStop();
+    if (endForOurTransfer)
+    {
+        active_ = false;
+        transferIdStr_.clear();
+        beginMsgId_.clear();
+        bulk_.reset();
+
+        // Transfer complete — stop the idle watchdog so a stale fire doesn't
+        // arrive after we've already cleared state. handleWatchdogFire is
+        // idempotent against !active_, but stopping is the explicit signal.
+        watchdogStop();
+    }
 
     free(msg.end.msgId);
     free(msg.transferId);

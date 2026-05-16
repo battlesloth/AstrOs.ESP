@@ -74,6 +74,18 @@ TEST(OtaQueueMessage, DeployArmRoundTrip)
     EXPECT_EQ(OTA_MSG_DEPLOY_BEGIN, m.kind);
 }
 
+// OTA_MSG_WATCHDOG_FIRE is a signal carrier — no union arm, transferId is nullptr by contract.
+// Pins both invariants so a future producer that forgets the rule fails a test before it ships.
+TEST(OtaQueueMessage, WatchdogFireArmHasNoOwnedPointers)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0, sizeof(m));
+    m.kind = OTA_MSG_WATCHDOG_FIRE;
+
+    EXPECT_EQ(OTA_MSG_WATCHDOG_FIRE, m.kind);
+    EXPECT_EQ(nullptr, m.transferId);
+}
+
 // Every arm of the anonymous union must share the same starting address — pins the union
 // contract so a future refactor that accidentally promotes the arms to separate fields fails.
 TEST(OtaQueueMessage, UnionArmsShareStartingAddress)
