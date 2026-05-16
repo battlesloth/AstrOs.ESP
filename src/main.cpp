@@ -1306,14 +1306,6 @@ void serialCh1QueueTask(void *arg)
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
 
-                // DIAG: log the first 12 chars of every drained message so the
-                // bench can correlate "FW_CHUNK_ACK queued" (in sendFwChunkAck)
-                // with "drained from queue, about to write to UART." Remove
-                // when ack-loss is identified.
-                const int previewLen = msg.dataSize < 12 ? (int)msg.dataSize : 12;
-                ESP_LOGI(TAG, "DIAG serial-drain TX %u bytes head='%.*s'", (unsigned)msg.dataSize, previewLen,
-                         reinterpret_cast<char *>(msg.data));
-
                 SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
