@@ -114,3 +114,29 @@ TEST(OtaQueueMessage, Sha256HexBoundaryStaysNulTerminated)
     EXPECT_EQ('\0', m.begin.sha256Hex[64]);
     EXPECT_STREQ(full, m.begin.sha256Hex);
 }
+
+// Companion to the boundary test: a SHORTER-than-64-char source must also
+// produce a properly NUL-padded buffer. The producer relies on strncpy's
+// NUL-fill behavior for inputs shorter than the destination length; if a
+// future refactor swaps strncpy for memcpy(dst, src, 64), bytes [strlen+1..64]
+// would leak whatever pre-fill garbage was in the buffer (here 0xFF) into
+// the wire ACK payload. This test fails loudly in that scenario.
+TEST(OtaQueueMessage, Sha256HexShortInputNulFills)
+{
+    queue_ota_msg_t m;
+    std::memset(&m, 0xFFu, sizeof(m)); // pre-fill with non-zero garbage
+    m.kind = OTA_MSG_BEGIN;
+
+    const char *shortHash = "deadbeef00"; // 10 chars
+    ASSERT_EQ(10u, std::strlen(shortHash));
+    std::strncpy(m.begin.sha256Hex, shortHash, 64);
+    m.begin.sha256Hex[64] = '\0';
+
+    EXPECT_EQ(10u, std::strlen(m.begin.sha256Hex));
+    EXPECT_STREQ(shortHash, m.begin.sha256Hex);
+    // Bytes [10..64] must be NUL — leaking 0xFF here would corrupt the wire payload.
+    for (size_t i = 10; i <= 64; ++i)
+    {
+        EXPECT_EQ('\0', m.begin.sha256Hex[i]) << "byte " << i << " should be NUL after strncpy(short, 64)";
+    }
+}
