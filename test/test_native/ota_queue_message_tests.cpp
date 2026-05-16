@@ -21,8 +21,8 @@ TEST(OtaQueueMessage, BeginArmRoundTrip)
     m.begin.totalSize = 1234567;
     m.begin.totalChunks = 300;
     m.begin.chunkSize = 4096;
-    std::strncpy(m.begin.sha256Hex, "deadbeefcafebabe1111222233334444aaaabbbbccccddddeeeeffff00001111", 64);
-    m.begin.sha256Hex[64] = '\0';
+    std::strncpy(m.begin.sha256Hex, "deadbeefcafebabe1111222233334444aaaabbbbccccddddeeeeffff00001111", SHA256_HEX_LEN);
+    m.begin.sha256Hex[SHA256_HEX_LEN] = '\0';
     m.begin.targetList = nullptr;
 
     EXPECT_EQ(OTA_MSG_BEGIN, m.kind);
@@ -56,8 +56,9 @@ TEST(OtaQueueMessage, EndArmRoundTrip)
     m.kind = OTA_MSG_END;
     m.end.msgId = nullptr;
     m.end.totalChunks = 300;
-    std::strncpy(m.end.finalSha256Hex, "00000000000000000000000000000000ffffffffffffffffffffffffffffffff", 64);
-    m.end.finalSha256Hex[64] = '\0';
+    std::strncpy(m.end.finalSha256Hex, "00000000000000000000000000000000ffffffffffffffffffffffffffffffff",
+                 SHA256_HEX_LEN);
+    m.end.finalSha256Hex[SHA256_HEX_LEN] = '\0';
 
     EXPECT_EQ(OTA_MSG_END, m.kind);
     EXPECT_EQ(300u, m.end.totalChunks);
@@ -98,7 +99,7 @@ TEST(OtaQueueMessage, UnionArmsShareStartingAddress)
     EXPECT_EQ(beginAddr, static_cast<const void *>(&m.deploy));
 }
 
-// Pins the producer's strncpy(buf, src, 64) + buf[64]='\0' idiom for the 64-char hot path.
+// Pins the producer's strncpy(buf, src, SHA256_HEX_LEN) + buf[SHA256_HEX_LEN]='\0' idiom.
 // An off-by-one would leak an unterminated string into the wire ACK payload.
 TEST(OtaQueueMessage, Sha256HexBoundaryStaysNulTerminated)
 {
@@ -107,17 +108,17 @@ TEST(OtaQueueMessage, Sha256HexBoundaryStaysNulTerminated)
     m.kind = OTA_MSG_BEGIN;
 
     const char *full = "deadbeefcafebabe1111222233334444aaaabbbbccccddddeeeeffff00001111";
-    ASSERT_EQ(64u, std::strlen(full));
-    std::strncpy(m.begin.sha256Hex, full, 64);
-    m.begin.sha256Hex[64] = '\0';
+    ASSERT_EQ(static_cast<size_t>(SHA256_HEX_LEN), std::strlen(full));
+    std::strncpy(m.begin.sha256Hex, full, SHA256_HEX_LEN);
+    m.begin.sha256Hex[SHA256_HEX_LEN] = '\0';
 
-    EXPECT_EQ(64u, std::strlen(m.begin.sha256Hex));
-    EXPECT_EQ('\0', m.begin.sha256Hex[64]);
+    EXPECT_EQ(static_cast<size_t>(SHA256_HEX_LEN), std::strlen(m.begin.sha256Hex));
+    EXPECT_EQ('\0', m.begin.sha256Hex[SHA256_HEX_LEN]);
     EXPECT_STREQ(full, m.begin.sha256Hex);
 }
 
 // Short input must also produce a NUL-padded buffer. Relies on strncpy's NUL-fill behavior;
-// a memcpy(dst, src, 64) regression would leak whatever bytes lived past the source literal.
+// a memcpy(dst, src, SHA256_HEX_LEN) regression would leak whatever bytes lived past the source literal.
 TEST(OtaQueueMessage, Sha256HexShortInputNulFills)
 {
     queue_ota_msg_t m;
@@ -126,14 +127,14 @@ TEST(OtaQueueMessage, Sha256HexShortInputNulFills)
 
     const char *shortHash = "deadbeef00"; // 10 chars
     ASSERT_EQ(10u, std::strlen(shortHash));
-    std::strncpy(m.begin.sha256Hex, shortHash, 64);
-    m.begin.sha256Hex[64] = '\0';
+    std::strncpy(m.begin.sha256Hex, shortHash, SHA256_HEX_LEN);
+    m.begin.sha256Hex[SHA256_HEX_LEN] = '\0';
 
     EXPECT_EQ(10u, std::strlen(m.begin.sha256Hex));
     EXPECT_STREQ(shortHash, m.begin.sha256Hex);
-    // Bytes [10..64] must be NUL — leaking 0xFF here would corrupt the wire payload.
-    for (size_t i = 10; i <= 64; ++i)
+    // Bytes [10..SHA256_HEX_LEN] must be NUL — leaking 0xFF here would corrupt the wire payload.
+    for (size_t i = 10; i <= SHA256_HEX_LEN; ++i)
     {
-        EXPECT_EQ('\0', m.begin.sha256Hex[i]) << "byte " << i << " should be NUL after strncpy(short, 64)";
+        EXPECT_EQ('\0', m.begin.sha256Hex[i]) << "byte " << i << " should be NUL after strncpy(short, SHA256_HEX_LEN)";
     }
 }

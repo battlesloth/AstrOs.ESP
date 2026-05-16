@@ -143,9 +143,9 @@ std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::
 {
     // Wire format: header | mac<US>name<US>fingerprint<US>version<US>variant
     // The server's parser (message_handler.ts) accepts 3, 4, or 5 fields after
-    // the header — `variant` is appended at the tail per the c.6c.1 protocol
-    // amendment. Empty variant is forwarded as an explicit empty field so the
-    // server's "skip empty variant" cache guard fires cleanly.
+    // the header — `variant` is appended at the tail by newer peers. Empty
+    // variant is forwarded as an explicit empty field so the server's "skip
+    // empty variant" cache guard fires cleanly.
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint << UNIT_SEPARATOR
@@ -292,10 +292,6 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
         {
             return "";
         }
-        // NOT enforced here (Phase 3 follow-up): the cross-field invariant that
-        // finalVersion is non-empty iff OK and errorOrEmpty is non-empty iff FAILED.
-        // Phase 3 may close this gap by upgrading status to an enum or by adding
-        // explicit checks here once the caller contract is stable.
     }
 
     std::stringstream ss;

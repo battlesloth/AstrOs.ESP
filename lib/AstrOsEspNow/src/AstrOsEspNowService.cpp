@@ -715,16 +715,16 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
-    // Phase 1+ peers append their firmware version as a 4th field. Legacy peers
+    // Newer peers append a firmware version as a 4th field. Older peers
     // omit it; we forward an empty string so the server records the peer's version
     // as unknown (which it then treats as incompatible — accurate semantic).
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
-    // c.6c.1 peers also append their build variant as a 5th field — the
-    // server uses it to pick the right firmware asset at OTA flash time.
-    // Legacy / Phase 1 peers omit it; empty variant propagates through to
-    // the server, which skips populating its variant cache for that peer
-    // (so the flash flow surfaces `controllers_unknown` rather than
-    // silently picking the wrong asset).
+    // Newer peers also append a build variant as a 5th field — the server
+    // uses it to pick the right firmware asset at OTA flash time. Older
+    // peers omit it; empty variant propagates through to the server, which
+    // skips populating its variant cache for that peer (so the flash flow
+    // surfaces `controllers_unknown` rather than silently picking the wrong
+    // asset).
     auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)

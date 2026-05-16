@@ -862,9 +862,9 @@ void interfaceResponseQueueTask(void *arg)
             {
                 // The interface queue's `message` field for SEND_POLL_ACK is packed by
                 // AstrOsEspNow::handlePollAck as `fingerprint<US>version<US>variant`
-                // (c.6c.1 peer) or fewer pieces for legacy peers (splitString strips
-                // trailing empties). Missing pieces fall back to "" — the server then
-                // skips populating its variant cache for legacy peers.
+                // for newer peers, or fewer pieces for older peers that omit the trailing
+                // fields (splitString strips trailing empties). Missing pieces fall back
+                // to "" — the server then skips populating its variant cache for those peers.
                 auto pieces = AstrOsStringUtils::splitString(std::string(msg.message), UNIT_SEPARATOR);
                 std::string fp = pieces.size() > 0 ? pieces[0] : "";
                 std::string ver = pieces.size() > 1 ? pieces[1] : "";
@@ -1484,9 +1484,13 @@ void otaReceiverTask(void *arg)
     QueueHandle_t queue = (QueueHandle_t)arg;
     queue_ota_msg_t msg;
 
+    // Block indefinitely waiting on otaQueue — the task has no other work, so
+    // hot-polling with a 10 ms delay just wakes the scheduler 100x/s for no
+    // reason. portMAX_DELAY is safe here because this is the queue's exclusive
+    // consumer; producers never need this task to time out and do something else.
     while (1)
     {
-        if (xQueueReceive(queue, &msg, 0))
+        if (xQueueReceive(queue, &msg, portMAX_DELAY))
         {
             auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
             if (highWaterMark < 500)
@@ -1497,7 +1501,6 @@ void otaReceiverTask(void *arg)
             // process() owns the free of every pointer in the union arm.
             AstrOs_OtaReceiver.process(msg);
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

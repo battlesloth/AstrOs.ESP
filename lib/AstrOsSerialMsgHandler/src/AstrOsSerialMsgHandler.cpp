@@ -401,8 +401,8 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
     m.begin.totalSize = rec.totalSize;
     m.begin.totalChunks = AstrOsSerialProtocol::chunksForSize(rec.totalSize, rec.chunkSize);
     m.begin.chunkSize = rec.chunkSize;
-    strncpy(m.begin.sha256Hex, rec.sha256Hex.c_str(), 64);
-    m.begin.sha256Hex[64] = '\0';
+    strncpy(m.begin.sha256Hex, rec.sha256Hex.c_str(), SHA256_HEX_LEN);
+    m.begin.sha256Hex[SHA256_HEX_LEN] = '\0';
 
     // Join targetIds back into a single RS-separated string for the consumer.
     std::string joined;
@@ -531,8 +531,8 @@ void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId
     m.transferId = dupString(rec.transferId);
     m.end.msgId = dupString(msgId);
     m.end.totalChunks = rec.totalChunks;
-    strncpy(m.end.finalSha256Hex, rec.finalSha256Hex.c_str(), 64);
-    m.end.finalSha256Hex[64] = '\0';
+    strncpy(m.end.finalSha256Hex, rec.finalSha256Hex.c_str(), SHA256_HEX_LEN);
+    m.end.finalSha256Hex[SHA256_HEX_LEN] = '\0';
 
     if (m.transferId == nullptr || m.end.msgId == nullptr)
     {

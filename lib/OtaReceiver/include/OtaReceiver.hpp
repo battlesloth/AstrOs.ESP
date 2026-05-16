@@ -35,10 +35,10 @@ private:
     // during OTA — see src/main.cpp's pollingTimerCallback. Writes still
     // only happen from otaReceiverTask via handleBegin/End/WatchdogFire.
     std::atomic<bool> active_{false};
-    // Echoed back in every FW_*_ACK / NAK on this transfer.
+    // Identifies the in-flight transfer in the busy-reject log (handleBegin)
+    // and the watchdog-fire log (handleWatchdogFire). NOT echoed in ACK/NAK
+    // replies — those use the inbound message's own transferId.
     std::string transferIdStr_;
-    // BEGIN-time msgId; END's own msgId echoes via the END record itself.
-    std::string beginMsgId_;
 
     // Idle-activity watchdog. Started at end of handleBegin, restarted at
     // end of handleChunk, stopped at end of handleEnd. Fires if no chunk

@@ -76,14 +76,19 @@ void OtaReceiver::watchdogRestart()
     // is the documented pattern. esp_timer_stop on an idle timer is a no-op
     // returning ESP_ERR_INVALID_STATE — safe to ignore.
     esp_timer_stop(watchdog_);
-    esp_timer_start_once(watchdog_, kWatchdogIdleUs);
+    esp_err_t err = esp_timer_start_once(watchdog_, kWatchdogIdleUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "watchdog: esp_timer_start_once (restart) failed: %s — transfer no longer protected",
+                 esp_err_to_name(err));
+    }
 }
 
 void OtaReceiver::watchdogStop()
 {
     if (watchdog_ == nullptr)
         return;
-    esp_timer_stop(watchdog_); // ESP_ERR_INVALID_STATE if already idle — fine.
+    esp_timer_stop(watchdog_);
 }
 
 void OtaReceiver::process(queue_ota_msg_t &msg)
@@ -133,7 +138,6 @@ void OtaReceiver::handleWatchdogFire()
     bulk_.reset();
     active_ = false;
     transferIdStr_.clear();
-    beginMsgId_.clear();
     // Don't notify the server — its chunk_streamer has its own timeout that
     // surfaces the failure to the operator. The master's job is to be
     // reachable for the next BEGIN.
@@ -186,7 +190,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
 
     active_ = true;
     transferIdStr_ = transferIdIn;
-    beginMsgId_ = msgId;
 
     ESP_LOGI(TAG, "FW_TRANSFER_BEGIN accepted: transferId=%s totalSize=%u chunks=%u sha=%s", transferIdIn.c_str(),
              (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, msg.begin.sha256Hex);
@@ -304,7 +307,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
         // No local hash is computed yet — echo the server's stated hash back as the "computed"
-        // value so the protocol-level comparison succeeds. Replace when streaming SHA lands.
+        // value so the protocol-level comparison succeeds.
         ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u", transferIdIn.c_str(),
                  (unsigned)msg.end.totalChunks);
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", finalShaIn);
@@ -364,7 +367,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     {
         active_ = false;
         transferIdStr_.clear();
-        beginMsgId_.clear();
         bulk_.reset();
 
         // Transfer complete — stop the idle watchdog so a stale fire doesn't
@@ -383,30 +385,33 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
     std::string msgId = msg.deploy.msgId ? msg.deploy.msgId : "";
     std::string orderListStr = msg.deploy.orderList ? msg.deploy.orderList : "";
 
-    std::vector<astros_fw_deploy_result_t> results;
     if (orderListStr.empty())
     {
-        // sendFwDeployDone drops on empty results — server times out.
+        // sendFwDeployDone drops on empty results — skip the call so we don't
+        // double-log. Server times out and surfaces the failure to the operator.
         ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
+        free(msg.deploy.msgId);
+        free(msg.deploy.orderList);
+        free(msg.transferId);
+        return;
     }
-    else
+
+    std::vector<astros_fw_deploy_result_t> results;
+    size_t start = 0;
+    while (start < orderListStr.size())
     {
-        size_t start = 0;
-        while (start < orderListStr.size())
+        size_t end = orderListStr.find('\x1E', start);
+        std::string id =
+            (end == std::string::npos) ? orderListStr.substr(start) : orderListStr.substr(start, end - start);
+        if (!id.empty())
         {
-            size_t end = orderListStr.find('\x1E', start);
-            std::string id =
-                (end == std::string::npos) ? orderListStr.substr(start) : orderListStr.substr(start, end - start);
-            if (!id.empty())
-            {
-                results.push_back({id, "FAILED", "", "not_implemented"});
-            }
-            if (end == std::string::npos)
-            {
-                break;
-            }
-            start = end + 1;
+            results.push_back({id, "FAILED", "", "not_implemented"});
         }
+        if (end == std::string::npos)
+        {
+            break;
+        }
+        start = end + 1;
     }
 
     ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s target-count=%zu — all-FAILED not_implemented", transferIdIn.c_str(),

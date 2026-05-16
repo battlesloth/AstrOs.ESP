@@ -40,8 +40,13 @@ extern "C"
     //   OTA_MSG_DEPLOY_BEGIN   transferId, msgId, orderList
     //   OTA_MSG_WATCHDOG_FIRE  none (transferId is nullptr; no union arm)
     //
-    // sha256Hex / finalSha256Hex are fixed-size 65-byte buffers (64 hex
-    // chars + NUL); they live inline in the struct and never need freeing.
+    // sha256Hex / finalSha256Hex are fixed-size buffers sized for the 64
+    // hex chars + NUL terminator; they live inline in the struct and never
+    // need freeing. SHA256_HEX_LEN names the hex-string length so the
+    // strncpy(buf, src, SHA256_HEX_LEN) + buf[SHA256_HEX_LEN]='\0' idiom
+    // reads as one constant instead of a 64/65 magic-number pair.
+#define SHA256_HEX_LEN 64
+
     typedef struct
     {
         ota_msg_kind_t kind;
@@ -55,7 +60,7 @@ extern "C"
                 uint32_t totalSize;
                 uint32_t totalChunks;
                 uint16_t chunkSize;
-                char sha256Hex[65];
+                char sha256Hex[SHA256_HEX_LEN + 1];
                 char *targetList; // RS-separated controller-id list
             } begin;
 
@@ -71,7 +76,7 @@ extern "C"
             {
                 char *msgId; // END's msgId for ACK echo
                 uint32_t totalChunks;
-                char finalSha256Hex[65];
+                char finalSha256Hex[SHA256_HEX_LEN + 1];
             } end;
 
             struct

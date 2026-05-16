@@ -25,7 +25,7 @@ class of fix. Each commit is independently shippable and reviewable.
     - I7: move the ceil-divide out of `AstrOsSerialMsgHandler.cpp:402` into `AstrOsSerialProtocol` (PURE)
     - 4 unit tests: exact multiple, +1 byte, totalSize < chunkSize, totalSize == 0
 
-- [ ] **Commit 4 — Comments + quick code wins**
+- [x] **Commit 4 — Comments + quick code wins**
     - S10: fix inaccurate / stale comments (transferIdStr_, beginMsgId_ removal, milestone refs, c.6c.1 → structural)
     - S2: switch `otaReceiverTask` poll from 10 ms `vTaskDelay` to blocking `xQueueReceive`
     - S3: check `esp_timer_start_once` return and LOGW on non-OK
