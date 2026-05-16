@@ -13,7 +13,13 @@ extern "C"
         OTA_MSG_BEGIN = 0,
         OTA_MSG_CHUNK = 1,
         OTA_MSG_END = 2,
-        OTA_MSG_DEPLOY_BEGIN = 3
+        OTA_MSG_DEPLOY_BEGIN = 3,
+        // Posted by OtaReceiver's idle-activity watchdog (esp_timer one-shot)
+        // back to the otaQueue when no chunk activity is seen within the
+        // configured idle threshold. Carries no payload — `transferId` is
+        // nullptr and no union arm is used. Handler clears in-progress
+        // state so the next FW_TRANSFER_BEGIN can succeed without reboot.
+        OTA_MSG_WATCHDOG_FIRE = 4
     } ota_msg_kind_t;
 
     // Discriminated union carrying one decoded inbound FW_* message from
@@ -28,10 +34,11 @@ extern "C"
     //     free path will leak or double-free.
     //
     // Per-kind owned pointers:
-    //   OTA_MSG_BEGIN         transferId, msgId, targetList
-    //   OTA_MSG_CHUNK         transferId, payload
-    //   OTA_MSG_END           transferId, msgId
-    //   OTA_MSG_DEPLOY_BEGIN  transferId, msgId, orderList
+    //   OTA_MSG_BEGIN          transferId, msgId, targetList
+    //   OTA_MSG_CHUNK          transferId, payload
+    //   OTA_MSG_END            transferId, msgId
+    //   OTA_MSG_DEPLOY_BEGIN   transferId, msgId, orderList
+    //   OTA_MSG_WATCHDOG_FIRE  none (transferId is nullptr; no union arm)
     //
     // sha256Hex / finalSha256Hex are fixed-size 65-byte buffers (64 hex
     // chars + NUL); they live inline in the struct and never need freeing.

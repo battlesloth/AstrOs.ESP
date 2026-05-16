@@ -12,9 +12,78 @@ OtaReceiver::OtaReceiver() {}
 
 OtaReceiver::~OtaReceiver() {}
 
-void OtaReceiver::Init()
+void OtaReceiver::Init(QueueHandle_t otaQueue)
 {
-    ESP_LOGI(TAG, "OtaReceiver initialized");
+    otaQueue_ = otaQueue;
+
+    const esp_timer_create_args_t args = {
+        .callback = &OtaReceiver::watchdogTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_receiver_watchdog",
+        .skip_unhandled_events = false,
+    };
+    esp_err_t err = esp_timer_create(&args, &watchdog_);
+    if (err != ESP_OK)
+    {
+        // Create-failure is a programmer error (timer count exhausted is the only
+        // realistic cause). Log + leave watchdog_ null — receiver still works for
+        // happy-path transfers; only the stuck-recovery path is lost.
+        ESP_LOGE(TAG, "esp_timer_create(ota_receiver_watchdog) failed: %s — watchdog disabled", esp_err_to_name(err));
+        watchdog_ = nullptr;
+    }
+
+    ESP_LOGI(TAG, "OtaReceiver initialized (watchdog idle threshold: %llums)", kWatchdogIdleUs / 1000ULL);
+}
+
+void OtaReceiver::watchdogTimerCb(void *arg)
+{
+    auto self = static_cast<OtaReceiver *>(arg);
+    if (self->otaQueue_ == nullptr)
+    {
+        // Init() failed to capture the queue or wasn't called. Nothing safe
+        // to do from the timer dispatch task; log and bail.
+        return;
+    }
+    queue_ota_msg_t msg{};
+    msg.kind = OTA_MSG_WATCHDOG_FIRE;
+    msg.transferId = nullptr;
+    // Non-blocking send from the timer dispatch task — if the queue is full,
+    // otaReceiverTask is already wedged and dropping this signal is the
+    // least-bad outcome (the wedge surfaces through the next operator action).
+    if (xQueueSend(self->otaQueue_, &msg, 0) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "watchdog: otaQueue full, dropping WATCHDOG_FIRE signal");
+    }
+}
+
+void OtaReceiver::watchdogStart()
+{
+    if (watchdog_ == nullptr)
+        return;
+    esp_err_t err = esp_timer_start_once(watchdog_, kWatchdogIdleUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "watchdog: esp_timer_start_once failed: %s", esp_err_to_name(err));
+    }
+}
+
+void OtaReceiver::watchdogRestart()
+{
+    if (watchdog_ == nullptr)
+        return;
+    // esp_timer doesn't expose a single "restart one-shot" call. Stop + start
+    // is the documented pattern. esp_timer_stop on an idle timer is a no-op
+    // returning ESP_ERR_INVALID_STATE — safe to ignore.
+    esp_timer_stop(watchdog_);
+    esp_timer_start_once(watchdog_, kWatchdogIdleUs);
+}
+
+void OtaReceiver::watchdogStop()
+{
+    if (watchdog_ == nullptr)
+        return;
+    esp_timer_stop(watchdog_); // ESP_ERR_INVALID_STATE if already idle — fine.
 }
 
 void OtaReceiver::process(queue_ota_msg_t &msg)
@@ -33,6 +102,12 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
     case OTA_MSG_DEPLOY_BEGIN:
         handleDeployBegin(msg);
         break;
+    case OTA_MSG_WATCHDOG_FIRE:
+        // No allocations to free — transferId is nullptr by contract and
+        // no union arm carries data. Handler clears in-progress state so
+        // the next BEGIN can succeed.
+        handleWatchdogFire();
+        break;
     default:
         // Unknown kind: silent drop would leak the union arm AND hang the server. Fail loud.
         ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — aborting", static_cast<int>(msg.kind),
@@ -40,6 +115,26 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         free(msg.transferId);
         abort();
     }
+}
+
+void OtaReceiver::handleWatchdogFire()
+{
+    if (!active_)
+    {
+        // Stale fire — handleEnd or a prior watchdog already cleared the
+        // state but this signal was already in flight before we stopped the
+        // timer. Idempotent no-op is the correct behavior.
+        return;
+    }
+    ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
+             kWatchdogIdleUs / 1000ULL);
+    bulk_.reset();
+    active_ = false;
+    transferIdStr_.clear();
+    beginMsgId_.clear();
+    // Don't notify the server — its chunk_streamer has its own timeout that
+    // surfaces the failure to the operator. The master's job is to be
+    // reachable for the next BEGIN.
 }
 
 void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
@@ -95,6 +190,11 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
              (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, msg.begin.sha256Hex);
 
     AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "OK");
+
+    // Start the idle-activity watchdog. If no FW_CHUNK arrives within
+    // kWatchdogIdleUs, watchdogTimerCb posts OTA_MSG_WATCHDOG_FIRE and the
+    // receiver clears state so the next BEGIN can be accepted.
+    watchdogStart();
 
     free(msg.begin.msgId);
     free(msg.begin.targetList);
@@ -166,6 +266,12 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq, reasonStr);
     }
 
+    // Any chunk activity (ACK or NAK) counts as "transfer is alive" — reset
+    // the watchdog. A long string of NAKs alone wouldn't drain the transfer,
+    // but the server's chunk_streamer has its own retry-exhaustion failure
+    // for that. The watchdog protects against *silence*, not slow progress.
+    watchdogRestart();
+
     free(msg.chunk.payload);
     free(msg.transferId);
 }
@@ -185,6 +291,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         transferIdStr_.clear();
         beginMsgId_.clear();
         bulk_.reset();
+        watchdogStop();
         free(msg.end.msgId);
         free(msg.transferId);
         return;
@@ -248,6 +355,11 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     transferIdStr_.clear();
     beginMsgId_.clear();
     bulk_.reset();
+
+    // Transfer complete — stop the idle watchdog so a stale fire doesn't
+    // arrive after we've already cleared state. handleWatchdogFire is
+    // idempotent against !active_, but stopping is the explicit signal.
+    watchdogStop();
 
     free(msg.end.msgId);
     free(msg.transferId);

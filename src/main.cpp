@@ -274,7 +274,9 @@ void init(void)
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue);
-    AstrOs_OtaReceiver.Init();
+    // Pass otaQueue so OtaReceiver's idle-activity watchdog can post abort
+    // messages back into the same queue otaReceiverTask is draining.
+    AstrOs_OtaReceiver.Init(otaQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
