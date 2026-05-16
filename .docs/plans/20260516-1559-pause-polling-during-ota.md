@@ -37,7 +37,7 @@ Polling resumes automatically when the OTA finishes — `OtaReceiver::handleEnd`
 
 - [x] **Build both boards + native tests.** `pio run -e metro_s3` SUCCESS, `pio run -e lolin_d32_pro` SUCCESS, `pio test -e test` 309/309 PASSED.
 
-- [ ] **Bench validation.** Reflash master. Trigger a 1.2 MB OTA from the server. ESP log: chunk-arrival timing should show consistent ~480 ms gaps (wire-rate) with no 2 s polling stalls. Expected transfer time ~2.5-3 min (294 × 0.5 s) instead of the prior ~5 min. POLL_ACK TX lines should disappear during the upload phase and resume after END_ACK. Heartbeat lines should keep firing (gate doesn't suppress them).
+- [x] **Bench validation.** Confirmed on the post-`f913d6e` flash run: ESP-side chunk arrivals at perfectly uniform ~480 ms intervals — the 1.5-3.5 s polling-cycle gaps from the prior bench are gone. POLL_ACK TX lines absent during the upload phase, resume after END_ACK. Heartbeat lines keep firing throughout. Host-side observed inter-ACK gap is ~1535 ms — the polling pause closed the master-side stalls but didn't reach the predicted ~500 ms cycle, because the residual ~1 s per chunk now lives on the HOST side (USB-CDC buffering / Node worker IPC / SerialPort write latency between "ACK arrives" and "next chunk hits the wire"). That's an independent bottleneck — separate speed-investigation plan.
 
 ## Files touched
 
