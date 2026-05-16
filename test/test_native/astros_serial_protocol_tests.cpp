@@ -464,3 +464,30 @@ TEST(SerialProtocol, DecodeFwDeployBeginEmptyPayloadRejects)
     ASSERT_EQ(1u, result.rejects.size());
     EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
 }
+
+TEST(SerialProtocol, ChunksForSizeExactMultiple)
+{
+    EXPECT_EQ(10u, AstrOsSerialProtocol::chunksForSize(40960, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeOneByteOverMultiple)
+{
+    EXPECT_EQ(11u, AstrOsSerialProtocol::chunksForSize(40961, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeSmallerThanChunk)
+{
+    EXPECT_EQ(1u, AstrOsSerialProtocol::chunksForSize(1, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeZeroTotalReturnsZero)
+{
+    EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(0, 4096));
+}
+
+// Defensive guard. Callers are documented as rejecting chunkSize=0 before invoking,
+// but a future caller that forgot would otherwise divide by zero. Pin the contract.
+TEST(SerialProtocol, ChunksForSizeZeroChunkSizeReturnsZero)
+{
+    EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(40960, 0));
+}

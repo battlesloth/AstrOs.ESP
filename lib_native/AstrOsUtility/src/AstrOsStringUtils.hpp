@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <bitset>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -146,6 +149,32 @@ public:
         }
 
         return n;
+    }
+
+    /// @brief Parse a decimal string strictly into a uint8_t (0..255). Stricter than strtoul:
+    ///        rejects empty input, leading sign, leading/trailing whitespace, hex prefix, and
+    ///        any non-digit character. Returns std::nullopt on any rejection or value > 255.
+    static std::optional<uint8_t> parseStrictU8(const std::string &s)
+    {
+        if (s.empty())
+        {
+            return std::nullopt;
+        }
+        for (char c : s)
+        {
+            if (c < '0' || c > '9')
+            {
+                return std::nullopt;
+            }
+        }
+        errno = 0;
+        char *endp = nullptr;
+        unsigned long ul = std::strtoul(s.c_str(), &endp, 10);
+        if (errno != 0 || endp == s.c_str() || *endp != '\0' || ul > 255)
+        {
+            return std::nullopt;
+        }
+        return static_cast<uint8_t>(ul);
     }
 
     template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)

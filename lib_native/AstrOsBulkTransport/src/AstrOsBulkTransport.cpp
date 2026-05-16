@@ -256,4 +256,23 @@ namespace AstrOsBulkTransport
         }
         return EndResult::ok();
     }
+
+    bool shouldTeardownOnEndResult(const EndResult &er)
+    {
+        if (er.status == EndResult::Status::OK)
+        {
+            return true;
+        }
+        switch (er.reason)
+        {
+        case EndResult::Reason::SENDER_TOTAL_MISMATCH:
+        case EndResult::Reason::RECEIVER_SHORT_COUNT:
+            return true;
+        case EndResult::Reason::NONE:
+        case EndResult::Reason::NOT_ACTIVE:
+        case EndResult::Reason::WRONG_XFER_ID:
+            return false;
+        }
+        return false; // unknown reason — conservative: preserve state
+    }
 } // namespace AstrOsBulkTransport

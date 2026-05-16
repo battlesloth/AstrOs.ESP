@@ -75,3 +75,51 @@ TEST(StringUtils, splitStringWithWindowsLineEndings)
     EXPECT_STREQ("PART2", parts[1].c_str());
     EXPECT_STREQ("PART3", parts[2].c_str());
 }
+
+TEST(StringUtils, ParseStrictU8AcceptsBoundaries)
+{
+    EXPECT_EQ(0u, AstrOsStringUtils::parseStrictU8("0").value());
+    EXPECT_EQ(1u, AstrOsStringUtils::parseStrictU8("1").value());
+    EXPECT_EQ(42u, AstrOsStringUtils::parseStrictU8("42").value());
+    EXPECT_EQ(255u, AstrOsStringUtils::parseStrictU8("255").value());
+}
+
+TEST(StringUtils, ParseStrictU8RejectsOverflow)
+{
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("256").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("1000").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("99999999999999999999").has_value());
+}
+
+TEST(StringUtils, ParseStrictU8RejectsNonDigit)
+{
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("42x").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("x42").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("4a2").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("0x42").has_value());
+}
+
+TEST(StringUtils, ParseStrictU8RejectsEmpty)
+{
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("").has_value());
+}
+
+TEST(StringUtils, ParseStrictU8RejectsLeadingTrailingWhitespace)
+{
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8(" 42").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("42 ").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("\t42").has_value());
+}
+
+TEST(StringUtils, ParseStrictU8RejectsSignedSyntax)
+{
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("-1").has_value());
+    EXPECT_FALSE(AstrOsStringUtils::parseStrictU8("+1").has_value());
+}
+
+TEST(StringUtils, ParseStrictU8AcceptsLeadingZeros)
+{
+    // Leading zeros are not signed-syntax or hex prefix, just zero-padded decimal — accept.
+    EXPECT_EQ(7u, AstrOsStringUtils::parseStrictU8("007").value());
+    EXPECT_EQ(0u, AstrOsStringUtils::parseStrictU8("00").value());
+}

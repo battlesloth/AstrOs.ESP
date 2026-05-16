@@ -681,3 +681,37 @@ TEST(BulkTransport, EndToEndTransferWithMidStreamSizeRetransmit)
     auto end = r.onEnd(kXferId, kTotalChunks);
     EXPECT_EQ(AstrOsBulkTransport::EndResult::Status::OK, end.status);
 }
+
+// shouldTeardownOnEndResult pins the gate that OtaReceiver::handleEnd uses to
+// decide whether to clear in-flight state. A regression that flipped a branch
+// here would silently re-introduce the round-1 C1 bug (stray END clobbering
+// a healthy transfer). One test per Reason value, plus the OK happy path.
+
+TEST(BulkTransport, ShouldTeardownOnEndResultOkTearsDown)
+{
+    EXPECT_TRUE(AstrOsBulkTransport::shouldTeardownOnEndResult(AstrOsBulkTransport::EndResult::ok()));
+}
+
+TEST(BulkTransport, ShouldTeardownOnEndResultSenderTotalMismatchTearsDown)
+{
+    EXPECT_TRUE(AstrOsBulkTransport::shouldTeardownOnEndResult(
+        AstrOsBulkTransport::EndResult::ioError(AstrOsBulkTransport::EndResult::Reason::SENDER_TOTAL_MISMATCH)));
+}
+
+TEST(BulkTransport, ShouldTeardownOnEndResultReceiverShortCountTearsDown)
+{
+    EXPECT_TRUE(AstrOsBulkTransport::shouldTeardownOnEndResult(
+        AstrOsBulkTransport::EndResult::ioError(AstrOsBulkTransport::EndResult::Reason::RECEIVER_SHORT_COUNT)));
+}
+
+TEST(BulkTransport, ShouldTeardownOnEndResultWrongXferIdPreservesState)
+{
+    EXPECT_FALSE(AstrOsBulkTransport::shouldTeardownOnEndResult(
+        AstrOsBulkTransport::EndResult::ioError(AstrOsBulkTransport::EndResult::Reason::WRONG_XFER_ID)));
+}
+
+TEST(BulkTransport, ShouldTeardownOnEndResultNotActivePreservesState)
+{
+    EXPECT_FALSE(AstrOsBulkTransport::shouldTeardownOnEndResult(
+        AstrOsBulkTransport::EndResult::ioError(AstrOsBulkTransport::EndResult::Reason::NOT_ACTIVE)));
+}

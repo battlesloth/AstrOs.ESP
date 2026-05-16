@@ -180,13 +180,9 @@ namespace AstrOsBulkTransport
 
     struct [[nodiscard]] EndResult
     {
-        // HASH_MISMATCH is reserved for the Phase 3+ MIXED layer once it
-        // has a hash context. The MIXED OtaReceiver introduced in Phase 3
-        // sinks payload to /dev/null and never returns HASH_MISMATCH;
-        // only the Phase 4 enhancement that adds the streaming SHA-256
-        // context will ever produce it. This PURE state machine itself
-        // never returns HASH_MISMATCH — onEnd only validates chunk counts
-        // and returns OK on matching totals or IO_ERROR on mismatch.
+        // HASH_MISMATCH is reserved for the MIXED layer once it has a hash
+        // context. This PURE state machine only validates chunk counts —
+        // it returns OK or IO_ERROR, never HASH_MISMATCH.
         enum class Status : uint8_t
         {
             OK = 0,
@@ -194,10 +190,9 @@ namespace AstrOsBulkTransport
             IO_ERROR = 2
         };
 
-        // Populated when status != OK. NONE on the success path. Mirrors
-        // the NakReason pattern: distinct reasons that all happen to map
-        // to a single Status::IO_ERROR get surfaced so Phase 3 can log
-        // them and operators can debug WHICH IO_ERROR they hit.
+        // Populated when status != OK. NONE on the success path. Distinct
+        // reasons all map to Status::IO_ERROR so operators can debug WHICH
+        // IO_ERROR they hit.
         enum class Reason : uint8_t
         {
             NONE = 0,
@@ -218,6 +213,16 @@ namespace AstrOsBulkTransport
             return {Status::IO_ERROR, r};
         }
     };
+
+    // Gates caller-side cleanup after BulkReceiver::onEnd so a stray END can't
+    // clobber a healthy in-progress transfer.
+    //
+    //   Teardown: Status::OK, SENDER_TOTAL_MISMATCH, RECEIVER_SHORT_COUNT
+    //   Preserve: NOT_ACTIVE, WRONG_XFER_ID, NONE
+    //
+    // Leads with Status so future enumerators (e.g. HASH_MISMATCH) force
+    // explicit case analysis rather than falling into one branch.
+    bool shouldTeardownOnEndResult(const EndResult &er);
 
     // Sequential chunk-receive state machine for the firmware OTA path.
     // The receiver commits chunks strictly in seq order — sliding window

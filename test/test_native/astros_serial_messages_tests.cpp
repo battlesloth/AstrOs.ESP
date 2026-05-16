@@ -10,10 +10,13 @@
 TEST(SerialMessages, PollAckMessage)
 {
     auto msgSvc = AstrOsSerialMessageService();
-    // Caller supplies the firmware version explicitly so the server records the
-    // version that belongs to `macaddress`, not whatever version the master
-    // happens to be running when forwarding a peer's POLL_ACK.
-    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint", "9.9.9");
+    // Caller supplies the firmware version and build variant explicitly so the
+    // server records the version + variant that belong to `macaddress`, not
+    // whatever the master happens to be running when forwarding a peer's
+    // POLL_ACK. c.6c.1 added `variant` as the 5th field — the server's
+    // controllerVariantCache is keyed by MAC → variant and drives firmware
+    // asset selection (`astros-esp-<version>-<variant>-app.bin`) at OTA time.
+    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint", "9.9.9", "lolin_d32_pro");
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
 
@@ -24,6 +27,44 @@ TEST(SerialMessages, PollAckMessage)
     EXPECT_STREQ("na", validation.msgId.c_str());
 
     auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    ASSERT_EQ(5, payloadParts.size());
+    EXPECT_EQ("macaddress", payloadParts[0]);
+    EXPECT_EQ("test", payloadParts[1]);
+    EXPECT_EQ("fingerprint", payloadParts[2]);
+    EXPECT_EQ("9.9.9", payloadParts[3]);
+    EXPECT_EQ("lolin_d32_pro", payloadParts[4]);
+}
+
+TEST(SerialMessages, PollAckMessageWithEmptyVariant)
+{
+    // Legacy / Phase 1 peer (no variant reported) relays through the master
+    // with an empty variant string. The wire payload must still emit 5 fields
+    // — only an explicit empty 5th field is forwarded; splitString on the
+    // server side strips a trailing empty so the parser sees 4 pieces, which
+    // exercises its 3-OR-4-OR-5 acceptance branch and the empty-variant cache
+    // guard. Pinning this so a future "drop the empty variant" optimization
+    // doesn't break the legacy-peer path.
+    auto msgSvc = AstrOsSerialMessageService();
+    auto value = msgSvc.getPollAck("macaddress", "test", "fingerprint", "9.9.9", "");
+
+    auto validation = msgSvc.validateSerialMsg(value);
+    ASSERT_EQ(true, validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::POLL_ACK, validation.type);
+
+    auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
+    // Wire-byte assertion: the payload must end with `9.9.9<US>` so the trailing
+    // 5th field IS present on the wire even though splitString later strips it.
+    // A regression that produced only 4 fields outright (no trailing US) would
+    // break the server's variant-aware peers; assert against the raw bytes, not
+    // post-split size, so the test catches that drift.
+    const auto &payload = records[1];
+    ASSERT_FALSE(payload.empty());
+    EXPECT_EQ(UNIT_SEPARATOR, payload.back()) << "POLL_ACK must end with a trailing US delimiter to signal an explicit "
+                                                 "empty variant; otherwise older parsers see a 4-field message";
+
+    // Post-split shape (splitString strips trailing empties) — exercises the
+    // server's 3-OR-4-OR-5 acceptance branch and the empty-variant cache guard.
+    auto payloadParts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
     ASSERT_EQ(4, payloadParts.size());
     EXPECT_EQ("macaddress", payloadParts[0]);
     EXPECT_EQ("test", payloadParts[1]);
@@ -904,6 +945,17 @@ TEST(SerialMessages, ParseFwChunkPayloadLenExceedsUint16)
 {
     std::stringstream payload;
     payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "65536" << UNIT_SEPARATOR << "AQID" << UNIT_SEPARATOR
+            << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
+// payloadLen=0 would malloc(0) downstream (implementation-defined) and silently mis-route
+// the resulting decoder error as a routine SIZE NAK. Reject at the parser.
+TEST(SerialMessages, ParseFwChunkRejectsZeroPayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "" << UNIT_SEPARATOR
             << "abcd";
     auto rec = parseFwChunk(payload.str());
     EXPECT_FALSE(rec.valid);

@@ -678,8 +678,12 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
+    // Padawan-side POLL_ACK payload: `name<US>fingerprint<US>version<US>variant`.
+    // Variant is the PlatformIO env name; the server uses it to pick the
+    // correct firmware asset at OTA flash time.
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version;
+    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version
+       << UNIT_SEPARATOR << AstrOsConstants::Variant;
 
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
@@ -710,10 +714,11 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
-    // Phase 1+ peers append their firmware version as a 4th field. Legacy peers
-    // omit it; we forward an empty string so the server records the peer's version
-    // as unknown (which it then treats as incompatible — accurate semantic).
+    // Newer peers append firmware version (4th) and build variant (5th).
+    // Older peers omit; empty strings propagate through so the server records
+    // "unknown" rather than silently picking the wrong firmware asset.
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
+    auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
@@ -729,11 +734,9 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
 
-    // Pack `fingerprint<US>version` (or just `fingerprint` for legacy peers) into
-    // the interface queue's `message` field. The dispatcher in main.cpp unpacks it
-    // and threads the version through to getPollAck so the version reported to
-    // the server matches the peer identifiers, not the local controller's version.
-    auto packed = peerVersion.empty() ? fingerprint : fingerprint + UNIT_SEPARATOR + peerVersion;
+    // Pack `fingerprint<US>version<US>variant` for the interface queue. Joined
+    // explicitly so trailing empty pieces survive (splitString would trim them).
+    auto packed = fingerprint + UNIT_SEPARATOR + peerVersion + UNIT_SEPARATOR + peerVariant;
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, packed);
 
     return true;

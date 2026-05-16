@@ -27,6 +27,8 @@
 #include <GpioModule.hpp>
 #include <I2cMaster.hpp>
 #include <I2cModule.hpp>
+#include <OtaQueueMessage.h>
+#include <OtaReceiver.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -75,6 +77,7 @@ static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
 static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
+static QueueHandle_t otaQueue;
 
 /**********************************
  * UART
@@ -178,6 +181,7 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
+void otaReceiverTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -215,6 +219,11 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+    if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
+        abort();
+    }
 
     // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
@@ -253,6 +262,12 @@ void init(void)
     i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
+    otaQueue = xQueueCreate(16, sizeof(queue_ota_msg_t));
+    if (otaQueue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create otaQueue — aborting init");
+        abort();
+    }
 
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
@@ -267,7 +282,10 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue);
+    // The receiver's watchdog posts abort messages into the same queue
+    // otaReceiverTask drains.
+    AstrOs_OtaReceiver.Init(otaQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
@@ -410,8 +428,14 @@ static void pollingTimerCallback(void *arg)
     const bool master = isMasterNode.load();
     const bool discovery = discoveryMode.load();
 
+    // Skip master polling work (POLL_ACK self-TX + POLL_PADAWANS dispatch)
+    // during OTA — bench measurements show the contention with otaReceiverTask
+    // and astrosRxTask stalls inbound FW_CHUNK for 1-3 s per 2-s poll cycle,
+    // halving wire throughput. Heartbeat log + display timeout stay unconditional.
+    const bool otaActive = AstrOs_OtaReceiver.isActive();
+
     // only send register requests during discovery mode
-    if (master && !discovery)
+    if (master && !discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -429,8 +453,10 @@ static void pollingTimerCallback(void *arg)
             {
                 ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
             }
+            // Master self-POLL_ACK: report own build variant so the server can
+            // pick the right firmware asset at flash time.
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
-                                                   AstrOsConstants::Version, true);
+                                                   AstrOsConstants::Version, AstrOsConstants::Variant, true);
         }
         else
         {
@@ -443,7 +469,7 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
-    else if (!master && discovery)
+    else if (!master && discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -829,18 +855,20 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SEND_POLL_ACK:
             {
                 // The interface queue's `message` field for SEND_POLL_ACK is packed by
-                // AstrOsEspNow::handlePollAck as `fingerprint` (legacy peer, no version)
-                // or `fingerprint<US>version` (Phase 1+ peer). splitString() strips any
-                // trailing empty part, so a missing version yields a single piece.
+                // AstrOsEspNow::handlePollAck as `fingerprint<US>version<US>variant`
+                // for newer peers, or fewer pieces for older peers that omit the trailing
+                // fields (splitString strips trailing empties). Missing pieces fall back
+                // to "" — the server then skips populating its variant cache for those peers.
                 auto pieces = AstrOsStringUtils::splitString(std::string(msg.message), UNIT_SEPARATOR);
                 std::string fp = pieces.size() > 0 ? pieces[0] : "";
                 std::string ver = pieces.size() > 1 ? pieces[1] : "";
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, true);
+                std::string variant = pieces.size() > 2 ? pieces[2] : "";
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, variant, true);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_POLL_NAK:
             {
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", false);
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", "", false);
                 break;
             }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
@@ -983,8 +1011,8 @@ void interfaceResponseQueueTask(void *arg)
 
 void astrosRxTask(void *arg)
 {
-
-    size_t bufferLength = 2000;
+    // 8 KB sized for FW_CHUNK lines (~5500 B after base64 + headers).
+    size_t bufferLength = 8192;
     int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
     uint8_t *commandBuffer = (uint8_t *)malloc(bufferLength);
@@ -1006,7 +1034,32 @@ void astrosRxTask(void *arg)
                 if (data[i] == '\n')
                 {
                     commandBuffer[bufferIndex] = '\0';
-                    ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+
+                    // Compact log for FW_CHUNK — dumping the full ~5.5 KB
+                    // base64 body would compete with FW_CHUNK_ACK for the UART
+                    // TX and trip the server's retransmit timer. The CRC is
+                    // always the last 4 chars by protocol contract. Bounded
+                    // scan over the first 32 bytes avoids touching the body
+                    // for non-chunk messages.
+                    bool isFwChunk = false;
+                    const int scanEnd = bufferIndex < 32 ? bufferIndex : 32;
+                    for (int s = 0; s + 8 <= scanEnd; s++)
+                    {
+                        if (memcmp(&commandBuffer[s], "FW_CHUNK", 8) == 0)
+                        {
+                            isFwChunk = true;
+                            break;
+                        }
+                    }
+                    if (isFwChunk && bufferIndex >= 4)
+                    {
+                        ESP_LOGI("AstrOs RX", "FW_CHUNK (%d bytes, crc=%.4s)", bufferIndex,
+                                 &commandBuffer[bufferIndex - 4]);
+                    }
+                    else
+                    {
+                        ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+                    }
 
                     AstrOs_SerialMsgHandler.handleMessage(
                         std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
@@ -1019,7 +1072,8 @@ void astrosRxTask(void *arg)
                     bufferIndex++;
                     if (bufferIndex >= bufferLength)
                     {
-                        ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        // Data loss — drops partial message + bytes until next line terminator.
+                        ESP_LOGE("AstrOs RX", "Line overflow (>%zu B) — discarding partial message", bufferLength);
                         astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
                     }
@@ -1241,6 +1295,7 @@ void serialCh1QueueTask(void *arg)
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
+
                 SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
@@ -1399,6 +1454,28 @@ void gpioQueueTask(void *arg)
             free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void otaReceiverTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_msg_t msg;
+
+    // portMAX_DELAY is safe — this task is the queue's exclusive consumer
+    // and has no other work to do.
+    while (1)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "OTA Receiver Stack HWM: %d", highWaterMark);
+            }
+
+            AstrOs_OtaReceiver.process(msg);
+        }
     }
 }
 

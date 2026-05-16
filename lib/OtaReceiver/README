@@ -1,0 +1,23 @@
+OtaReceiver
+===========
+
+MIXED lib. Owns the master-side state machine for an in-flight firmware
+OTA transfer over serial: drains the otaQueue, calls into the PURE
+AstrOsBulkTransport state machine, and produces FW_*_ACK / NAK / DONE
+replies via AstrOs_SerialMsgHandler.
+
+Classification
+--------------
+
+MIXED — includes <freertos/...>, <esp_log.h>, and (when SD persistence
+lands) <mbedtls/sha256.h>. Does NOT compile under [env:test].
+
+Queue ownership invariants
+--------------------------
+
+queue_ota_msg_t records carry malloc'd pointers (payload, targetList,
+orderList, msgId, transferId). The producer (AstrOsSerialMsgHandler)
+mallocs and on xQueueSend failure frees its own allocations. The
+consumer (otaReceiverTask) frees every malloc'd pointer in the
+discriminated union after processing the kind it actually receives.
+See OtaQueueMessage.h for the per-kind ownership notes.
