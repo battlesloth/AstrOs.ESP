@@ -1028,7 +1028,38 @@ void astrosRxTask(void *arg)
                 if (data[i] == '\n')
                 {
                     commandBuffer[bufferIndex] = '\0';
-                    ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+
+                    // Compact log for FW_CHUNK lines. Each chunk is ~5.5 KB of
+                    // base64 — dumping the full buffer ~300 times per flash
+                    // floods the console AND competes with FW_CHUNK_ACK for the
+                    // UART TX channel (a 5.5 KB log line takes ~480 ms at
+                    // 115200 baud, which can starve ACK emission and trip the
+                    // server's retransmit timer). The CRC is the last 4 chars
+                    // of the line by protocol contract (FW_CHUNK ends with
+                    // `<US>crc16hex`); the byte count is already in
+                    // `bufferIndex`. Bounded scan over the first 32 bytes
+                    // avoids walking the base64 body for non-chunk messages.
+                    // No other inbound message type contains "FW_CHUNK"
+                    // (FW_CHUNK_ACK / FW_CHUNK_NAK are outbound only).
+                    bool isFwChunk = false;
+                    const int scanEnd = bufferIndex < 32 ? bufferIndex : 32;
+                    for (int s = 0; s + 8 <= scanEnd; s++)
+                    {
+                        if (memcmp(&commandBuffer[s], "FW_CHUNK", 8) == 0)
+                        {
+                            isFwChunk = true;
+                            break;
+                        }
+                    }
+                    if (isFwChunk && bufferIndex >= 4)
+                    {
+                        ESP_LOGI("AstrOs RX", "FW_CHUNK (%d bytes, crc=%.4s)", bufferIndex,
+                                 &commandBuffer[bufferIndex - 4]);
+                    }
+                    else
+                    {
+                        ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+                    }
 
                     AstrOs_SerialMsgHandler.handleMessage(
                         std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));

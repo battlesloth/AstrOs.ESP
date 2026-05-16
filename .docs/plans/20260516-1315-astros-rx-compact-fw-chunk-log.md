@@ -12,9 +12,9 @@ False-positive scan: only inbound messages traverse this RX task, and no other i
 
 ## Tasks
 
-- [ ] **Branch the log in `astrosRxTask`.** Bounded scan over `commandBuffer[0..min(32, bufferIndex))` for `"FW_CHUNK"`. On match: `ESP_LOGI("AstrOs RX", "FW_CHUNK (%d bytes, crc=%.4s)", bufferIndex, &commandBuffer[bufferIndex - 4])`. On no match (or buffer too short to contain a CRC): existing full-line log. Comment the why so a future reader doesn't undo the special case.
+- [x] **Branch the log in `astrosRxTask`.** Bounded scan over `commandBuffer[0..min(32, bufferIndex))` for `"FW_CHUNK"`. On match: `ESP_LOGI("AstrOs RX", "FW_CHUNK (%d bytes, crc=%.4s)", bufferIndex, &commandBuffer[bufferIndex - 4])`. On no match (or buffer too short to contain a CRC): existing full-line log. Comment the why so a future reader doesn't undo the special case.
 
-- [ ] **Build + bench verify.** Both boards. Reflash master. Run a flash; expect compact `FW_CHUNK (5530 bytes, crc=1b44)` lines instead of base64 dumps, AND ACKs flowing in time so the streamer doesn't retransmit.
+- [x] **Build + bench verify.** Both boards. Reflash master. Run a flash; expect compact `FW_CHUNK (5530 bytes, crc=1b44)` lines instead of base64 dumps, AND ACKs flowing in time so the streamer doesn't retransmit.
 
 ## Files touched
 
