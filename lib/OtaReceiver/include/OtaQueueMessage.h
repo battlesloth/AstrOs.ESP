@@ -2,6 +2,7 @@
 #define OTAQUEUEMESSAGE_H
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -86,6 +87,47 @@ extern "C"
             } deploy;
         };
     } queue_ota_msg_t;
+
+    // Centralizes the per-kind free contract documented above. Both the
+    // producer's xQueueSend-fail branches and the consumer's process()
+    // success branches call this so the per-kind ownership rule lives in
+    // exactly one place. All freed pointers are cleared to nullptr to make
+    // accidental double-frees no-ops.
+    static inline void freeOtaMsg(queue_ota_msg_t *m)
+    {
+        if (m == NULL)
+        {
+            return;
+        }
+        switch (m->kind)
+        {
+        case OTA_MSG_BEGIN:
+            free(m->begin.msgId);
+            free(m->begin.targetList);
+            m->begin.msgId = NULL;
+            m->begin.targetList = NULL;
+            break;
+        case OTA_MSG_CHUNK:
+            free(m->chunk.payload);
+            m->chunk.payload = NULL;
+            break;
+        case OTA_MSG_END:
+            free(m->end.msgId);
+            m->end.msgId = NULL;
+            break;
+        case OTA_MSG_DEPLOY_BEGIN:
+            free(m->deploy.msgId);
+            free(m->deploy.orderList);
+            m->deploy.msgId = NULL;
+            m->deploy.orderList = NULL;
+            break;
+        case OTA_MSG_WATCHDOG_FIRE:
+            // No union arm; transferId is nullptr by contract.
+            break;
+        }
+        free(m->transferId);
+        m->transferId = NULL;
+    }
 
 #ifdef __cplusplus
 } // extern "C"

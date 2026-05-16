@@ -10,7 +10,19 @@ OtaReceiver AstrOs_OtaReceiver;
 
 OtaReceiver::OtaReceiver() {}
 
-OtaReceiver::~OtaReceiver() {}
+OtaReceiver::~OtaReceiver()
+{
+    // The singleton is process-lifetime in firmware so this destructor never runs there,
+    // but native test harnesses that link the class get cleanup that doesn't leak
+    // the esp_timer handle. esp_timer_stop on an idle timer returns
+    // ESP_ERR_INVALID_STATE; ignored.
+    if (watchdog_ != nullptr)
+    {
+        esp_timer_stop(watchdog_);
+        esp_timer_delete(watchdog_);
+        watchdog_ = nullptr;
+    }
+}
 
 void OtaReceiver::Init(QueueHandle_t otaQueue)
 {
@@ -108,20 +120,21 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         handleDeployBegin(msg);
         break;
     case OTA_MSG_WATCHDOG_FIRE:
-        // transferId is nullptr by contract; defensive free() in case a future producer
-        // mistakenly sets it. free(nullptr) is a no-op.
-        free(msg.transferId);
         handleWatchdogFire();
         break;
     default:
-        // Unknown kind: a forgotten case label, not memory corruption. LOGE + return so
-        // a missed enumerator surfaces in logs without bricking the box. The union arm's
-        // ownership is unknown, so only the transferId can be safely freed.
+        // Unknown kind: a forgotten case label, not memory corruption. LOGE so the
+        // missed enumerator surfaces in logs without bricking the box. freeOtaMsg
+        // below only knows the recognized kinds — for unknown values it falls
+        // through to freeing only the transferId, accepting that the union arm's
+        // contents are unknowable from out here.
         ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — dropping", static_cast<int>(msg.kind),
                  msg.transferId ? msg.transferId : "(null)");
-        free(msg.transferId);
-        return;
+        break;
     }
+    // Single freeing point for the queue-message contract — see OtaQueueMessage.h
+    // for the per-kind ownership table.
+    freeOtaMsg(&msg);
 }
 
 void OtaReceiver::handleWatchdogFire()
@@ -152,9 +165,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
     {
         ESP_LOGW(TAG, "FW_TRANSFER_BEGIN while transfer %s active; replying busy", transferIdStr_.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "busy");
-        free(msg.begin.msgId);
-        free(msg.begin.targetList);
-        free(msg.transferId);
         return;
     }
 
@@ -165,9 +175,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
     {
         ESP_LOGE(TAG, "FW_TRANSFER_BEGIN transferId='%s' is not 0..255 numeric", transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
-        free(msg.begin.msgId);
-        free(msg.begin.targetList);
-        free(msg.transferId);
         return;
     }
     uint8_t xferId = parsed.value();
@@ -182,9 +189,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
                  static_cast<int>(br.reason), (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks,
                  (unsigned)msg.begin.chunkSize);
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
-        free(msg.begin.msgId);
-        free(msg.begin.targetList);
-        free(msg.transferId);
         return;
     }
 
@@ -200,10 +204,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
     // kWatchdogIdleUs, watchdogTimerCb posts OTA_MSG_WATCHDOG_FIRE and the
     // receiver clears state so the next BEGIN can be accepted.
     watchdogStart();
-
-    free(msg.begin.msgId);
-    free(msg.begin.targetList);
-    free(msg.transferId);
 }
 
 void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
@@ -214,8 +214,6 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
     {
         ESP_LOGW(TAG, "FW_CHUNK while no transfer active; emitting inactive NAK");
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0, "OUT_OF_ORDER");
-        free(msg.chunk.payload);
-        free(msg.transferId);
         return;
     }
 
@@ -226,8 +224,6 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
     {
         ESP_LOGW(TAG, "FW_CHUNK transferId='%s' not numeric; emitting OUT_OF_ORDER", transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0, "OUT_OF_ORDER");
-        free(msg.chunk.payload);
-        free(msg.transferId);
         return;
     }
     uint8_t xferId = parsedChunk.value();
@@ -276,9 +272,6 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
     // but the server's chunk_streamer has its own retry-exhaustion failure
     // for that. The watchdog protects against *silence*, not slow progress.
     watchdogRestart();
-
-    free(msg.chunk.payload);
-    free(msg.transferId);
 }
 
 void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
@@ -296,8 +289,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric; emitting IO_ERROR (state preserved)",
                  transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
-        free(msg.end.msgId);
-        free(msg.transferId);
         return;
     }
     uint8_t xferId = parsedEnd.value();
@@ -374,9 +365,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         // idempotent against !active_, but stopping is the explicit signal.
         watchdogStop();
     }
-
-    free(msg.end.msgId);
-    free(msg.transferId);
 }
 
 void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
@@ -390,9 +378,6 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
         // sendFwDeployDone drops on empty results — skip the call so we don't
         // double-log. Server times out and surfaces the failure to the operator.
         ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
-        free(msg.deploy.msgId);
-        free(msg.deploy.orderList);
-        free(msg.transferId);
         return;
     }
 
@@ -418,8 +403,4 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
              results.size());
 
     AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
-
-    free(msg.deploy.msgId);
-    free(msg.deploy.orderList);
-    free(msg.transferId);
 }

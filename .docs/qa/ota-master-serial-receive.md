@@ -40,18 +40,77 @@ I OtaReceiver: FW_DEPLOY_BEGIN stub: transferId=<id> target-count=<N> — all-FA
 - No recurring `FW_CHUNK_NAK reason=CRC` lines — those would point at a base64
   decode or CRC verification bug.
 
-### Negative paths exercised in Phase 3
+### Negative path 1 — Duplicate BEGIN during active transfer
 
-These are inherent to the wire-up rather than requiring a special server build:
+**Preconditions:** A transfer is in flight (BEGIN ACK received, chunks streaming).
 
-- Server sends BEGIN while a transfer is already active →
-  `FW_TRANSFER_BEGIN_ACK status=busy`, in-flight transfer continues unaffected.
-- Server sends a chunk while no transfer is active →
-  `FW_CHUNK_NAK reason=OUT_OF_ORDER lastGoodSeq=0 nextExpectedSeq=0`.
-- Server sends a malformed base64 payload →
-  `FW_CHUNK_NAK reason=SIZE lastGoodSeq=0 nextExpectedSeq=<rejected seq>`.
-- Server sends BEGIN with `chunkSize=0` or `totalChunks=0` (BulkReceiver validation
-  rejection) → `FW_TRANSFER_BEGIN_ACK status=io_error`.
+**Steps:**
+1. From a second terminal, send a second `FW_TRANSFER_BEGIN` with a different transferId.
+
+**Expected:**
+- `FW_TRANSFER_BEGIN_ACK status=busy transferId=<new-id>`.
+- The in-flight transfer continues uninterrupted to its END.
+- Master log: `FW_TRANSFER_BEGIN while transfer <running-id> active; replying busy`.
+
+**Pass/Fail:** Pass if the original transfer reaches OK and no chunks are dropped.
+
+### Negative path 2 — Chunk with no transfer active
+
+**Preconditions:** No active transfer (master idle or post-END).
+
+**Steps:**
+1. Send a single `FW_CHUNK` line directly to the master serial port.
+
+**Expected:**
+- `FW_CHUNK_NAK reason=OUT_OF_ORDER lastGoodSeq=0 nextExpectedSeq=0`.
+- Master log: `FW_CHUNK while no transfer active; emitting inactive NAK`.
+
+**Pass/Fail:** Pass if a single NAK is emitted and no state change is logged.
+
+### Negative path 3 — Malformed base64 payload
+
+**Preconditions:** A transfer is in flight, chunks flowing.
+
+**Steps:**
+1. Intercept a `FW_CHUNK` line at the server and replace a single base64 char with `*`.
+2. Forward the corrupted line; the rest of the transfer continues unchanged.
+
+**Expected:**
+- `FW_CHUNK_NAK reason=SIZE lastGoodSeq=<prev> nextExpectedSeq=<rejected seq>`.
+- Master log at LOGE: `FW_CHUNK base64 invalid character (seq=<seq> transferId=<id>...)`.
+- Server retransmits; transfer completes successfully.
+
+**Pass/Fail:** Pass if the LOGE fires exactly once per corruption and the transfer recovers.
+
+### Negative path 4 — Invalid BEGIN parameters
+
+**Preconditions:** Master idle.
+
+**Steps:**
+1. Send `FW_TRANSFER_BEGIN` with `chunkSize=0`.
+2. Send `FW_TRANSFER_BEGIN` with `totalChunks=0`.
+3. Send `FW_TRANSFER_BEGIN` with `payloadLen=0` (via a hand-crafted `FW_CHUNK`).
+
+**Expected:**
+- Cases 1+2: `FW_TRANSFER_BEGIN_ACK status=io_error` from BulkReceiver rejection.
+- Case 3: `FW_CHUNK` parser rejects at the wire layer — no malloc(0), no NAK with confusing severity.
+- No transfer state is left active afterward.
+
+**Pass/Fail:** Pass if `isActive()` returns false after each case (verify via subsequent BEGIN reaching OK).
+
+### Negative path 5 — Stray END with mismatched transferId
+
+**Preconditions:** A transfer is in flight (transferId=5, say).
+
+**Steps:**
+1. From a second terminal, send a `FW_TRANSFER_END transferId=99 totalChunks=300 sha=<any>`.
+
+**Expected:**
+- `FW_TRANSFER_END_ACK status=IO_ERROR transferId=99`.
+- Master log: `WRONG_XFER_ID (transferId=99 server-state bug)`.
+- The in-flight transfer (5) continues to its OK end. **State is not torn down by the stray END.**
+
+**Pass/Fail:** Pass if the original transfer's END reaches OK after the stray END.
 
 ### Out of scope for Phase 3
 
@@ -61,4 +120,8 @@ These are inherent to the wire-up rather than requiring a special server build:
   sub-project (b) work).
 - `FW_BACKPRESSURE` PAUSE/RESUME flow (Phase 5, only built if Phase 3/4 measurements
   show the master falling behind).
-- 5-minute whole-transfer watchdog (Phase 5, optional).
+- 5-minute whole-transfer watchdog (Phase 5, optional). The current 10 s idle
+  watchdog catches "transfer goes silent" but not "transfer dribbles forever" —
+  e.g., a CHUNK every 9 s indefinitely. Polling stays paused for the duration.
+  The deadline-based watchdog will land alongside Phase 4 deploy/flash work where
+  the abort semantics are decided together with disk-write timeouts.

@@ -32,7 +32,7 @@ class of fix. Each commit is independently shippable and reviewable.
     - S4: drop the double-LOGE in `handleDeployBegin` empty-results path
     - S8: introduce `kSha256HexLen` constant for the 64/65 magic in `OtaQueueMessage.h`
 
-- [ ] **Commit 5 — Type design tightening + QA + remaining tests**
+- [x] **Commit 5 — Type design tightening + QA + remaining tests**
     - S7: add `freeOtaMsg(queue_ota_msg_t&)` helper and use from `process()` arms + producer failure branches
     - S9: delete copy/move ctors on `OtaReceiver`; release timer in `~OtaReceiver()`
     - S11: expand `.docs/qa/ota-master-serial-receive.md` negative-case rigor to match `ota-receiver-watchdog.md`

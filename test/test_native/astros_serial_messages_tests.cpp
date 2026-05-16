@@ -52,12 +52,19 @@ TEST(SerialMessages, PollAckMessageWithEmptyVariant)
     EXPECT_EQ(AstrOsSerialMessageType::POLL_ACK, validation.type);
 
     auto records = AstrOsStringUtils::splitString(value, GROUP_SEPARATOR);
-    // The trailing empty variant is the LAST field, so splitString strips it —
-    // the payload arrives at the server as 4 pieces, which is the legacy shape
-    // the server already understands. This is the desired behavior; the empty
-    // variant is invisible to the server in the same way it is for a peer that
-    // never reported one.
-    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+    // Wire-byte assertion: the payload must end with `9.9.9<US>` so the trailing
+    // 5th field IS present on the wire even though splitString later strips it.
+    // A regression that produced only 4 fields outright (no trailing US) would
+    // break the server's variant-aware peers; assert against the raw bytes, not
+    // post-split size, so the test catches that drift.
+    const auto &payload = records[1];
+    ASSERT_FALSE(payload.empty());
+    EXPECT_EQ(UNIT_SEPARATOR, payload.back()) << "POLL_ACK must end with a trailing US delimiter to signal an explicit "
+                                                 "empty variant; otherwise older parsers see a 4-field message";
+
+    // Post-split shape (splitString strips trailing empties) — exercises the
+    // server's 3-OR-4-OR-5 acceptance branch and the empty-variant cache guard.
+    auto payloadParts = AstrOsStringUtils::splitString(payload, UNIT_SEPARATOR);
     ASSERT_EQ(4, payloadParts.size());
     EXPECT_EQ("macaddress", payloadParts[0]);
     EXPECT_EQ("test", payloadParts[1]);

@@ -53,6 +53,13 @@ public:
     OtaReceiver();
     ~OtaReceiver();
 
+    // Singleton convention is enforced by deleted copy/move — the timer
+    // handle and queue handle have unique lifetime that doesn't survive a copy.
+    OtaReceiver(const OtaReceiver &) = delete;
+    OtaReceiver &operator=(const OtaReceiver &) = delete;
+    OtaReceiver(OtaReceiver &&) = delete;
+    OtaReceiver &operator=(OtaReceiver &&) = delete;
+
     // Split from the constructor so the global can be constructed at
     // static-init time, before FreeRTOS queues exist. `otaQueue` is held
     // so the watchdog callback can post abort messages back into the same

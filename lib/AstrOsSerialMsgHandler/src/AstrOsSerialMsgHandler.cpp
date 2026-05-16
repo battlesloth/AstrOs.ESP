@@ -419,9 +419,7 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
     if (m.transferId == nullptr || m.begin.msgId == nullptr || m.begin.targetList == nullptr)
     {
         ESP_LOGE(TAG, "Malloc failed in FW_TRANSFER_BEGIN dispatch");
-        free(m.transferId);
-        free(m.begin.msgId);
-        free(m.begin.targetList);
+        freeOtaMsg(&m);
         this->sendFwTransferBeginAck(msgId, rec.transferId, "io_error");
         return;
     }
@@ -429,9 +427,7 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(250)) != pdTRUE)
     {
         ESP_LOGW(TAG, "otaQueue full at FW_TRANSFER_BEGIN; rejecting with busy");
-        free(m.transferId);
-        free(m.begin.msgId);
-        free(m.begin.targetList);
+        freeOtaMsg(&m);
         this->sendFwTransferBeginAck(msgId, rec.transferId, "busy");
     }
 }
@@ -499,7 +495,7 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
     if (m.transferId == nullptr)
     {
         ESP_LOGE(TAG, "Malloc failed in FW_CHUNK dispatch (transferId)");
-        free(decoded);
+        freeOtaMsg(&m);
         this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "SIZE");
         return;
     }
@@ -508,8 +504,7 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
     {
         // Queue full — emit CRC NAK so the server retransmits once the receiver drains.
         ESP_LOGW(TAG, "otaQueue full at FW_CHUNK seq=%u; emitting CRC NAK to force retransmit", (unsigned)rec.seq);
-        free(m.transferId);
-        free(decoded);
+        freeOtaMsg(&m);
         this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "CRC");
     }
 }
@@ -537,8 +532,7 @@ void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId
     if (m.transferId == nullptr || m.end.msgId == nullptr)
     {
         ESP_LOGE(TAG, "Malloc failed in FW_TRANSFER_END dispatch");
-        free(m.transferId);
-        free(m.end.msgId);
+        freeOtaMsg(&m);
         this->sendFwTransferEndAck(msgId, rec.transferId, "IO_ERROR", rec.finalSha256Hex);
         return;
     }
@@ -550,8 +544,7 @@ void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(100)) != pdTRUE)
     {
         ESP_LOGE(TAG, "otaQueue full at FW_TRANSFER_END");
-        free(m.transferId);
-        free(m.end.msgId);
+        freeOtaMsg(&m);
         this->sendFwTransferEndAck(msgId, rec.transferId, "IO_ERROR", rec.finalSha256Hex);
     }
 }
@@ -587,9 +580,7 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
     if (m.transferId == nullptr || m.deploy.msgId == nullptr || m.deploy.orderList == nullptr)
     {
         ESP_LOGE(TAG, "Malloc failed in FW_DEPLOY_BEGIN dispatch");
-        free(m.transferId);
-        free(m.deploy.msgId);
-        free(m.deploy.orderList);
+        freeOtaMsg(&m);
         // Synthesize a FAILED result per target so JobLock can release.
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
@@ -603,9 +594,7 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
     {
         ESP_LOGW(TAG, "otaQueue full at FW_DEPLOY_BEGIN");
-        free(m.transferId);
-        free(m.deploy.msgId);
-        free(m.deploy.orderList);
+        freeOtaMsg(&m);
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
         {
