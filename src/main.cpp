@@ -997,8 +997,16 @@ void interfaceResponseQueueTask(void *arg)
 
 void astrosRxTask(void *arg)
 {
-
-    size_t bufferLength = 2000;
+    // 8 KB line-assembly buffer. Sized to fit a FW_CHUNK line — the largest
+    // single message in the protocol at ~5500 bytes: `31FW_CHUNK<RS>` header
+    // + UUID msgId + `<GS>` + transferId + `<US>` + seq + `<US>` + payloadLen +
+    // `<US>` + base64(4096-byte decoded chunk) + `<US>` + 4-char crc16-hex
+    // + EOL. 2000 bytes (the prior value) caused mid-base64 buffer-overflow
+    // resets that handed handleMessage a corrupted tail and rejected every
+    // chunk as "Invalid message". 8192 leaves headroom for future protocol
+    // messages without re-touching this; ESP32 heap has plenty of room for
+    // the one-time per-task malloc.
+    size_t bufferLength = 8192;
     int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
     uint8_t *commandBuffer = (uint8_t *)malloc(bufferLength);

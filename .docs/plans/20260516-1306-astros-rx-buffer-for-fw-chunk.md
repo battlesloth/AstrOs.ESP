@@ -27,11 +27,11 @@ Leave the overflow handler as-is (still resets to 0 on overflow, which is the ri
 
 ## Tasks
 
-- [ ] **Bump `bufferLength` in `astrosRxTask`.** From 2000 to 8192. Update the inline comment to document the FW_CHUNK sizing requirement so a future reader knows why it's larger than the buffer-size-vs-stack-size heuristic would suggest.
+- [x] **Bump `bufferLength` in `astrosRxTask`.** From 2000 to 8192. Update the inline comment to document the FW_CHUNK sizing requirement so a future reader knows why it's larger than the buffer-size-vs-stack-size heuristic would suggest.
 
-- [ ] **Audit other line-assembly paths.** Quick grep for similar `bufferIndex >= bufferLength` patterns in `lib/` — confirm no other serial-receive path has the same too-small-for-FW_CHUNK ceiling. If found, fix or note as a follow-up.
+- [x] **Audit other line-assembly paths.** Quick grep for similar `bufferIndex >= bufferLength` patterns in `lib/` — confirm no other serial-receive path has the same too-small-for-FW_CHUNK ceiling. If found, fix or note as a follow-up.
 
-- [ ] **Build + bench verification.** Both board builds; reflash the master; retry the flash. Expected: no `AstrOs RX: Buffer overflow` warnings, no `Invalid message` errors on FW_CHUNK lines, master ACKs chunks normally, transfer completes.
+- [x] **Build + bench verification.** Both board builds; reflash the master; retry the flash. Expected: no `AstrOs RX: Buffer overflow` warnings, no `Invalid message` errors on FW_CHUNK lines, master ACKs chunks normally, transfer completes.
 
 ## Files touched
 
