@@ -4,6 +4,7 @@
 #include <AstrOsBulkTransport.hpp>
 #include <OtaQueueMessage.h>
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -15,7 +16,8 @@
 
 // Threading: all members of this class are accessed only from otaReceiverTask
 // via `process(...)`. No synchronization is required for this class's own
-// state. The handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)`
+// state, with the one exception of `active_` — see comment on its
+// declaration. The handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)`
 // to emit FW_*_ACK / NAK / DONE replies; that call terminates in xQueueSend
 // against serialQueue and is independently thread-safe.
 //
@@ -28,7 +30,11 @@ class OtaReceiver
 {
 private:
     AstrOsBulkTransport::BulkReceiver bulk_;
-    bool active_ = false;
+    // `active_` is atomic because `isActive()` is called from the
+    // pollingTimer callback (esp_timer dispatch task) to gate poll work
+    // during OTA — see src/main.cpp's pollingTimerCallback. Writes still
+    // only happen from otaReceiverTask via handleBegin/End/WatchdogFire.
+    std::atomic<bool> active_{false};
     // Echoed back in every FW_*_ACK / NAK on this transfer.
     std::string transferIdStr_;
     // BEGIN-time msgId; END's own msgId echoes via the END record itself.
@@ -55,6 +61,13 @@ public:
 
     // Frees every malloc'd pointer in the union arm matching msg.kind.
     void process(queue_ota_msg_t &msg);
+
+    // Safe to call from any task. Used by src/main.cpp's pollingTimerCallback
+    // to suppress poll work while an OTA transfer is in flight.
+    bool isActive() const noexcept
+    {
+        return active_;
+    }
 
 private:
     void handleBegin(queue_ota_msg_t &msg);

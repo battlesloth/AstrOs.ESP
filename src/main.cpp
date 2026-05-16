@@ -419,8 +419,19 @@ static void pollingTimerCallback(void *arg)
     const bool master = isMasterNode.load();
     const bool discovery = discoveryMode.load();
 
+    // Skip the master polling work (POLL_ACK self-TX over serial +
+    // POLL_PADAWANS ESP-NOW dispatch) while an OTA transfer is in flight.
+    // Both compete with otaReceiverTask + astrosRxTask + astrosSerialDrainTask
+    // for CPU and the shared UART TX, and bench measurements show this
+    // contention stalls inbound FW_CHUNK processing for 1-3 s every 2-s
+    // poll cycle — halving effective wire throughput. The padawan branch
+    // below is also gated, though in practice padawan's OtaReceiver is
+    // never active during a master flash. Heartbeat log + display timeout
+    // stay unconditional (cheap and useful during long flashes).
+    const bool otaActive = AstrOs_OtaReceiver.isActive();
+
     // only send register requests during discovery mode
-    if (master && !discovery)
+    if (master && !discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -455,7 +466,7 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
-    else if (!master && discovery)
+    else if (!master && discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -1294,6 +1305,15 @@ void serialCh1QueueTask(void *arg)
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
+
+                // DIAG: log the first 12 chars of every drained message so the
+                // bench can correlate "FW_CHUNK_ACK queued" (in sendFwChunkAck)
+                // with "drained from queue, about to write to UART." Remove
+                // when ack-loss is identified.
+                const int previewLen = msg.dataSize < 12 ? (int)msg.dataSize : 12;
+                ESP_LOGI(TAG, "DIAG serial-drain TX %u bytes head='%.*s'", (unsigned)msg.dataSize, previewLen,
+                         reinterpret_cast<char *>(msg.data));
+
                 SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
