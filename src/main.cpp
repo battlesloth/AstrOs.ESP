@@ -283,8 +283,8 @@ void init(void)
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue);
-    // Pass otaQueue so OtaReceiver's idle-activity watchdog can post abort
-    // messages back into the same queue otaReceiverTask is draining.
+    // The receiver's watchdog posts abort messages into the same queue
+    // otaReceiverTask drains.
     AstrOs_OtaReceiver.Init(otaQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
@@ -428,15 +428,10 @@ static void pollingTimerCallback(void *arg)
     const bool master = isMasterNode.load();
     const bool discovery = discoveryMode.load();
 
-    // Skip the master polling work (POLL_ACK self-TX over serial +
-    // POLL_PADAWANS ESP-NOW dispatch) while an OTA transfer is in flight.
-    // Both compete with otaReceiverTask + astrosRxTask + astrosSerialDrainTask
-    // for CPU and the shared UART TX, and bench measurements show this
-    // contention stalls inbound FW_CHUNK processing for 1-3 s every 2-s
-    // poll cycle — halving effective wire throughput. The padawan branch
-    // below is also gated, though in practice padawan's OtaReceiver is
-    // never active during a master flash. Heartbeat log + display timeout
-    // stay unconditional (cheap and useful during long flashes).
+    // Skip master polling work (POLL_ACK self-TX + POLL_PADAWANS dispatch)
+    // during OTA — bench measurements show the contention with otaReceiverTask
+    // and astrosRxTask stalls inbound FW_CHUNK for 1-3 s per 2-s poll cycle,
+    // halving wire throughput. Heartbeat log + display timeout stay unconditional.
     const bool otaActive = AstrOs_OtaReceiver.isActive();
 
     // only send register requests during discovery mode
@@ -458,9 +453,8 @@ static void pollingTimerCallback(void *arg)
             {
                 ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
             }
-            // Master self-POLL_ACK: report its own build variant (baked into the
-            // binary at compile time via scripts/version_gen.py from $PIOENV) so
-            // the server can pick the right firmware asset for master at flash time.
+            // Master self-POLL_ACK: report own build variant so the server can
+            // pick the right firmware asset at flash time.
             AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
                                                    AstrOsConstants::Version, AstrOsConstants::Variant, true);
         }
@@ -1017,15 +1011,7 @@ void interfaceResponseQueueTask(void *arg)
 
 void astrosRxTask(void *arg)
 {
-    // 8 KB line-assembly buffer. Sized to fit a FW_CHUNK line — the largest
-    // single message in the protocol at ~5500 bytes: `31FW_CHUNK<RS>` header
-    // + UUID msgId + `<GS>` + transferId + `<US>` + seq + `<US>` + payloadLen +
-    // `<US>` + base64(4096-byte decoded chunk) + `<US>` + 4-char crc16-hex
-    // + EOL. 2000 bytes (the prior value) caused mid-base64 buffer-overflow
-    // resets that handed handleMessage a corrupted tail and rejected every
-    // chunk as "Invalid message". 8192 leaves headroom for future protocol
-    // messages without re-touching this; ESP32 heap has plenty of room for
-    // the one-time per-task malloc.
+    // 8 KB sized for FW_CHUNK lines (~5500 B after base64 + headers).
     size_t bufferLength = 8192;
     int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
@@ -1049,18 +1035,12 @@ void astrosRxTask(void *arg)
                 {
                     commandBuffer[bufferIndex] = '\0';
 
-                    // Compact log for FW_CHUNK lines. Each chunk is ~5.5 KB of
-                    // base64 — dumping the full buffer ~300 times per flash
-                    // floods the console AND competes with FW_CHUNK_ACK for the
-                    // UART TX channel (a 5.5 KB log line takes ~480 ms at
-                    // 115200 baud, which can starve ACK emission and trip the
-                    // server's retransmit timer). The CRC is the last 4 chars
-                    // of the line by protocol contract (FW_CHUNK ends with
-                    // `<US>crc16hex`); the byte count is already in
-                    // `bufferIndex`. Bounded scan over the first 32 bytes
-                    // avoids walking the base64 body for non-chunk messages.
-                    // No other inbound message type contains "FW_CHUNK"
-                    // (FW_CHUNK_ACK / FW_CHUNK_NAK are outbound only).
+                    // Compact log for FW_CHUNK — dumping the full ~5.5 KB
+                    // base64 body would compete with FW_CHUNK_ACK for the UART
+                    // TX and trip the server's retransmit timer. The CRC is
+                    // always the last 4 chars by protocol contract. Bounded
+                    // scan over the first 32 bytes avoids touching the body
+                    // for non-chunk messages.
                     bool isFwChunk = false;
                     const int scanEnd = bufferIndex < 32 ? bufferIndex : 32;
                     for (int s = 0; s + 8 <= scanEnd; s++)
@@ -1092,9 +1072,7 @@ void astrosRxTask(void *arg)
                     bufferIndex++;
                     if (bufferIndex >= bufferLength)
                     {
-                        // Data-loss event — drops the partial message and the next bytes until a
-                        // line terminator. During OTA this stalls the transfer until the server
-                        // times out and retries. LOGE so a single occurrence is impossible to miss.
+                        // Data loss — drops partial message + bytes until next line terminator.
                         ESP_LOGE("AstrOs RX", "Line overflow (>%zu B) — discarding partial message", bufferLength);
                         astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
@@ -1484,10 +1462,8 @@ void otaReceiverTask(void *arg)
     QueueHandle_t queue = (QueueHandle_t)arg;
     queue_ota_msg_t msg;
 
-    // Block indefinitely waiting on otaQueue — the task has no other work, so
-    // hot-polling with a 10 ms delay just wakes the scheduler 100x/s for no
-    // reason. portMAX_DELAY is safe here because this is the queue's exclusive
-    // consumer; producers never need this task to time out and do something else.
+    // portMAX_DELAY is safe — this task is the queue's exclusive consumer
+    // and has no other work to do.
     while (1)
     {
         if (xQueueReceive(queue, &msg, portMAX_DELAY))
@@ -1498,7 +1474,6 @@ void otaReceiverTask(void *arg)
                 ESP_LOGW(TAG, "OTA Receiver Stack HWM: %d", highWaterMark);
             }
 
-            // process() owns the free of every pointer in the union arm.
             AstrOs_OtaReceiver.process(msg);
         }
     }

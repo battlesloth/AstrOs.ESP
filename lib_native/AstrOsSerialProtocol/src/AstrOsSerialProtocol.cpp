@@ -254,11 +254,6 @@ namespace AstrOsSerialProtocol
 
     uint32_t chunksForSize(uint32_t totalSize, uint16_t chunkSize)
     {
-        // Both zeros short-circuit to 0. chunkSize=0 is the load-bearing guard:
-        // callers should reject upstream (parseFwChunk does), but the cheaper
-        // belt-and-braces here turns a future caller's div-by-zero crash into
-        // a deterministic 0 — easy to test for and impossible to confuse with
-        // a "real" chunk count.
         if (totalSize == 0 || chunkSize == 0)
         {
             return 0;

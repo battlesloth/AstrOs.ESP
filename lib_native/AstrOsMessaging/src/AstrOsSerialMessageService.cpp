@@ -141,11 +141,9 @@ std::string AstrOsSerialMessageService::getPollAck(std::string macAddress, std::
                                                    std::string fingerprint, std::string firmwareVersion,
                                                    std::string variant)
 {
-    // Wire format: header | mac<US>name<US>fingerprint<US>version<US>variant
-    // The server's parser (message_handler.ts) accepts 3, 4, or 5 fields after
-    // the header — `variant` is appended at the tail by newer peers. Empty
-    // variant is forwarded as an explicit empty field so the server's "skip
-    // empty variant" cache guard fires cleanly.
+    // Wire: header | mac<US>name<US>fingerprint<US>version<US>variant
+    // Server accepts 3, 4, or 5 fields. Empty variant is emitted as an explicit
+    // empty 5th field so the server's "skip empty variant" cache guard fires.
     std::stringstream ss;
     ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::POLL_ACK, "na");
     ss << macAddress << UNIT_SEPARATOR << controller << UNIT_SEPARATOR << fingerprint << UNIT_SEPARATOR
@@ -213,32 +211,14 @@ std::string AstrOsSerialMessageService::getFwChunkAck(std::string transferId, ui
     return ss.str();
 }
 
-/// @brief generates FW_CHUNK_NAK reply. Payload shape:
-///        transfer-id<US>last-good-seq<US>next-expected-seq<US>reason-code.
-///        `next-expected-seq` disambiguates the first-chunk NAK: when
-///        last-good-seq=0 alone, the server can't tell whether seq 0 was
-///        committed (resume from 1) or nothing was committed (resume
-///        from 0). next-expected-seq is unambiguous — the server resumes
-///        from it directly. Returns "" if `reasonCode` is not one of the
-///        four protocol-defined values (caller programming error).
-/// @param transferId transfer id
-/// @param lastGoodSeq the last seq we committed; 0 by convention when nothing
-///        has been committed yet. Receivers must look at nextExpectedSeq to
-///        disambiguate, since lastGoodSeq=0 is also the legitimate value when
-///        seq 0 has actually been committed.
-/// @param nextExpectedSeq the seq the server should resend next (the resume
-///        point — authoritative; do not derive from lastGoodSeq + 1)
-/// @param reasonCode must be one of "CRC" | "SIZE" | "OUT_OF_ORDER" |
-///        "FLASH_FULL"; any other value returns "" and the caller is
-///        responsible for noticing and logging
-/// @return serial message, or "" on invalid reasonCode
+/// @brief FW_CHUNK_NAK reply: transfer-id<US>last-good<US>next-expected<US>reason.
+///        next-expected disambiguates the first-chunk NAK (lastGood=0 is
+///        ambiguous: could mean "seq 0 committed" or "nothing committed").
+///        Returns "" if `reasonCode` isn't one of "CRC" | "SIZE" |
+///        "OUT_OF_ORDER" | "FLASH_FULL".
 std::string AstrOsSerialMessageService::getFwChunkNak(std::string transferId, uint32_t lastGoodSeq,
                                                       uint32_t nextExpectedSeq, std::string reasonCode)
 {
-    // Validate reasonCode against the protocol-defined set. An invalid value
-    // would otherwise pass through to the server, where the parser would
-    // reject the whole frame as UNKNOWN — losing the diagnostic context of
-    // why the frame was sent. Mirrors getFwDeployDone's status validation.
     if (reasonCode != "CRC" && reasonCode != "SIZE" && reasonCode != "OUT_OF_ORDER" && reasonCode != "FLASH_FULL")
     {
         return "";

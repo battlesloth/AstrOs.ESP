@@ -385,7 +385,8 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
         return;
     }
 
-    // parseFwTransferBegin accepts chunkSize=0; dividing by it below would trap on ESP32.
+    // parseFwTransferBegin accepts chunkSize=0; reject here with a clear
+    // io_error response rather than letting BulkReceiver fail downstream.
     if (rec.chunkSize == 0)
     {
         ESP_LOGW(TAG, "FW_TRANSFER_BEGIN chunkSize=0 rejected (transferId=%s)", rec.transferId.c_str());
@@ -437,14 +438,13 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
     auto rec = parseFwChunk(payload);
     if (!rec.valid)
     {
+        // No way to recover a transferId from a malformed payload — drop.
         ESP_LOGW(TAG, "FW_CHUNK parse rejected payload");
-        // No way to recover a transferId from a malformed payload — log and drop.
         return;
     }
 
-    // mbedtls_base64_decode requires dst sized for the decoded output. The
-    // declared wire-level payloadLen is the decoded byte count; allocate it
-    // exactly and treat any size mismatch from the decoder as SIZE failure.
+    // payloadLen is the decoded byte count (parser bounds it to <= 65535).
+    // mbedtls_base64_decode reports size mismatch as a SIZE-class failure.
     uint8_t *decoded = (uint8_t *)malloc(rec.payloadLen);
     if (decoded == nullptr)
     {
@@ -459,10 +459,8 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
                                    rec.base64Payload.size());
     if (rc != 0 || outLen != rec.payloadLen)
     {
-        // Each branch below is a protocol contract violation by the server — wire-declared
-        // payloadLen disagrees with the actual decoded length, or the base64 string contains
-        // a character the protocol forbids. LOGE so a single occurrence is visible; the
-        // SIZE NAK is the same as before.
+        // Each branch is a protocol contract violation by the server. LOGE so
+        // a single occurrence is visible. All three collapse to a SIZE NAK.
         if (rc == MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
         {
             ESP_LOGE(TAG, "FW_CHUNK base64 invalid character (seq=%u transferId=%s base64Len=%zu)", (unsigned)rec.seq,
@@ -502,7 +500,7 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
 
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(50)) != pdTRUE)
     {
-        // Queue full — emit CRC NAK so the server retransmits once the receiver drains.
+        // CRC NAK forces retransmit once the receiver drains.
         ESP_LOGW(TAG, "otaQueue full at FW_CHUNK seq=%u; emitting CRC NAK to force retransmit", (unsigned)rec.seq);
         freeOtaMsg(&m);
         this->sendFwChunkNak(rec.transferId, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/rec.seq, "CRC");
@@ -537,10 +535,8 @@ void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId
         return;
     }
 
-    // 100ms — matches CHUNK's tight bound. END arrives right after the chunk
-    // stream completes, so a wedged consumer at this point means astrosRxTask
-    // would otherwise stall for 500ms while inbound bytes pile into the UART RX
-    // buffer (8 KB; see src/main.cpp). Server retries on IO_ERROR.
+    // 100ms matches CHUNK's bound — keeps astrosRxTask from stalling if the
+    // consumer is wedged. Server retries on IO_ERROR.
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(100)) != pdTRUE)
     {
         ESP_LOGE(TAG, "otaQueue full at FW_TRANSFER_END");

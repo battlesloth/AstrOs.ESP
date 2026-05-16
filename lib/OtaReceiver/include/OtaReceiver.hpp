@@ -14,18 +14,14 @@
 
 #include <esp_timer.h>
 
-// Threading: all members of this class are accessed only from otaReceiverTask
-// via `process(...)`. No synchronization is required for this class's own
-// state, with the one exception of `active_` — see comment on its
-// declaration. The handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)`
-// to emit FW_*_ACK / NAK / DONE replies; that call terminates in xQueueSend
-// against serialQueue and is independently thread-safe.
+// Threading: all members are accessed only from otaReceiverTask via
+// `process(...)`. The one exception is `active_` (see its declaration), which
+// is read from the polling timer's dispatch task. Reply emission via
+// AstrOs_SerialMsgHandler.sendFw*() is independently thread-safe.
 //
-// The idle watchdog timer fires from esp_timer's dispatch task (NOT
-// otaReceiverTask), but its callback only does an `xQueueSend` of an
-// OTA_MSG_WATCHDOG_FIRE message — the actual state mutation runs on
-// otaReceiverTask via `process(...)`, preserving the single-task-state
-// invariant above.
+// The idle watchdog timer fires from esp_timer's dispatch task, but its
+// callback only does xQueueSend(OTA_MSG_WATCHDOG_FIRE) — state mutation still
+// runs on otaReceiverTask, preserving the single-task-state invariant.
 class OtaReceiver
 {
 private:
@@ -40,11 +36,9 @@ private:
     // replies — those use the inbound message's own transferId.
     std::string transferIdStr_;
 
-    // Idle-activity watchdog. Started at end of handleBegin, restarted at
-    // end of handleChunk, stopped at end of handleEnd. Fires if no chunk
-    // activity for `kWatchdogIdleUs` microseconds — meaning a transfer
-    // got stuck after BEGIN (server crash, link drop, all-chunks-rejected).
-    // Callback posts OTA_MSG_WATCHDOG_FIRE to otaQueue_ for in-task abort.
+    // Idle-activity watchdog. Fires if no chunk activity within kWatchdogIdleUs
+    // (transfer stuck after BEGIN — server crash, link drop, all-NAKs). Callback
+    // posts OTA_MSG_WATCHDOG_FIRE for in-task abort.
     esp_timer_handle_t watchdog_ = nullptr;
     QueueHandle_t otaQueue_ = nullptr;
     static constexpr uint64_t kWatchdogIdleUs = 10ULL * 1000ULL * 1000ULL; // 10 s
@@ -53,24 +47,21 @@ public:
     OtaReceiver();
     ~OtaReceiver();
 
-    // Singleton convention is enforced by deleted copy/move — the timer
-    // handle and queue handle have unique lifetime that doesn't survive a copy.
+    // Singleton; copy/move would silently create a second receiver pointing at
+    // the same queue and timer.
     OtaReceiver(const OtaReceiver &) = delete;
     OtaReceiver &operator=(const OtaReceiver &) = delete;
     OtaReceiver(OtaReceiver &&) = delete;
     OtaReceiver &operator=(OtaReceiver &&) = delete;
 
-    // Split from the constructor so the global can be constructed at
-    // static-init time, before FreeRTOS queues exist. `otaQueue` is held
-    // so the watchdog callback can post abort messages back into the same
-    // queue otaReceiverTask is draining.
+    // Split from the constructor so the global can be constructed at static-init
+    // time, before FreeRTOS queues exist. The queue handle is held so the
+    // watchdog callback can post into the same queue otaReceiverTask drains.
     void Init(QueueHandle_t otaQueue);
 
-    // Frees every malloc'd pointer in the union arm matching msg.kind.
     void process(queue_ota_msg_t &msg);
 
-    // Safe to call from any task. Used by src/main.cpp's pollingTimerCallback
-    // to suppress poll work while an OTA transfer is in flight.
+    // Safe to call from any task. Gates poll work during OTA.
     bool isActive() const noexcept
     {
         return active_;
@@ -83,15 +74,13 @@ private:
     void handleDeployBegin(queue_ota_msg_t &msg);
     void handleWatchdogFire();
 
-    // Timer helpers — wrap esp_timer_start_once + esp_timer_stop so the
-    // call sites in handleBegin/handleChunk/handleEnd stay one-liners and
-    // the "stop-then-start" restart pattern is centralized.
+    // esp_timer's one-shot has no native "restart" — these centralize the
+    // stop-then-start pattern.
     void watchdogStart();
     void watchdogRestart();
     void watchdogStop();
 
-    // esp_timer callback indirection — the timer's `arg` is `this`, so the
-    // callback can resolve the instance and call into the queue.
+    // esp_timer callback indirection — arg is `this`.
     static void watchdogTimerCb(void *arg);
 };
 

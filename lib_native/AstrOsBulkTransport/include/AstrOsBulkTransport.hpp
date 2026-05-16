@@ -180,13 +180,9 @@ namespace AstrOsBulkTransport
 
     struct [[nodiscard]] EndResult
     {
-        // HASH_MISMATCH is reserved for the Phase 3+ MIXED layer once it
-        // has a hash context. The MIXED OtaReceiver introduced in Phase 3
-        // sinks payload to /dev/null and never returns HASH_MISMATCH;
-        // only the Phase 4 enhancement that adds the streaming SHA-256
-        // context will ever produce it. This PURE state machine itself
-        // never returns HASH_MISMATCH — onEnd only validates chunk counts
-        // and returns OK on matching totals or IO_ERROR on mismatch.
+        // HASH_MISMATCH is reserved for the MIXED layer once it has a hash
+        // context. This PURE state machine only validates chunk counts —
+        // it returns OK or IO_ERROR, never HASH_MISMATCH.
         enum class Status : uint8_t
         {
             OK = 0,
@@ -194,10 +190,9 @@ namespace AstrOsBulkTransport
             IO_ERROR = 2
         };
 
-        // Populated when status != OK. NONE on the success path. Mirrors
-        // the NakReason pattern: distinct reasons that all happen to map
-        // to a single Status::IO_ERROR get surfaced so Phase 3 can log
-        // them and operators can debug WHICH IO_ERROR they hit.
+        // Populated when status != OK. NONE on the success path. Distinct
+        // reasons all map to Status::IO_ERROR so operators can debug WHICH
+        // IO_ERROR they hit.
         enum class Reason : uint8_t
         {
             NONE = 0,
@@ -219,24 +214,14 @@ namespace AstrOsBulkTransport
         }
     };
 
-    // Decides whether the caller's in-flight state should be torn down after
-    // BulkReceiver::onEnd returns. Used by OtaReceiver to gate cleanup so a
-    // stray END (server bug, late retry, or no transfer in flight) doesn't
+    // Gates caller-side cleanup after BulkReceiver::onEnd so a stray END can't
     // clobber a healthy in-progress transfer.
     //
-    // Teardown set: Status::OK, plus the two reasons that mean "the END
-    // applied to OUR running xferId and confirmed it ended" —
-    // SENDER_TOTAL_MISMATCH (sender's count != ours, our transfer is done)
-    // and RECEIVER_SHORT_COUNT (we got fewer chunks than END says).
+    //   Teardown: Status::OK, SENDER_TOTAL_MISMATCH, RECEIVER_SHORT_COUNT
+    //   Preserve: NOT_ACTIVE, WRONG_XFER_ID, NONE
     //
-    // Preserve set: NOT_ACTIVE (no in-flight transfer to tear down) and
-    // WRONG_XFER_ID (the END is for some other transferId). NONE is also
-    // preserve — by the current onEnd contract, NONE only ever pairs with
-    // Status::OK, so this branch is unreachable today but kept defensive.
-    //
-    // Leads with Status so a future Status enumerator (e.g. HASH_MISMATCH
-    // when the streaming SHA lands) is forced through the explicit case
-    // analysis rather than silently falling into one branch.
+    // Leads with Status so future enumerators (e.g. HASH_MISMATCH) force
+    // explicit case analysis rather than falling into one branch.
     bool shouldTeardownOnEndResult(const EndResult &er);
 
     // Sequential chunk-receive state machine for the firmware OTA path.

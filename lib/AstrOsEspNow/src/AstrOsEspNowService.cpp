@@ -679,9 +679,8 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     }
 
     // Padawan-side POLL_ACK payload: `name<US>fingerprint<US>version<US>variant`.
-    // Variant is the PlatformIO env name baked into the binary at build time;
-    // the master forwards it on to the server, which uses it to pick the
-    // correct firmware asset (`astros-esp-<v>-<variant>-app.bin`) at flash time.
+    // Variant is the PlatformIO env name; the server uses it to pick the
+    // correct firmware asset at OTA flash time.
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version
        << UNIT_SEPARATOR << AstrOsConstants::Variant;
@@ -715,16 +714,10 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
-    // Newer peers append a firmware version as a 4th field. Older peers
-    // omit it; we forward an empty string so the server records the peer's version
-    // as unknown (which it then treats as incompatible — accurate semantic).
+    // Newer peers append firmware version (4th) and build variant (5th).
+    // Older peers omit; empty strings propagate through so the server records
+    // "unknown" rather than silently picking the wrong firmware asset.
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
-    // Newer peers also append a build variant as a 5th field — the server
-    // uses it to pick the right firmware asset at OTA flash time. Older
-    // peers omit it; empty variant propagates through to the server, which
-    // skips populating its variant cache for that peer (so the flash flow
-    // surfaces `controllers_unknown` rather than silently picking the wrong
-    // asset).
     auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
@@ -741,11 +734,8 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
 
-    // Pack `fingerprint<US>version<US>variant` into the interface queue's
-    // `message` field. Trailing empty pieces are preserved by joining
-    // explicitly (rather than splitString's trim-trailing behavior) so the
-    // dispatcher in main.cpp can pick out an empty variant when relaying a
-    // legacy peer that didn't report one.
+    // Pack `fingerprint<US>version<US>variant` for the interface queue. Joined
+    // explicitly so trailing empty pieces survive (splitString would trim them).
     auto packed = fingerprint + UNIT_SEPARATOR + peerVersion + UNIT_SEPARATOR + peerVariant;
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, packed);
 

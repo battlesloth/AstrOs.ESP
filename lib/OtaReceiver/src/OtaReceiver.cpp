@@ -12,10 +12,8 @@ OtaReceiver::OtaReceiver() {}
 
 OtaReceiver::~OtaReceiver()
 {
-    // The singleton is process-lifetime in firmware so this destructor never runs there,
-    // but native test harnesses that link the class get cleanup that doesn't leak
-    // the esp_timer handle. esp_timer_stop on an idle timer returns
-    // ESP_ERR_INVALID_STATE; ignored.
+    // The singleton is process-lifetime in firmware; this dtor exists for
+    // native-link symmetry. esp_timer_stop on an idle timer is harmless.
     if (watchdog_ != nullptr)
     {
         esp_timer_stop(watchdog_);
@@ -26,10 +24,7 @@ OtaReceiver::~OtaReceiver()
 
 void OtaReceiver::Init(QueueHandle_t otaQueue)
 {
-    // Idempotent: a second Init() would leak the first esp_timer handle. Not
-    // a reachable path today (main.cpp calls Init once at boot), but cheap to
-    // guard against future refactors that move Init into a setup-on-demand
-    // pattern.
+    // Idempotent: a second Init() would leak the first esp_timer handle.
     if (watchdog_ != nullptr)
     {
         ESP_LOGW(TAG, "Init() called twice — ignoring second call");
@@ -48,9 +43,8 @@ void OtaReceiver::Init(QueueHandle_t otaQueue)
     esp_err_t err = esp_timer_create(&args, &watchdog_);
     if (err != ESP_OK)
     {
-        // Create-failure is a programmer error (timer count exhausted is the only
-        // realistic cause). Log + leave watchdog_ null — receiver still works for
-        // happy-path transfers; only the stuck-recovery path is lost.
+        // Receiver still serves happy-path transfers without the watchdog —
+        // only stuck-recovery is lost.
         ESP_LOGE(TAG, "esp_timer_create(ota_receiver_watchdog) failed: %s — watchdog disabled", esp_err_to_name(err));
         watchdog_ = nullptr;
     }
@@ -63,16 +57,13 @@ void OtaReceiver::watchdogTimerCb(void *arg)
     auto self = static_cast<OtaReceiver *>(arg);
     if (self->otaQueue_ == nullptr)
     {
-        // Init() failed to capture the queue or wasn't called. Nothing safe
-        // to do from the timer dispatch task; log and bail.
         return;
     }
     queue_ota_msg_t msg{};
     msg.kind = OTA_MSG_WATCHDOG_FIRE;
     msg.transferId = nullptr;
-    // Non-blocking send from the timer dispatch task — if the queue is full,
-    // otaReceiverTask is already wedged and dropping this signal is the
-    // least-bad outcome (the wedge surfaces through the next operator action).
+    // Non-blocking — a full queue means otaReceiverTask is already wedged;
+    // dropping the signal is the least-bad outcome.
     if (xQueueSend(self->otaQueue_, &msg, 0) != pdTRUE)
     {
         ESP_LOGW(TAG, "watchdog: otaQueue full, dropping WATCHDOG_FIRE signal");
@@ -94,9 +85,8 @@ void OtaReceiver::watchdogRestart()
 {
     if (watchdog_ == nullptr)
         return;
-    // esp_timer doesn't expose a single "restart one-shot" call. Stop + start
-    // is the documented pattern. esp_timer_stop on an idle timer is a no-op
-    // returning ESP_ERR_INVALID_STATE — safe to ignore.
+    // Stop-then-start: esp_timer has no native restart. Stop on an idle timer
+    // is a harmless no-op.
     esp_timer_stop(watchdog_);
     esp_err_t err = esp_timer_start_once(watchdog_, kWatchdogIdleUs);
     if (err != ESP_OK)
@@ -133,17 +123,12 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         handleWatchdogFire();
         break;
     default:
-        // Unknown kind: a forgotten case label, not memory corruption. LOGE so the
-        // missed enumerator surfaces in logs without bricking the box. freeOtaMsg
-        // below only knows the recognized kinds — for unknown values it falls
-        // through to freeing only the transferId, accepting that the union arm's
-        // contents are unknowable from out here.
+        // Unknown kind surfaces the missed enumerator without bricking the
+        // box. freeOtaMsg below will free only transferId for unknown kinds.
         ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — dropping", static_cast<int>(msg.kind),
                  msg.transferId ? msg.transferId : "(null)");
         break;
     }
-    // Single freeing point for the queue-message contract — see OtaQueueMessage.h
-    // for the per-kind ownership table.
     freeOtaMsg(&msg);
 }
 
@@ -151,9 +136,8 @@ void OtaReceiver::handleWatchdogFire()
 {
     if (!active_)
     {
-        // Stale fire — handleEnd or a prior watchdog already cleared the
-        // state but this signal was already in flight before we stopped the
-        // timer. Idempotent no-op is the correct behavior.
+        // Stale fire — a prior end/watchdog already cleared state but the
+        // signal was already in flight. Idempotent no-op.
         return;
     }
     ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
@@ -161,9 +145,8 @@ void OtaReceiver::handleWatchdogFire()
     bulk_.reset();
     active_ = false;
     transferIdStr_.clear();
-    // Don't notify the server — its chunk_streamer has its own timeout that
-    // surfaces the failure to the operator. The master's job is to be
-    // reachable for the next BEGIN.
+    // No server notification — chunk_streamer has its own timeout. The
+    // master's job is to be ready for the next BEGIN.
 }
 
 void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
@@ -178,8 +161,7 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    // Wire-level transferId is an opaque string; BulkReceiver wants a uint8_t. parseStrictU8
-    // tightens the contract (rejects whitespace + signed forms that strtoul would accept).
+    // BulkReceiver wants a uint8_t; parseStrictU8 rejects whitespace and signed forms.
     auto parsed = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsed.has_value())
     {
@@ -209,10 +191,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
              (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, msg.begin.sha256Hex);
 
     AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "OK");
-
-    // Start the idle-activity watchdog. If no FW_CHUNK arrives within
-    // kWatchdogIdleUs, watchdogTimerCb posts OTA_MSG_WATCHDOG_FIRE and the
-    // receiver clears state so the next BEGIN can be accepted.
     watchdogStart();
 }
 
@@ -227,8 +205,6 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         return;
     }
 
-    // If the incoming string mismatches the running transfer's xferId, BulkReceiver::onChunk
-    // will return nakInactive() with reason=OUT_OF_ORDER.
     auto parsedChunk = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsedChunk.has_value())
     {
@@ -263,13 +239,11 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
             reasonStr = "FLASH_FULL";
             break;
         case AstrOsBulkTransport::NakReason::NONE:
-            // Unreachable on the NAK path — log and force CRC for safe retransmit.
+            // NONE on the NAK path is unreachable; force CRC for safe retransmit.
             ESP_LOGE(TAG, "BulkReceiver returned NAK with reason=NONE; forcing CRC");
             reasonStr = "CRC";
             break;
         default:
-            // Unknown enumerator: fall back to CRC for safe retransmit; loud log so the miss
-            // is caught before it ships.
             ESP_LOGE(TAG, "Unknown NakReason value %d — forcing CRC", static_cast<int>(cr.reason));
             reasonStr = "CRC";
             break;
@@ -277,10 +251,8 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq, reasonStr);
     }
 
-    // Any chunk activity (ACK or NAK) counts as "transfer is alive" — reset
-    // the watchdog. A long string of NAKs alone wouldn't drain the transfer,
-    // but the server's chunk_streamer has its own retry-exhaustion failure
-    // for that. The watchdog protects against *silence*, not slow progress.
+    // The watchdog protects against silence, not slow progress — any chunk
+    // activity (ACK or NAK) resets it. chunk_streamer handles retry exhaustion.
     watchdogRestart();
 }
 
@@ -293,9 +265,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     auto parsedEnd = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsedEnd.has_value())
     {
-        // Unparseable transferId — we can't tell whether this END is for our
-        // in-flight transfer or a stray. NAK without touching state so a real
-        // transfer in progress isn't torn down by a malformed END.
+        // Unparseable transferId — can't tell if this END is for our transfer.
+        // NAK without touching state so a malformed END can't clobber it.
         ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric; emitting IO_ERROR (state preserved)",
                  transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
@@ -307,16 +278,15 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
-        // No local hash is computed yet — echo the server's stated hash back as the "computed"
-        // value so the protocol-level comparison succeeds.
+        // No local hash yet — echo the server's hash so its compare succeeds.
         ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u", transferIdIn.c_str(),
                  (unsigned)msg.end.totalChunks);
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", finalShaIn);
     }
     else
     {
-        // WRONG_XFER_ID and SENDER_TOTAL_MISMATCH indicate the server confused its own state —
-        // surface those at LOGE. Other reasons stay at LOGW.
+        // WRONG_XFER_ID and SENDER_TOTAL_MISMATCH are server-state bugs (LOGE);
+        // other reasons stay at LOGW.
         const char *reasonStr = "(unknown)";
         bool serverBug = false;
         switch (er.reason)
@@ -339,7 +309,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             reasonStr = "RECEIVER_SHORT_COUNT";
             break;
         default:
-            // Unknown enumerator: promote to LOGE so the miss isn't masked as a benign warning.
             ESP_LOGE(TAG, "Unknown EndResult::Reason value %d", static_cast<int>(er.reason));
             serverBug = true;
             break;
@@ -356,19 +325,13 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
     }
 
-    // PURE seam: shouldTeardownOnEndResult encodes the "tear down only if the
-    // END applied to our running transfer" rule. See its docstring for the
-    // teardown vs preserve set; tests in bulk_transport_tests.cpp pin every
-    // enum value so a future regression that flips a branch fails loudly.
+    // Tear down only when the END applied to our running transfer — see
+    // shouldTeardownOnEndResult's docstring for the teardown vs preserve set.
     if (AstrOsBulkTransport::shouldTeardownOnEndResult(er))
     {
         active_ = false;
         transferIdStr_.clear();
         bulk_.reset();
-
-        // Transfer complete — stop the idle watchdog so a stale fire doesn't
-        // arrive after we've already cleared state. handleWatchdogFire is
-        // idempotent against !active_, but stopping is the explicit signal.
         watchdogStop();
     }
 }
@@ -381,8 +344,7 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
 
     if (orderListStr.empty())
     {
-        // sendFwDeployDone drops on empty results — skip the call so we don't
-        // double-log. Server times out and surfaces the failure to the operator.
+        // sendFwDeployDone would drop empty results — skip to avoid double-log.
         ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
         return;
     }

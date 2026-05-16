@@ -60,13 +60,9 @@ namespace AstrOsSerialProtocol
     // are process-lifetime; callers must not free them.
     const char *describeRejectReason(DecodeRejectReason reason);
 
-    // Ceil-divide totalSize by chunkSize for OTA transfers. Used to compute
-    // the receiver-side totalChunks from the server's declared totalSize.
-    // The ceil (not floor) is correctness-critical: the final chunk is short
-    // whenever totalSize is not an exact multiple of chunkSize.
-    //
-    // Returns 0 when either input is 0. The chunkSize=0 path is a defensive
-    // guard — callers (e.g. parseFwChunk) reject upstream, but a future caller
-    // that forgets would otherwise divide by zero.
+    // Ceil-divide for OTA totalChunks computation. Ceil (not floor) because
+    // the final chunk is short when totalSize isn't a multiple of chunkSize.
+    // Returns 0 on either zero input (chunkSize=0 is a defensive guard
+    // against div-by-zero; callers reject upstream).
     uint32_t chunksForSize(uint32_t totalSize, uint16_t chunkSize);
 } // namespace AstrOsSerialProtocol

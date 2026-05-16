@@ -15,24 +15,19 @@ extern "C"
         OTA_MSG_CHUNK = 1,
         OTA_MSG_END = 2,
         OTA_MSG_DEPLOY_BEGIN = 3,
-        // Posted by OtaReceiver's idle-activity watchdog (esp_timer one-shot)
-        // back to the otaQueue when no chunk activity is seen within the
-        // configured idle threshold. Carries no payload — `transferId` is
-        // nullptr and no union arm is used. Handler clears in-progress
-        // state so the next FW_TRANSFER_BEGIN can succeed without reboot.
+        // Posted by the idle-activity watchdog when no chunk activity is seen
+        // within the threshold. No payload; transferId is nullptr.
         OTA_MSG_WATCHDOG_FIRE = 4
     } ota_msg_kind_t;
 
     // Discriminated union carrying one decoded inbound FW_* message from
     // AstrOsSerialMsgHandler (producer) to otaReceiverTask (consumer).
     //
-    // Memory ownership:
-    //   - Producer mallocs every pointer field listed below for the kind
-    //     it sends. On xQueueSend failure, producer frees its own
-    //     allocations and emits a fallback NAK so the server can retry.
-    //   - Consumer reads `kind` first, then frees only the pointers
-    //     belonging to that kind's union arm. Mixing kinds across the
-    //     free path will leak or double-free.
+    // Memory ownership: producer mallocs every pointer for the kind it sends
+    // and on xQueueSend failure calls freeOtaMsg() to release its own
+    // allocations. Consumer calls freeOtaMsg() after dispatching to the
+    // matching handler. Mixing kinds across the free path will leak or
+    // double-free.
     //
     // Per-kind owned pointers:
     //   OTA_MSG_BEGIN          transferId, msgId, targetList
@@ -41,13 +36,10 @@ extern "C"
     //   OTA_MSG_DEPLOY_BEGIN   transferId, msgId, orderList
     //   OTA_MSG_WATCHDOG_FIRE  none (transferId is nullptr; no union arm)
     //
-    // sha256Hex / finalSha256Hex are fixed-size buffers sized for the 64
-    // hex chars + NUL terminator; they live inline in the struct and never
-    // need freeing. SHA256_HEX_LEN names the hex-string length so the
-    // strncpy(buf, src, SHA256_HEX_LEN) + buf[SHA256_HEX_LEN]='\0' idiom
-    // reads as one constant instead of a 64/65 magic-number pair.
-    // Defined as an enum (not #define) to keep it scoped — the macro form
-    // would leak into every translation unit that includes this header.
+    // sha256Hex / finalSha256Hex are inline 65-byte buffers (64 hex chars +
+    // NUL). Inline so the chunk hot path doesn't pay a malloc/free per BEGIN.
+    // Scoped as enum (not #define) so the constant doesn't leak into every
+    // including translation unit.
     enum
     {
         SHA256_HEX_LEN = 64
@@ -93,11 +85,9 @@ extern "C"
         };
     } queue_ota_msg_t;
 
-    // Centralizes the per-kind free contract documented above. Both the
-    // producer's xQueueSend-fail branches and the consumer's process()
-    // success branches call this so the per-kind ownership rule lives in
-    // exactly one place. All freed pointers are cleared to nullptr to make
-    // accidental double-frees no-ops.
+    // Sole implementation of the per-kind free contract above. Both producer
+    // and consumer call this. Freed pointers are nulled so accidental
+    // double-frees become no-ops.
     static inline void freeOtaMsg(queue_ota_msg_t *m)
     {
         if (m == NULL)
@@ -130,12 +120,8 @@ extern "C"
             // No union arm; transferId is nullptr by contract.
             break;
         default:
-            // Unknown kind — caller (e.g. OtaReceiver::process) has already
-            // logged the missed enumerator. We can't know which union arm is
-            // live, so only the transferId is freed below. The union arm
-            // leaks; this is the price of an out-of-range kind, and it's
-            // unreachable in normal operation (the kind is set by the
-            // producer immediately before send).
+            // Unknown kind — caller must log. Only transferId is freed below;
+            // the union arm leaks because its layout can't be inferred.
             break;
         }
         free(m->transferId);
