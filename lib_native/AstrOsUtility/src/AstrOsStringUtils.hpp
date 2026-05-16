@@ -151,17 +151,9 @@ public:
         return n;
     }
 
-    /// @brief Parse a decimal string strictly into a uint8_t (0..255).
-    ///
-    /// Returns an empty optional on:
-    ///   - empty input
-    ///   - any non-digit character (including leading sign, leading/trailing whitespace, hex prefix)
-    ///   - values > 255
-    ///
-    /// Note: strtoul accepts leading whitespace and a leading "+" / "-" by default, so this helper
-    /// rejects them explicitly to keep the wire-protocol contract tight. Used by the OTA receive
-    /// path to convert wire-level string transferId to BulkReceiver's uint8_t xferId; centralized
-    /// here so the three OtaReceiver handlers don't each open-code the strtoul+errno+range dance.
+    /// @brief Parse a decimal string strictly into a uint8_t (0..255). Stricter than strtoul:
+    ///        rejects empty input, leading sign, leading/trailing whitespace, hex prefix, and
+    ///        any non-digit character. Returns std::nullopt on any rejection or value > 255.
     static std::optional<uint8_t> parseStrictU8(const std::string &s)
     {
         if (s.empty())

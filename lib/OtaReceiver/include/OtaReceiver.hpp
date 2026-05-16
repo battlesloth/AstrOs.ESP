@@ -12,15 +12,10 @@
 #include <freertos/queue.h>
 
 // Threading: all members of this class are accessed only from otaReceiverTask
-// (core 1) via `process(...)`. No synchronization is required for this class's
-// own state. If a future change adds a second caller (e.g. a panic-stop path),
-// revisit this contract.
-//
-// Note: handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)` to
-// emit FW_*_ACK / NAK / DONE replies. That cross-singleton call is independently
-// thread-safe — the receiving end is a FreeRTOS queue producer protected by
-// xQueueSend, which is the standard producer/consumer pattern this codebase
-// uses everywhere. The threading constraint above does NOT propagate through it.
+// via `process(...)`. No synchronization is required for this class's own
+// state. The handler implementations call `AstrOs_SerialMsgHandler.sendFw*(...)`
+// to emit FW_*_ACK / NAK / DONE replies; that call terminates in xQueueSend
+// against serialQueue and is independently thread-safe.
 class OtaReceiver
 {
 private:
@@ -28,21 +23,18 @@ private:
     bool active_ = false;
     // Echoed back in every FW_*_ACK / NAK on this transfer.
     std::string transferIdStr_;
-    // Captured at BEGIN time, echoed in END_ACK (END's own msgId echoes via
-    // the END record itself; this field is for BEGIN_ACK only).
+    // BEGIN-time msgId; END's own msgId echoes via the END record itself.
     std::string beginMsgId_;
 
 public:
     OtaReceiver();
     ~OtaReceiver();
 
-    // Called once at boot from main.cpp; intentionally separate from the
-    // constructor so the global instance can be constructed at static-init
-    // time, before FreeRTOS queues exist.
+    // Split from the constructor so the global can be constructed at
+    // static-init time, before FreeRTOS queues exist.
     void Init();
 
-    // Drains one queue_ota_msg_t. Dispatches by `msg.kind` and frees every
-    // malloc'd pointer in the corresponding union arm before returning.
+    // Frees every malloc'd pointer in the union arm matching msg.kind.
     void process(queue_ota_msg_t &msg);
 
 private:

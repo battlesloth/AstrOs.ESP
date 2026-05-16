@@ -14,8 +14,6 @@ OtaReceiver::~OtaReceiver() {}
 
 void OtaReceiver::Init()
 {
-    // Phase 3: nothing to do here yet. Phase 4 will allocate the SHA
-    // context and ensure the firmware staging dir exists on SD.
     ESP_LOGI(TAG, "OtaReceiver initialized");
 }
 
@@ -36,14 +34,9 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         handleDeployBegin(msg);
         break;
     default:
-        // Unknown kind means either memory corruption on the queue or a new
-        // OTA_MSG_* enumerator was added without extending this switch. Both
-        // are programmer errors: silently dropping the message would leak the
-        // union arm's pointers AND leave the server waiting for a reply. Fail
-        // loud — abort surfaces the panic trace through the existing
-        // esp32_exception_decoder pipeline.
-        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — protocol violation, aborting",
-                 static_cast<int>(msg.kind), msg.transferId ? msg.transferId : "(null)");
+        // Unknown kind: silent drop would leak the union arm AND hang the server. Fail loud.
+        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — aborting", static_cast<int>(msg.kind),
+                 msg.transferId ? msg.transferId : "(null)");
         free(msg.transferId);
         abort();
     }
@@ -64,7 +57,8 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    // Convert the wire-level opaque string transferId to BulkReceiver's uint8_t form.
+    // Wire-level transferId is an opaque string; BulkReceiver wants a uint8_t. parseStrictU8
+    // tightens the contract (rejects whitespace + signed forms that strtoul would accept).
     auto parsed = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsed.has_value())
     {
@@ -77,11 +71,10 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
     }
     uint8_t xferId = parsed.value();
 
-    // Phase 3 sliding window: hard-coded to 16 (matches the server's nominal sender window).
-    // Phase 5 may make this configurable.
-    constexpr uint8_t kPhase3WindowSize = 16;
+    // Matches the server's nominal sender window.
+    constexpr uint8_t kWindowSize = 16;
 
-    auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kPhase3WindowSize);
+    auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kWindowSize);
     if (!br.valid)
     {
         ESP_LOGW(TAG, "BulkReceiver::begin rejected: reason=%d (totalSize=%u chunks=%u chunkSize=%u)",
@@ -121,13 +114,11 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         return;
     }
 
-    // Re-derive the uint8_t form. transferIdStr_ is the authoritative running
-    // value — if the incoming string mismatches, BulkReceiver::onChunk's
-    // internal xferId check will return nakInactive() with reason=OUT_OF_ORDER.
+    // If the incoming string mismatches the running transfer's xferId, BulkReceiver::onChunk
+    // will return nakInactive() with reason=OUT_OF_ORDER.
     auto parsedChunk = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsedChunk.has_value())
     {
-        // Wire form was numeric at BEGIN time; arriving as garbage now is a server bug.
         ESP_LOGW(TAG, "FW_CHUNK transferId='%s' not numeric; emitting OUT_OF_ORDER", transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0, "OUT_OF_ORDER");
         free(msg.chunk.payload);
@@ -140,12 +131,6 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 
     if (cr.decision == AstrOsBulkTransport::Decision::ACK)
     {
-        // Phase 3 sinks payload to /dev/null. Phase 4 will, in this branch,
-        // before the sendFwChunkAck call:
-        //   - fwrite(cr.payload, cr.payloadLen, 1, stagingFp_)
-        //   - mbedtls_sha256_update(&shaCtx_, cr.payload, cr.payloadLen)
-        // and on fwrite failure must NAK with reason=FLASH_FULL instead of
-        // ACK — DO NOT drop a bare fwrite in here without the failure branch.
         AstrOs_SerialMsgHandler.sendFwChunkAck(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                cr.windowRemaining);
     }
@@ -172,9 +157,9 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
             reasonStr = "CRC";
             break;
         default:
-            // Forward-compat: if Phase 4+ adds a new NakReason enumerator and forgets to
-            // extend this switch, surface it loud instead of silently downgrading to CRC.
-            ESP_LOGE(TAG, "Unknown NakReason value %d — forcing CRC for safe retransmit", static_cast<int>(cr.reason));
+            // Unknown enumerator: fall back to CRC for safe retransmit; loud log so the miss
+            // is caught before it ships.
+            ESP_LOGE(TAG, "Unknown NakReason value %d — forcing CRC", static_cast<int>(cr.reason));
             reasonStr = "CRC";
             break;
         }
@@ -210,20 +195,16 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
-        // Phase 3: no streaming SHA, so we echo the server's stated hash back
-        // as the "computed" value. Phase 4 will replace this with the real
-        // mbedtls_sha256_finish output.
+        // No local hash is computed yet — echo the server's stated hash back as the "computed"
+        // value so the protocol-level comparison succeeds. Replace when streaming SHA lands.
         ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u", transferIdIn.c_str(),
                  (unsigned)msg.end.totalChunks);
         AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", finalShaIn);
     }
     else
     {
-        // Decode reason to a string and pick severity: WRONG_XFER_ID and
-        // SENDER_TOTAL_MISMATCH point at a server-state bug (the server confused
-        // its own books) and deserve LOGE so they surface in monitoring.
-        // RECEIVER_SHORT_COUNT and NOT_ACTIVE are transient-or-local conditions
-        // and stay at LOGW.
+        // WRONG_XFER_ID and SENDER_TOTAL_MISMATCH indicate the server confused its own state —
+        // surface those at LOGE. Other reasons stay at LOGW.
         const char *reasonStr = "(unknown)";
         bool serverBug = false;
         switch (er.reason)
@@ -246,10 +227,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             reasonStr = "RECEIVER_SHORT_COUNT";
             break;
         default:
-            // Forward-compat: a new Reason enumerator added without extending this switch
-            // would silently log at LOGW with reasonStr="(unknown)". Surface it loud so the
-            // miss is caught in monitoring instead of slipping past as a benign warning.
-            ESP_LOGE(TAG, "Unknown EndResult::Reason value %d — please extend the switch", static_cast<int>(er.reason));
+            // Unknown enumerator: promote to LOGE so the miss isn't masked as a benign warning.
+            ESP_LOGE(TAG, "Unknown EndResult::Reason value %d", static_cast<int>(er.reason));
             serverBug = true;
             break;
         }
@@ -283,7 +262,7 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
     std::vector<astros_fw_deploy_result_t> results;
     if (orderListStr.empty())
     {
-        // Empty order list = server error. Don't send anything (sendFwDeployDone drops on empty).
+        // sendFwDeployDone drops on empty results — server times out.
         ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
     }
     else
@@ -306,8 +285,8 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
         }
     }
 
-    ESP_LOGI(TAG, "FW_DEPLOY_BEGIN stub: transferId=%s target-count=%zu — all-FAILED not_implemented",
-             transferIdIn.c_str(), results.size());
+    ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s target-count=%zu — all-FAILED not_implemented", transferIdIn.c_str(),
+             results.size());
 
     AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
 

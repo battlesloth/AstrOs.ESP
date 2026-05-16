@@ -6,12 +6,8 @@
 #include <cstring>
 #include <type_traits>
 
-// queue_ota_msg_t is passed by value through xQueueCreate's storage — it must
-// stay standard-layout (POD-compatible), with the discriminator at offset 0
-// so a C consumer can peek `kind` without knowing the C++ layout. A future
-// contributor adding a non-trivial member (std::string, std::optional, etc.)
-// would silently break the FreeRTOS-queue contract; this assert fails loudly
-// at compile time.
+// queue_ota_msg_t is passed by value through FreeRTOS queue storage; adding a non-trivial member
+// (std::string, std::optional) silently breaks that contract — catch it at compile time.
 static_assert(std::is_standard_layout<queue_ota_msg_t>::value, "queue_ota_msg_t must be standard-layout");
 static_assert(offsetof(queue_ota_msg_t, kind) == 0, "kind must be the first member (consumer reads it first)");
 
@@ -78,11 +74,8 @@ TEST(OtaQueueMessage, DeployArmRoundTrip)
     EXPECT_EQ(OTA_MSG_DEPLOY_BEGIN, m.kind);
 }
 
-// Documents the union-aliasing contract: every arm of the anonymous union
-// occupies the same starting address, so reading the wrong arm reads bytes
-// that were written via another arm. Consumers MUST switch on `kind` before
-// touching the union — if a handler ever forgets, this test pins down WHY
-// that produces garbage (vs e.g. a separate-field layout that wouldn't).
+// Every arm of the anonymous union must share the same starting address — pins the union
+// contract so a future refactor that accidentally promotes the arms to separate fields fails.
 TEST(OtaQueueMessage, UnionArmsShareStartingAddress)
 {
     queue_ota_msg_t m;
@@ -93,12 +86,8 @@ TEST(OtaQueueMessage, UnionArmsShareStartingAddress)
     EXPECT_EQ(beginAddr, static_cast<const void *>(&m.deploy));
 }
 
-// strncpy(buf, src, 64) followed by buf[64] = '\0' is the producer's
-// idiom in AstrOsSerialMsgHandler.cpp for both sha256Hex and finalSha256Hex.
-// This test pins the contract that a 64-char source value survives intact
-// and the buffer remains NUL-terminated at byte 64. Off-by-ones here would
-// leak an unterminated string into FW_TRANSFER_END_ACK's computedSha256Hex
-// payload — silently wire-corrupting the hash.
+// Pins the producer's strncpy(buf, src, 64) + buf[64]='\0' idiom for the 64-char hot path.
+// An off-by-one would leak an unterminated string into the wire ACK payload.
 TEST(OtaQueueMessage, Sha256HexBoundaryStaysNulTerminated)
 {
     queue_ota_msg_t m;
@@ -115,12 +104,8 @@ TEST(OtaQueueMessage, Sha256HexBoundaryStaysNulTerminated)
     EXPECT_STREQ(full, m.begin.sha256Hex);
 }
 
-// Companion to the boundary test: a SHORTER-than-64-char source must also
-// produce a properly NUL-padded buffer. The producer relies on strncpy's
-// NUL-fill behavior for inputs shorter than the destination length; if a
-// future refactor swaps strncpy for memcpy(dst, src, 64), bytes [strlen+1..64]
-// would leak whatever pre-fill garbage was in the buffer (here 0xFF) into
-// the wire ACK payload. This test fails loudly in that scenario.
+// Short input must also produce a NUL-padded buffer. Relies on strncpy's NUL-fill behavior;
+// a memcpy(dst, src, 64) regression would leak whatever bytes lived past the source literal.
 TEST(OtaQueueMessage, Sha256HexShortInputNulFills)
 {
     queue_ota_msg_t m;

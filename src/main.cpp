@@ -1424,9 +1424,7 @@ void otaReceiverTask(void *arg)
                 ESP_LOGW(TAG, "OTA Receiver Stack HWM: %d", highWaterMark);
             }
 
-            // OtaReceiver::process is responsible for freeing every malloc'd
-            // pointer in the union arm; the task body does not free anything
-            // directly.
+            // process() owns the free of every pointer in the union arm.
             AstrOs_OtaReceiver.process(msg);
         }
         vTaskDelay(pdMS_TO_TICKS(10));

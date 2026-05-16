@@ -63,11 +63,8 @@ void AstrOsSerialMsgHandler::handleMessage(std::string message)
 
     ESP_LOGD(TAG, "Received serial message type: %d", static_cast<int>(validation.type));
 
-    // FW_* OTA messages take a different path from the standard
-    // decodeSerialMessage -> interfaceResponseQueue pipeline: the OtaReceiver
-    // task owns its own queue and handles all four kinds directly. Phase 1's
-    // decodeFwInbound shim still exists in AstrOsSerialProtocol for the
-    // (eventual) ESP-NOW path; on the master serial path it is unreachable.
+    // FW_* OTA messages route through OtaReceiver's own queue, not the standard
+    // decodeSerialMessage -> interfaceResponseQueue pipeline.
     switch (validation.type)
     {
     case AstrOsSerialMessageType::FW_TRANSFER_BEGIN:
@@ -287,10 +284,8 @@ void AstrOsSerialMsgHandler::sendFwChunkNak(std::string transferId, uint32_t las
 
     if (response.empty())
     {
-        // getFwChunkNak rejects reasonCode not in {CRC, SIZE, OUT_OF_ORDER, FLASH_FULL}. This is a
-        // fatal local bug — we can't legitimately recover, but we MUST emit *something* so the
-        // server doesn't hang waiting on this seq. Fall back to "CRC" which is the safe
-        // "ask for retransmit" default per the design doc's load-bearing contract.
+        // Builder rejects reasonCode outside {CRC, SIZE, OUT_OF_ORDER, FLASH_FULL}. Fall back
+        // to "CRC" (safe retransmit) so the server doesn't hang waiting on this seq.
         ESP_LOGE(TAG, "FW_CHUNK_NAK build returned empty for reasonCode='%s'. Falling back to CRC.",
                  reasonCode.c_str());
         response = this->msgService.getFwChunkNak(transferId, lastGoodSeq, nextExpectedSeq, "CRC");
@@ -387,11 +382,7 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
         return;
     }
 
-    // Guard against chunkSize=0 before computing totalChunks. parseFwTransferBegin
-    // accepts 0 as a syntactically valid uint16_t, and dividing by it would trap
-    // on ESP32 (integer-divide exception → node reset). BulkReceiver::begin has
-    // its own ZERO_CHUNK_SIZE check, but it can't help us here because the
-    // divide happens first.
+    // parseFwTransferBegin accepts chunkSize=0; dividing by it below would trap on ESP32.
     if (rec.chunkSize == 0)
     {
         ESP_LOGW(TAG, "FW_TRANSFER_BEGIN chunkSize=0 rejected (transferId=%s)", rec.transferId.c_str());
@@ -410,10 +401,7 @@ void AstrOsSerialMsgHandler::handleFwTransferBeginInbound(const std::string &msg
     strncpy(m.begin.sha256Hex, rec.sha256Hex.c_str(), 64);
     m.begin.sha256Hex[64] = '\0';
 
-    // Join targetIds back into a single RS-separated string. Phase 3 doesn't
-    // actually fan out to targets (no SD, no mesh), so OtaReceiver just frees
-    // this field after parsing it back if needed. Phase 4+ may keep it for
-    // the deploy stage.
+    // Join targetIds back into a single RS-separated string for the consumer.
     std::string joined;
     for (size_t i = 0; i < rec.targetIds.size(); i++)
     {
@@ -472,10 +460,6 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
                                    rec.base64Payload.size());
     if (rc != 0 || outLen != rec.payloadLen)
     {
-        // Split the diagnostic so bench debugging starts at the right hypothesis.
-        // INVALID_CHARACTER  = server sent corrupt base64
-        // BUFFER_TOO_SMALL   = server mis-declared payloadLen vs actual decoded length
-        // size-mismatch fall = decoder returned 0 but output count disagrees
         if (rc == MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
         {
             ESP_LOGW(TAG, "FW_CHUNK base64 invalid character (seq=%u transferId=%s base64Len=%zu)", (unsigned)rec.seq,
@@ -515,10 +499,7 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
 
     if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(50)) != pdTRUE)
     {
-        // Queue full = transient backpressure. Emit a CRC NAK so the server retransmits this
-        // seq once the receiver drains. Stays inside the contract; cleaner backpressure via
-        // FW_BACKPRESSURE is Phase 5. The decoded payload is freed here; the receiver never
-        // saw this chunk.
+        // Queue full — emit CRC NAK so the server retransmits once the receiver drains.
         ESP_LOGW(TAG, "otaQueue full at FW_CHUNK seq=%u; emitting CRC NAK to force retransmit", (unsigned)rec.seq);
         free(m.transferId);
         free(decoded);
