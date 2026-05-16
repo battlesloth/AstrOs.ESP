@@ -103,17 +103,19 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
         handleDeployBegin(msg);
         break;
     case OTA_MSG_WATCHDOG_FIRE:
-        // No allocations to free — transferId is nullptr by contract and
-        // no union arm carries data. Handler clears in-progress state so
-        // the next BEGIN can succeed.
+        // transferId is nullptr by contract; defensive free() in case a future producer
+        // mistakenly sets it. free(nullptr) is a no-op.
+        free(msg.transferId);
         handleWatchdogFire();
         break;
     default:
-        // Unknown kind: silent drop would leak the union arm AND hang the server. Fail loud.
-        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — aborting", static_cast<int>(msg.kind),
+        // Unknown kind: a forgotten case label, not memory corruption. LOGE + return so
+        // a missed enumerator surfaces in logs without bricking the box. The union arm's
+        // ownership is unknown, so only the transferId can be safely freed.
+        ESP_LOGE(TAG, "Unknown ota_msg_kind_t: %d transferId=%s — dropping", static_cast<int>(msg.kind),
                  msg.transferId ? msg.transferId : "(null)");
         free(msg.transferId);
-        abort();
+        return;
     }
 }
 

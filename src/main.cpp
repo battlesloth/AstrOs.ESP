@@ -219,7 +219,11 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
-    xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1);
+    if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
+        abort();
+    }
 
     // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
@@ -259,6 +263,11 @@ void init(void)
     gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
     otaQueue = xQueueCreate(16, sizeof(queue_ota_msg_t));
+    if (otaQueue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create otaQueue — aborting init");
+        abort();
+    }
 
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
@@ -1083,7 +1092,10 @@ void astrosRxTask(void *arg)
                     bufferIndex++;
                     if (bufferIndex >= bufferLength)
                     {
-                        ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        // Data-loss event — drops the partial message and the next bytes until a
+                        // line terminator. During OTA this stalls the transfer until the server
+                        // times out and retries. LOGE so a single occurrence is impossible to miss.
+                        ESP_LOGE("AstrOs RX", "Line overflow (>%zu B) — discarding partial message", bufferLength);
                         astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
                     }

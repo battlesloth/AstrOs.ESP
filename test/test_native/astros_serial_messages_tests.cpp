@@ -943,6 +943,17 @@ TEST(SerialMessages, ParseFwChunkPayloadLenExceedsUint16)
     EXPECT_FALSE(rec.valid);
 }
 
+// payloadLen=0 would malloc(0) downstream (implementation-defined) and silently mis-route
+// the resulting decoder error as a routine SIZE NAK. Reject at the parser.
+TEST(SerialMessages, ParseFwChunkRejectsZeroPayloadLen)
+{
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "" << UNIT_SEPARATOR
+            << "abcd";
+    auto rec = parseFwChunk(payload.str());
+    EXPECT_FALSE(rec.valid);
+}
+
 TEST(SerialMessages, ParseFwTransferEndNonNumericTotalChunks)
 {
     std::string hash64 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";

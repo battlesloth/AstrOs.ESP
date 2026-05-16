@@ -463,19 +463,23 @@ void AstrOsSerialMsgHandler::handleFwChunkInbound(const std::string &payload)
                                    rec.base64Payload.size());
     if (rc != 0 || outLen != rec.payloadLen)
     {
+        // Each branch below is a protocol contract violation by the server — wire-declared
+        // payloadLen disagrees with the actual decoded length, or the base64 string contains
+        // a character the protocol forbids. LOGE so a single occurrence is visible; the
+        // SIZE NAK is the same as before.
         if (rc == MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
         {
-            ESP_LOGW(TAG, "FW_CHUNK base64 invalid character (seq=%u transferId=%s base64Len=%zu)", (unsigned)rec.seq,
+            ESP_LOGE(TAG, "FW_CHUNK base64 invalid character (seq=%u transferId=%s base64Len=%zu)", (unsigned)rec.seq,
                      rec.transferId.c_str(), rec.base64Payload.size());
         }
         else if (rc == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
         {
-            ESP_LOGW(TAG, "FW_CHUNK declared payloadLen=%u too small for base64 input=%zu (seq=%u transferId=%s)",
+            ESP_LOGE(TAG, "FW_CHUNK declared payloadLen=%u too small for base64 input=%zu (seq=%u transferId=%s)",
                      (unsigned)rec.payloadLen, rec.base64Payload.size(), (unsigned)rec.seq, rec.transferId.c_str());
         }
         else
         {
-            ESP_LOGW(TAG, "FW_CHUNK base64 size mismatch out=%zu expected=%u rc=%d (seq=%u transferId=%s)", outLen,
+            ESP_LOGE(TAG, "FW_CHUNK base64 size mismatch out=%zu expected=%u rc=%d (seq=%u transferId=%s)", outLen,
                      (unsigned)rec.payloadLen, rc, (unsigned)rec.seq, rec.transferId.c_str());
         }
         free(decoded);
@@ -539,9 +543,13 @@ void AstrOsSerialMsgHandler::handleFwTransferEndInbound(const std::string &msgId
         return;
     }
 
-    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
+    // 100ms — matches CHUNK's tight bound. END arrives right after the chunk
+    // stream completes, so a wedged consumer at this point means astrosRxTask
+    // would otherwise stall for 500ms while inbound bytes pile into the UART RX
+    // buffer (8 KB; see src/main.cpp). Server retries on IO_ERROR.
+    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(100)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "otaQueue full at FW_TRANSFER_END");
+        ESP_LOGE(TAG, "otaQueue full at FW_TRANSFER_END");
         free(m.transferId);
         free(m.end.msgId);
         this->sendFwTransferEndAck(msgId, rec.transferId, "IO_ERROR", rec.finalSha256Hex);

@@ -608,7 +608,7 @@ FwChunkRecord parseFwChunk(const std::string &payload)
         return rec;
     }
     unsigned long plen = 0;
-    if (!parseStrictUint(parts[2], plen) || plen > 0xFFFFu)
+    if (!parseStrictUint(parts[2], plen) || plen == 0 || plen > 0xFFFFu)
     {
         return rec;
     }

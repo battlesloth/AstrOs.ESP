@@ -12,7 +12,7 @@ class of fix. Each commit is independently shippable and reviewable.
     - C1: `OtaReceiver.cpp:285-298` — gate cleanup on `active_` + transferId match before tearing down state
     - I8 partial: native test for `OTA_MSG_WATCHDOG_FIRE` layout (nullptr transferId, no union arm)
 
-- [ ] **Commit 2 — Error-path hardening**
+- [x] **Commit 2 — Error-path hardening**
     - I1: reject `payloadLen == 0` in `parseFwChunk` (PURE) before the dispatcher mallocs
     - I2: bound `astrosRxTask` per-byte append with LOGE + reset on overflow
     - I4: lower END `xQueueSend` timeout from 500 ms → 50 ms (match CHUNK)
