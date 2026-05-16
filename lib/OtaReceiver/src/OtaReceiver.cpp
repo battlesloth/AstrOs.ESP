@@ -1,9 +1,8 @@
 #include <OtaReceiver.hpp>
 
 #include <AstrOsSerialMsgHandler.hpp>
-#include <errno.h>
+#include <AstrOsStringUtils.hpp>
 #include <esp_log.h>
-#include <stdlib.h>
 
 static const char *TAG = "OtaReceiver";
 
@@ -66,10 +65,8 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
     }
 
     // Convert the wire-level opaque string transferId to BulkReceiver's uint8_t form.
-    errno = 0;
-    char *endp = nullptr;
-    unsigned long xidUL = strtoul(transferIdIn.c_str(), &endp, 10);
-    if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || xidUL > 255)
+    auto parsed = AstrOsStringUtils::parseStrictU8(transferIdIn);
+    if (!parsed.has_value())
     {
         ESP_LOGE(TAG, "FW_TRANSFER_BEGIN transferId='%s' is not 0..255 numeric", transferIdIn.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
@@ -78,7 +75,7 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         free(msg.transferId);
         return;
     }
-    uint8_t xferId = static_cast<uint8_t>(xidUL);
+    uint8_t xferId = parsed.value();
 
     // Phase 3 sliding window: hard-coded to 16 (matches the server's nominal sender window).
     // Phase 5 may make this configurable.
@@ -127,23 +124,17 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
     // Re-derive the uint8_t form. transferIdStr_ is the authoritative running
     // value — if the incoming string mismatches, BulkReceiver::onChunk's
     // internal xferId check will return nakInactive() with reason=OUT_OF_ORDER.
-    uint8_t xferId = 0;
+    auto parsedChunk = AstrOsStringUtils::parseStrictU8(transferIdIn);
+    if (!parsedChunk.has_value())
     {
-        errno = 0;
-        char *endp = nullptr;
-        unsigned long ul = strtoul(transferIdIn.c_str(), &endp, 10);
-        if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || ul > 255)
-        {
-            // Wire form was numeric at BEGIN time; arriving as garbage now is a server bug.
-            ESP_LOGW(TAG, "FW_CHUNK transferId='%s' not numeric; emitting OUT_OF_ORDER", transferIdIn.c_str());
-            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0,
-                                                   "OUT_OF_ORDER");
-            free(msg.chunk.payload);
-            free(msg.transferId);
-            return;
-        }
-        xferId = static_cast<uint8_t>(ul);
+        // Wire form was numeric at BEGIN time; arriving as garbage now is a server bug.
+        ESP_LOGW(TAG, "FW_CHUNK transferId='%s' not numeric; emitting OUT_OF_ORDER", transferIdIn.c_str());
+        AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, /*lastGoodSeq=*/0, /*nextExpectedSeq=*/0, "OUT_OF_ORDER");
+        free(msg.chunk.payload);
+        free(msg.transferId);
+        return;
     }
+    uint8_t xferId = parsedChunk.value();
 
     auto cr = bulk_.onChunk(xferId, msg.chunk.seq, msg.chunk.payloadLen, msg.chunk.crc16, msg.chunk.payload);
 
@@ -194,25 +185,20 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     std::string msgId = msg.end.msgId ? msg.end.msgId : "";
     std::string finalShaIn(msg.end.finalSha256Hex);
 
-    uint8_t xferId = 0;
+    auto parsedEnd = AstrOsStringUtils::parseStrictU8(transferIdIn);
+    if (!parsedEnd.has_value())
     {
-        errno = 0;
-        char *endp = nullptr;
-        unsigned long ul = strtoul(transferIdIn.c_str(), &endp, 10);
-        if (errno != 0 || endp == transferIdIn.c_str() || *endp != '\0' || ul > 255)
-        {
-            ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric", transferIdIn.c_str());
-            AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
-            active_ = false;
-            transferIdStr_.clear();
-            beginMsgId_.clear();
-            bulk_.reset();
-            free(msg.end.msgId);
-            free(msg.transferId);
-            return;
-        }
-        xferId = static_cast<uint8_t>(ul);
+        ESP_LOGW(TAG, "FW_TRANSFER_END transferId='%s' not numeric", transferIdIn.c_str());
+        AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", finalShaIn);
+        active_ = false;
+        transferIdStr_.clear();
+        beginMsgId_.clear();
+        bulk_.reset();
+        free(msg.end.msgId);
+        free(msg.transferId);
+        return;
     }
+    uint8_t xferId = parsedEnd.value();
 
     auto er = bulk_.onEnd(xferId, msg.end.totalChunks);
 

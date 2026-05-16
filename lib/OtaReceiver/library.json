@@ -6,7 +6,8 @@
     "AstrOsBulkTransport": "*",
     "AstrOsSerialMsgHandler": "*",
     "AstrOsMessaging": "*",
-    "AstrOsQueueMessages": "*"
+    "AstrOsQueueMessages": "*",
+    "AstrOsUtility": "*"
   },
   "build": {
     "flags": [
