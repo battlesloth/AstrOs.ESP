@@ -23,4 +23,32 @@ namespace AstrOsPathUtils
     //
     // On success `reasonOut` is cleared.
     bool isPathSafe(const std::string &path, std::string &reasonOut);
+
+    // Content-addressed firmware path construction.
+    //
+    // Each verified firmware blob on SD is named after the first 16 hex chars
+    // of its SHA-256 digest, under /sdcard/firmware/. The 16-char prefix has
+    // ~1 in 2^64 collision odds and keeps the resulting path well inside FAT
+    // 8.3 long-filename limits.
+
+    // Number of hex characters from the digest used to name the file.
+    constexpr std::size_t FIRMWARE_HASH_PREFIX_LEN = 16;
+
+    // Directory under which all verified firmware blobs are stored.
+    constexpr const char *FIRMWARE_DIR = "/sdcard/firmware/";
+
+    // Minimum out-buffer size for contentAddressedFirmwarePath including NUL:
+    // strlen("/sdcard/firmware/") + FIRMWARE_HASH_PREFIX_LEN + strlen(".bin")
+    //   = 17 + 16 + 4 + 1 = 38.
+    constexpr std::size_t FIRMWARE_PATH_BUF_LEN = 38;
+
+    // Builds "/sdcard/firmware/<first-16-of-hashHex>.bin" into `out`.
+    // Returns true on success. Returns false if:
+    //   - `hashHex` is null or has fewer than FIRMWARE_HASH_PREFIX_LEN chars
+    //     before its terminating NUL
+    //   - `out` is null
+    //   - `outLen` is less than FIRMWARE_PATH_BUF_LEN
+    // On any failure where `out` and `outLen` are valid, `out[0]` is set to
+    // NUL so callers can treat the buffer as a safe empty C-string.
+    bool contentAddressedFirmwarePath(const char *hashHex, char *out, std::size_t outLen);
 } // namespace AstrOsPathUtils

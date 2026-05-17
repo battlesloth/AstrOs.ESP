@@ -1,5 +1,6 @@
 #include <OtaReceiver.hpp>
 
+#include <AstrOsPathUtils.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsStringUtils.hpp>
@@ -450,11 +451,18 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         else
         {
             const char *expectedHex = msg.end.finalSha256Hex;
-            if (strcmp(computedHex, expectedHex) == 0)
+            char finalPath[AstrOsPathUtils::FIRMWARE_PATH_BUF_LEN];
+            bool pathOk = AstrOsPathUtils::contentAddressedFirmwarePath(computedHex, finalPath, sizeof(finalPath));
+            if (!pathOk)
+            {
+                // Computed hex came from mbedtls_sha256_finish on 32 bytes, so
+                // it's always 64 chars — this branch should be unreachable.
+                ESP_LOGE(TAG, "contentAddressedFirmwarePath failed for computed=%s — replying IO_ERROR", computedHex);
+                AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
+            }
+            else if (strcmp(computedHex, expectedHex) == 0)
             {
                 // unlink-then-rename — FAT rename onto an existing path can fail.
-                char finalPath[64];
-                snprintf(finalPath, sizeof(finalPath), "/sdcard/firmware/%.16s.bin", computedHex);
                 // Track whether unlink actually removed a stale file. If rename
                 // later fails, knowing we destroyed prior good firmware is the
                 // difference between "no-op retry" and "operator lost a file".

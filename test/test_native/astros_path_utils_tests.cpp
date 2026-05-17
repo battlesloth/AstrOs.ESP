@@ -1,6 +1,7 @@
 #include <AstrOsPathUtils.hpp>
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <string>
 
 using AstrOsPathUtils::isPathSafe;
@@ -84,4 +85,105 @@ TEST(PathUtils, EmptyTakesPrecedenceOverOtherChecks)
     std::string reason = "stale";
     EXPECT_FALSE(isPathSafe("", reason));
     EXPECT_EQ(reason, "empty path rejected");
+}
+
+// --- contentAddressedFirmwarePath ---
+
+using AstrOsPathUtils::contentAddressedFirmwarePath;
+using AstrOsPathUtils::FIRMWARE_HASH_PREFIX_LEN;
+using AstrOsPathUtils::FIRMWARE_PATH_BUF_LEN;
+
+TEST(ContentAddressedFirmwarePath, BuildsExpectedPathForFullSha256)
+{
+    // SHA-256("") happens to be a convenient 64-char vector to feed in.
+    const char *hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    char out[FIRMWARE_PATH_BUF_LEN] = {0};
+    EXPECT_TRUE(contentAddressedFirmwarePath(hex, out, sizeof(out)));
+    EXPECT_STREQ("/sdcard/firmware/e3b0c44298fc1c14.bin", out);
+}
+
+TEST(ContentAddressedFirmwarePath, UsesExactlyFirst16CharsOfHash)
+{
+    // Construct a hash where chars 0..15 differ from 16..31 to prove the
+    // truncation point is exactly at 16 and not "wherever NUL falls".
+    const char *hex = "0123456789abcdef"
+                      "ffffffffffffffff"
+                      "ffffffffffffffff"
+                      "ffffffffffffffff";
+    char out[FIRMWARE_PATH_BUF_LEN] = {0};
+    EXPECT_TRUE(contentAddressedFirmwarePath(hex, out, sizeof(out)));
+    EXPECT_STREQ("/sdcard/firmware/0123456789abcdef.bin", out);
+}
+
+TEST(ContentAddressedFirmwarePath, AcceptsExactly16CharHash)
+{
+    // No bytes available beyond the truncation point — the helper must still
+    // succeed because it only reads FIRMWARE_HASH_PREFIX_LEN chars.
+    const char *hex = "aaaabbbbccccdddd";
+    ASSERT_EQ(FIRMWARE_HASH_PREFIX_LEN, strlen(hex));
+    char out[FIRMWARE_PATH_BUF_LEN] = {0};
+    EXPECT_TRUE(contentAddressedFirmwarePath(hex, out, sizeof(out)));
+    EXPECT_STREQ("/sdcard/firmware/aaaabbbbccccdddd.bin", out);
+}
+
+TEST(ContentAddressedFirmwarePath, RejectsShortHash)
+{
+    // 15-char hash should be rejected — the "%.16s" silent-truncation
+    // behavior in the original inline snprintf is exactly what extracting
+    // this helper exists to prevent.
+    const char *hex = "aaaabbbbccccdd";
+    ASSERT_LT(strlen(hex), FIRMWARE_HASH_PREFIX_LEN);
+    char out[FIRMWARE_PATH_BUF_LEN] = {'X'};
+    EXPECT_FALSE(contentAddressedFirmwarePath(hex, out, sizeof(out)));
+    EXPECT_EQ('\0', out[0]);
+}
+
+TEST(ContentAddressedFirmwarePath, RejectsEmptyHash)
+{
+    char out[FIRMWARE_PATH_BUF_LEN] = {'X'};
+    EXPECT_FALSE(contentAddressedFirmwarePath("", out, sizeof(out)));
+    EXPECT_EQ('\0', out[0]);
+}
+
+TEST(ContentAddressedFirmwarePath, RejectsNullHash)
+{
+    char out[FIRMWARE_PATH_BUF_LEN] = {'X'};
+    EXPECT_FALSE(contentAddressedFirmwarePath(nullptr, out, sizeof(out)));
+    EXPECT_EQ('\0', out[0]);
+}
+
+TEST(ContentAddressedFirmwarePath, RejectsNullOut)
+{
+    EXPECT_FALSE(contentAddressedFirmwarePath("0123456789abcdef", nullptr, 64));
+}
+
+TEST(ContentAddressedFirmwarePath, RejectsUndersizedBuffer)
+{
+    // One byte short of the required buffer size — must reject and NUL the
+    // output so the caller can't silently consume a truncated path.
+    char out[FIRMWARE_PATH_BUF_LEN - 1] = {'X'};
+    EXPECT_FALSE(contentAddressedFirmwarePath("0123456789abcdef", out, sizeof(out)));
+    EXPECT_EQ('\0', out[0]);
+}
+
+TEST(ContentAddressedFirmwarePath, IsDeterministic)
+{
+    // Same input always produces the same path — the property mesh
+    // forwarders will rely on for filename-based dedup.
+    const char *hex = "feedfacecafebeef0011223344556677";
+    char a[FIRMWARE_PATH_BUF_LEN] = {0};
+    char b[FIRMWARE_PATH_BUF_LEN] = {0};
+    EXPECT_TRUE(contentAddressedFirmwarePath(hex, a, sizeof(a)));
+    EXPECT_TRUE(contentAddressedFirmwarePath(hex, b, sizeof(b)));
+    EXPECT_STREQ(a, b);
+}
+
+TEST(ContentAddressedFirmwarePath, OutputIsNulTerminatedOnSuccess)
+{
+    const char *hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    char out[FIRMWARE_PATH_BUF_LEN] = {0};
+    ASSERT_TRUE(contentAddressedFirmwarePath(hex, out, sizeof(out)));
+    // strlen relies on the trailing NUL — if we lost it we'd run past
+    // the buffer.
+    EXPECT_EQ(strlen("/sdcard/firmware/") + 16 + 4, strlen(out));
 }
