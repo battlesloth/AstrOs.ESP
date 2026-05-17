@@ -209,10 +209,41 @@ watchdog's `keepStaging=false` policy removes it).
 **Pass/Fail:** Pass if the second upload completes cleanly and the SD card
 state is unchanged.
 
+### Negative path 8 — HASH_MISMATCH preserves staging.bin
+
+**Preconditions:** Master idle, SD card empty of any prior `/sdcard/firmware/`
+contents.
+
+**Steps:**
+1. From the server, drive a transfer with a deliberately wrong END hash. The
+   simplest path is a server-side debug toggle that flips one byte of
+   `finalSha256Hex` in the `FW_TRANSFER_END` frame before sending; if the
+   toggle doesn't exist yet, hand-craft the frame from a serial console
+   after recording the real chunk stream.
+2. Watch the master serial log.
+3. Power the master down, pull the SD card.
+
+**Expected:**
+- Master serial log includes a single LOGW like
+  `FW_TRANSFER_END HASH_MISMATCH: transferId=<id> computed=<a> expected=<b> — staging.bin preserved`.
+- `FW_TRANSFER_END_ACK status=HASH_MISMATCH computedHex=<a>` reaches the
+  server.
+- SD inspection:
+  - `/sdcard/firmware/staging.bin` is **present** and its size equals
+    `totalSize` from BEGIN.
+  - **No** `<computed-prefix>.bin` or `<expected-prefix>.bin` was created.
+- A subsequent BEGIN truncates `staging.bin` cleanly — verify by uploading
+  the real firmware next and confirming the rename to `<prefix>.bin`
+  succeeds and `staging.bin` is gone afterward.
+
+**Pass/Fail:** Pass if the HASH_MISMATCH log fires, `staging.bin` survives
+on disk, and no renamed file was created. This is the **only** path that
+exercises the forensic-preserve contract — a regression here (e.g., an
+errant `resetCryptoAndFile(false)` on the HASH_MISMATCH branch) would
+silently destroy evidence operators rely on for post-mortem investigation.
+
 ### Out of scope for Phase 4 (deferred to Phase 5)
 
-- Server-side wrong-hash injection (synthetic HASH_MISMATCH) — verifies the
-  forensic-preserve path leaves `staging.bin` on disk.
 - Pre-filled SD card to force `sd_full` — verifies the BEGIN free-space gate.
 - Mid-transfer CRC injection persisting across retries — verifies the
   receiver still completes after server-side retransmits.
