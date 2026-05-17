@@ -177,6 +177,20 @@ public:
         return static_cast<uint8_t>(ul);
     }
 
+    /// @brief Lowercase-hex encode `len` bytes from `in` into `out`. Writes
+    ///        exactly `2*len + 1` chars including the trailing NUL; caller
+    ///        owns the buffer and is responsible for sizing it.
+    static void toHexLower(const uint8_t *in, size_t len, char *out)
+    {
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < len; ++i)
+        {
+            out[2 * i] = kHex[(in[i] >> 4) & 0x0F];
+            out[2 * i + 1] = kHex[in[i] & 0x0F];
+        }
+        out[2 * len] = '\0';
+    }
+
     template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)
     {
         int size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);

@@ -548,22 +548,21 @@ esp_err_t AstrOsStorageManager::formatSdCard()
     return ESP_OK;
 }
 
-uint64_t AstrOsStorageManager::freeSpaceSdBytes()
+std::optional<uint64_t> AstrOsStorageManager::freeSpaceSdBytes()
 {
     if (card == nullptr)
     {
-        ESP_LOGW(TAG, "freeSpaceSdBytes: card not mounted, returning 0");
-        return 0;
+        ESP_LOGE(TAG, "freeSpaceSdBytes: card not mounted");
+        return std::nullopt;
     }
     FATFS *fs = nullptr;
     DWORD freeClusters = 0;
-    // "0:" is the same drive prefix f_mkfs uses above; the FATFS layer keys
-    // off the mount point we passed to esp_vfs_fat_sdspi_mount.
+    // "0:" is the FATFS drive prefix matching the esp_vfs_fat_sdspi_mount call.
     FRESULT res = f_getfree("0:", &freeClusters, &fs);
     if (res != FR_OK || fs == nullptr)
     {
-        ESP_LOGW(TAG, "freeSpaceSdBytes: f_getfree failed (res=%d)", res);
-        return 0;
+        ESP_LOGE(TAG, "freeSpaceSdBytes: f_getfree failed (res=%d)", res);
+        return std::nullopt;
     }
     return static_cast<uint64_t>(freeClusters) * fs->csize * card->csd.sector_size;
 }

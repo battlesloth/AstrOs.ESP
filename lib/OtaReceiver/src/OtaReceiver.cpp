@@ -13,19 +13,6 @@ static const char *TAG = "OtaReceiver";
 
 namespace
 {
-    // Lowercase-hex encoding of `len` bytes from `in` into `out`. `out` must
-    // hold at least 2*len + 1 chars; this writes the NUL.
-    void toHexLower(const uint8_t *in, size_t len, char *out)
-    {
-        static const char kHex[] = "0123456789abcdef";
-        for (size_t i = 0; i < len; ++i)
-        {
-            out[2 * i] = kHex[(in[i] >> 4) & 0x0F];
-            out[2 * i + 1] = kHex[in[i] & 0x0F];
-        }
-        out[2 * len] = '\0';
-    }
-
     constexpr const char *kStagingPath = "/sdcard/firmware/staging.bin";
 } // namespace
 
@@ -133,7 +120,15 @@ void OtaReceiver::resetCryptoAndFile(bool keepStaging)
 {
     if (staging_ != nullptr)
     {
-        fclose(staging_);
+        if (fclose(staging_) != 0)
+        {
+            // On keepStaging=true (HASH_MISMATCH, dtor, server-bug teardown), a
+            // failed fclose can leave buffered bytes off-disk, so the
+            // "preserved" file an operator opens later may be short. Surfacing
+            // this turns a silent corruption into a grepable LOGE.
+            ESP_LOGE(TAG, "fclose(staging_) failed: errno=%d (%s) — preserved file may be truncated", errno,
+                     strerror(errno));
+        }
         staging_ = nullptr;
         if (!keepStaging)
         {
@@ -189,9 +184,7 @@ void OtaReceiver::handleWatchdogFire()
     ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
              kWatchdogIdleUs / 1000ULL);
     bulk_.reset();
-    // Unverified partial bytes — no END means no hash check, so discarding
-    // staging.bin is correct here (different policy from HASH_MISMATCH, which
-    // preserves for forensics).
+    // No END means no hash check; discard the unverified bytes.
     resetCryptoAndFile(/*keepStaging=*/false);
     active_ = false;
     transferIdStr_.clear();
@@ -206,7 +199,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
 
     if (active_)
     {
-        // Don't touch staging_/shaCtx_ — they belong to the in-flight transfer.
         ESP_LOGW(TAG, "FW_TRANSFER_BEGIN while transfer %s active; replying busy", transferIdStr_.c_str());
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "busy");
         return;
@@ -235,9 +227,7 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    // SD-staging gate. Order matters: ensureSdFirmwareDir, then free-space
-    // pre-check, then open. Any failure must NOT mutate active_/transferIdStr_
-    // so a rejected BEGIN leaves the receiver exactly as it was.
+    // Rejected BEGIN must leave active_/transferIdStr_ untouched.
     if (!AstrOs_Storage.ensureSdFirmwareDir())
     {
         ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: ensureSdFirmwareDir failed — replying io_error");
@@ -246,18 +236,25 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    uint64_t freeBytes = AstrOs_Storage.freeSpaceSdBytes();
-    if (freeBytes < msg.begin.totalSize)
+    auto freeBytes = AstrOs_Storage.freeSpaceSdBytes();
+    if (!freeBytes.has_value())
     {
-        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN: sd_full (free=%llu need=%u)", (unsigned long long)freeBytes,
+        // Probe failure is an I/O fault; sd_full would mislead the operator.
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: freeSpaceSdBytes probe failed — replying io_error");
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        return;
+    }
+    if (*freeBytes < msg.begin.totalSize)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN: sd_full (free=%llu need=%u)", (unsigned long long)*freeBytes,
                  (unsigned)msg.begin.totalSize);
         bulk_.reset();
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "sd_full");
         return;
     }
 
-    // "wb" truncates — a HASH_MISMATCH leftover from the prior transfer is
-    // replaced cleanly here without a separate "previous-transfer cleanup" step.
+    // "wb" truncates — cleans up any HASH_MISMATCH leftover from a prior transfer.
     staging_ = fopen(kStagingPath, "wb");
     if (staging_ == nullptr)
     {
@@ -315,14 +312,11 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 
     if (cr.decision == AstrOsBulkTransport::Decision::ACK)
     {
-        // Persist before ACK'ing. A short fwrite (full disk, fs error) means
-        // the byte stream we'd be ACK'ing is incomplete, so we NAK with
-        // FLASH_FULL and tear the transfer down — the server's next BEGIN
-        // truncates staging.bin and starts over.
+        // Persist before ACK — a short fwrite means the bytes we'd be
+        // acknowledging aren't on disk.
         if (staging_ == nullptr || !shaActive_)
         {
-            // Defensive: should be impossible if handleBegin succeeded. Treat
-            // as terminal so the next BEGIN can recover.
+            // Defensive — should be unreachable if BEGIN succeeded.
             ESP_LOGE(TAG, "handleChunk ACK but staging/sha not initialized — aborting transfer");
             AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                    "FLASH_FULL");
@@ -349,8 +343,8 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         }
         if (mbedtls_sha256_update(&shaCtx_, cr.payload, cr.payloadLen) != 0)
         {
-            // Hash failure is rare but unrecoverable — END would compare a
-            // corrupt digest and reply HASH_MISMATCH anyway. Fail fast.
+            // Update failure corrupts the digest; abort now rather than
+            // reporting HASH_MISMATCH at END.
             ESP_LOGE(TAG, "mbedtls_sha256_update failed — aborting transfer");
             AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                    "FLASH_FULL");
@@ -421,9 +415,10 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
-        // Drain stdio buffers before finishing the hash. Without this, bytes
-        // queued inside the FILE* would never reach disk and a power-loss
-        // immediately after END_ACK OK could leave the renamed file short.
+        // Close before rename so any stdio-buffered bytes hit disk first; a
+        // power loss after END_ACK OK would otherwise leave the renamed file
+        // short. The hash itself was computed from cr.payload in handleChunk,
+        // so it is independent of this flush.
         bool closeOk = (staging_ != nullptr) && (fclose(staging_) == 0);
         staging_ = nullptr;
 
@@ -445,19 +440,21 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         else
         {
             char computedHex[SHA256_HEX_LEN + 1];
-            toHexLower(digest, sizeof(digest), computedHex);
+            AstrOsStringUtils::toHexLower(digest, sizeof(digest), computedHex);
 
             const char *expectedHex = msg.end.finalSha256Hex;
             if (strcmp(computedHex, expectedHex) == 0)
             {
-                // Content-addressed final name: 16-hex-char prefix is enough
-                // to disambiguate firmware images in practice and keeps the
-                // path short. unlink-then-rename tolerates same-firmware
-                // re-uploads (POSIX rename onto an existing path can fail on
-                // FAT).
+                // unlink-then-rename — FAT rename onto an existing path can fail.
                 char finalPath[64];
                 snprintf(finalPath, sizeof(finalPath), "/sdcard/firmware/%.16s.bin", computedHex);
-                unlink(finalPath);
+                if (unlink(finalPath) != 0 && errno != ENOENT)
+                {
+                    // Anything other than "not present" means rename is likely
+                    // to fail too; log the real first error before the rename
+                    // overwrites errno.
+                    ESP_LOGW(TAG, "pre-rename unlink(%s) failed: errno=%d (%s)", finalPath, errno, strerror(errno));
+                }
                 if (rename(kStagingPath, finalPath) == 0)
                 {
                     ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u path=%s sha=%s",
@@ -466,9 +463,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                 }
                 else
                 {
-                    // Verified bytes are on disk but couldn't be moved into
-                    // place. Leave staging.bin so a follow-up phase can still
-                    // consume them; signal the failure honestly.
+                    // Verified bytes are on disk; leave staging.bin in place
+                    // and report IO_ERROR.
                     ESP_LOGE(TAG, "FW_TRANSFER_END: rename(%s -> %s) failed: errno=%d (%s)", kStagingPath, finalPath,
                              errno, strerror(errno));
                     AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
@@ -479,7 +475,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                 ESP_LOGW(TAG,
                          "FW_TRANSFER_END HASH_MISMATCH: transferId=%s computed=%s expected=%s — staging.bin preserved",
                          transferIdIn.c_str(), computedHex, expectedHex);
-                // Forensic preservation per design — do NOT unlink staging.bin.
+                // Preserve staging.bin for post-mortem inspection.
                 AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "HASH_MISMATCH", computedHex);
             }
         }
@@ -534,14 +530,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         transferIdStr_.clear();
         bulk_.reset();
         watchdogStop();
-        // HASH_MISMATCH preserves staging.bin (handled inline above by not
-        // unlinking and leaving staging_ closed). Every other teardown path —
-        // RECEIVER_SHORT_COUNT, finalize-failure IO_ERROR, OK rename success
-        // — has already closed the FILE* but the helper is idempotent and
-        // also covers the case where the OK branch above didn't run (e.g.,
-        // server-state bugs reaching the IO_ERROR branch with staging_ still
-        // open). keepStaging=true is the conservative choice: forensic
-        // inspection beats silent deletion.
+        // Idempotent — preserve staging.bin for forensics; the OK path
+        // already renamed it away.
         resetCryptoAndFile(/*keepStaging=*/true);
     }
 }

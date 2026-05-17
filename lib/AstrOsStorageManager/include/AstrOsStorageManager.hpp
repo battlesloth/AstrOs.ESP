@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -62,9 +63,12 @@ public:
 
     esp_err_t formatSdCard();
 
-    // OTA staging support. Both query the SD card; calling them when the card
-    // is unmounted returns the safe default (0 bytes free / false).
-    uint64_t freeSpaceSdBytes();
+    // OTA staging support. Both query the SD card.
+    // freeSpaceSdBytes returns nullopt when the card is unmounted or the
+    // FATFS query fails — callers must distinguish that from a legitimate 0
+    // (truly full card) and surface a different error to the operator.
+    // ensureSdFirmwareDir returns false on any non-EEXIST mkdir failure.
+    std::optional<uint64_t> freeSpaceSdBytes();
     bool ensureSdFirmwareDir();
 };
 
