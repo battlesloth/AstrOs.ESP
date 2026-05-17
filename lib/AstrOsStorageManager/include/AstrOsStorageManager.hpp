@@ -1,6 +1,7 @@
 #ifndef ASTROSSTORAGEMANAGER_HPP
 #define ASTROSSTORAGEMANAGER_HPP
 
+#include <cstdint>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <string>
@@ -60,6 +61,11 @@ public:
     std::vector<std::string> listFiles(std::string folder);
 
     esp_err_t formatSdCard();
+
+    // OTA staging support. Both query the SD card; calling them when the card
+    // is unmounted returns the safe default (0 bytes free / false).
+    uint64_t freeSpaceSdBytes();
+    bool ensureSdFirmwareDir();
 };
 
 extern AstrOsStorageManager AstrOs_Storage;

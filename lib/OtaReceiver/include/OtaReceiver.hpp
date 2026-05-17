@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 // needed for QueueHandle_t, must be in this order
@@ -13,6 +14,7 @@
 #include <freertos/queue.h>
 
 #include <esp_timer.h>
+#include <mbedtls/sha256.h>
 
 // Threading: all members are accessed only from otaReceiverTask via
 // `process(...)`. The one exception is `active_` (see its declaration), which
@@ -42,6 +44,14 @@ private:
     esp_timer_handle_t watchdog_ = nullptr;
     QueueHandle_t otaQueue_ = nullptr;
     static constexpr uint64_t kWatchdogIdleUs = 10ULL * 1000ULL * 1000ULL; // 10 s
+
+    // Staging-file handle and streaming SHA-256 context. Both are live only
+    // between a successful BEGIN and the terminating END / abort. Every exit
+    // path routes through resetCryptoAndFile() so we never leak an open FILE*
+    // or an mbedtls_sha256_context into the next transfer.
+    FILE *staging_ = nullptr;
+    mbedtls_sha256_context shaCtx_;
+    bool shaActive_ = false;
 
 public:
     OtaReceiver();
@@ -82,6 +92,10 @@ private:
 
     // esp_timer callback indirection — arg is `this`.
     static void watchdogTimerCb(void *arg);
+
+    // Closes staging_ (unlinking unless keepStaging) and releases shaCtx_.
+    // Idempotent so callers don't need to track which fields are live.
+    void resetCryptoAndFile(bool keepStaging);
 };
 
 extern OtaReceiver AstrOs_OtaReceiver;
