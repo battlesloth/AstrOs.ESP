@@ -207,27 +207,27 @@ Idempotent so it can be called every BEGIN without conditionalizing on a
 
 ## Task checklist
 
-- [ ] Task 1 — Add `freeSpaceSdBytes()` and `ensureSdFirmwareDir()` to
+- [x] Task 1 — Add `freeSpaceSdBytes()` and `ensureSdFirmwareDir()` to
       `AstrOsStorageManager` (header + impl). Log on failure; return safe
       defaults.
-- [ ] Task 2 — Extend `OtaReceiver.hpp` with `staging_`, `shaCtx_`,
+- [x] Task 2 — Extend `OtaReceiver.hpp` with `staging_`, `shaCtx_`,
       `shaActive_`, and the private `resetCryptoAndFile` helper. Add
       `<mbedtls/sha256.h>` and `<cstdio>` includes.
-- [ ] Task 3 — Rewrite `handleBegin` to add the ensure-dir / free-space /
+- [x] Task 3 — Rewrite `handleBegin` to add the ensure-dir / free-space /
       fopen / sha-start sequence. Map failures to the documented
       `io_error` / `sd_full` / `busy` status strings.
-- [ ] Task 4 — Rewrite `handleChunk` ACK branch to `fwrite` + `sha256_update`.
+- [x] Task 4 — Rewrite `handleChunk` ACK branch to `fwrite` + `sha256_update`.
       Add the `FLASH_FULL` NAK path with full state teardown.
-- [ ] Task 5 — Rewrite `handleEnd` OK branch: `fclose`, `sha256_finish`, hex
+- [x] Task 5 — Rewrite `handleEnd` OK branch: `fclose`, `sha256_finish`, hex
       encode, content-addressed rename (with `unlink` of target first),
       `HASH_MISMATCH` preserves staging.bin. Wire all paths through
       `resetCryptoAndFile`.
-- [ ] Task 6 — Update `handleWatchdogFire` (and any other abort surfaces) to
+- [x] Task 6 — Update `handleWatchdogFire` (and any other abort surfaces) to
       call `resetCryptoAndFile(false)`. Audit the destructor.
 - [ ] Task 7 — Extend `.docs/qa/ota-master-serial-receive.md` with the Phase 4
       "pop SD, verify on-disk SHA-256" expectation (per design § Phase 4
       review checkpoint). Bump `otaReceiverTask` stack size only if the
-      bench run produces the HWM warning.
+      bench run produces the HWM warning. (QA doc done; native tests pass; firmware build in progress.)
 
 ## Verification
 
