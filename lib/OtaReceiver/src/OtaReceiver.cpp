@@ -184,7 +184,8 @@ void OtaReceiver::handleWatchdogFire()
     ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
              kWatchdogIdleUs / 1000ULL);
     bulk_.reset();
-    // No END means no hash check; discard the unverified bytes.
+    // No END means no hash check — unlike HASH_MISMATCH (which preserves for
+    // forensics), discard the unverified bytes.
     resetCryptoAndFile(/*keepStaging=*/false);
     active_ = false;
     transferIdStr_.clear();
@@ -430,29 +431,39 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             shaActive_ = false;
         }
 
+        // Encode whenever the SHA succeeded — a fclose-only failure can still
+        // report the digest of bytes we actually processed, which is more
+        // useful to the server than an empty string.
+        char computedHex[SHA256_HEX_LEN + 1] = {0};
+        if (hashOk)
+        {
+            AstrOsStringUtils::toHexLower(digest, sizeof(digest), computedHex);
+        }
+
         if (!closeOk || !hashOk)
         {
             ESP_LOGE(TAG, "FW_TRANSFER_END finalize failed (closeOk=%d hashOk=%d) — replying IO_ERROR", (int)closeOk,
                      (int)hashOk);
             // Keep staging.bin so a follow-up can inspect what was written.
-            AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", "");
+            AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
         }
         else
         {
-            char computedHex[SHA256_HEX_LEN + 1];
-            AstrOsStringUtils::toHexLower(digest, sizeof(digest), computedHex);
-
             const char *expectedHex = msg.end.finalSha256Hex;
             if (strcmp(computedHex, expectedHex) == 0)
             {
                 // unlink-then-rename — FAT rename onto an existing path can fail.
                 char finalPath[64];
                 snprintf(finalPath, sizeof(finalPath), "/sdcard/firmware/%.16s.bin", computedHex);
-                if (unlink(finalPath) != 0 && errno != ENOENT)
+                // Track whether unlink actually removed a stale file. If rename
+                // later fails, knowing we destroyed prior good firmware is the
+                // difference between "no-op retry" and "operator lost a file".
+                int unlinkRc = unlink(finalPath);
+                bool removedPrior = (unlinkRc == 0);
+                if (unlinkRc != 0 && errno != ENOENT)
                 {
-                    // Anything other than "not present" means rename is likely
-                    // to fail too; log the real first error before the rename
-                    // overwrites errno.
+                    // Non-ENOENT failure — log the real first error before the
+                    // rename overwrites errno.
                     ESP_LOGW(TAG, "pre-rename unlink(%s) failed: errno=%d (%s)", finalPath, errno, strerror(errno));
                 }
                 if (rename(kStagingPath, finalPath) == 0)
@@ -463,10 +474,18 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                 }
                 else
                 {
-                    // Verified bytes are on disk; leave staging.bin in place
-                    // and report IO_ERROR.
+                    int renameErrno = errno;
+                    if (removedPrior)
+                    {
+                        // Worst case: stale firmware was the only valid copy
+                        // and we just deleted it without replacing it.
+                        ESP_LOGE(
+                            TAG,
+                            "FW_TRANSFER_END: rename failed after removing prior %s — operator lost prior firmware",
+                            finalPath);
+                    }
                     ESP_LOGE(TAG, "FW_TRANSFER_END: rename(%s -> %s) failed: errno=%d (%s)", kStagingPath, finalPath,
-                             errno, strerror(errno));
+                             renameErrno, strerror(renameErrno));
                     AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
                 }
             }
