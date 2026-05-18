@@ -31,8 +31,7 @@ OtaReceiver::~OtaReceiver()
         esp_timer_delete(watchdog_);
         watchdog_ = nullptr;
     }
-    // Shutdown is not a transfer outcome — preserve any in-flight staging.bin
-    // for the next boot rather than deleting it.
+    // Shutdown isn't a transfer outcome — keep any in-flight staging.bin.
     resetCryptoAndFile(/*keepStaging=*/true);
 }
 
@@ -123,18 +122,15 @@ void OtaReceiver::resetCryptoAndFile(bool keepStaging)
     {
         if (fclose(staging_) != 0)
         {
-            // On keepStaging=true (HASH_MISMATCH, dtor, server-bug teardown), a
-            // failed fclose can leave buffered bytes off-disk, so the
-            // "preserved" file an operator opens later may be short. Surfacing
-            // this turns a silent corruption into a grepable LOGE.
+            // Buffered bytes may not have reached disk; a preserved file
+            // could be short.
             ESP_LOGE(TAG, "fclose(staging_) failed: errno=%d (%s) — preserved file may be truncated", errno,
                      strerror(errno));
         }
         staging_ = nullptr;
         if (!keepStaging)
         {
-            // unlink may fail if the file was already renamed (END OK path);
-            // ignore — the goal is to leave the path absent.
+            // Best-effort — may already be absent if rename succeeded.
             unlink(kStagingPath);
         }
     }
@@ -185,13 +181,12 @@ void OtaReceiver::handleWatchdogFire()
     ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
              kWatchdogIdleUs / 1000ULL);
     bulk_.reset();
-    // No END means no hash check — unlike HASH_MISMATCH (which preserves for
-    // forensics), discard the unverified bytes.
+    // No END means no hash check — discard the unverified bytes (HASH_MISMATCH
+    // is the path that preserves).
     resetCryptoAndFile(/*keepStaging=*/false);
     active_ = false;
     transferIdStr_.clear();
-    // No server notification — chunk_streamer has its own timeout. The
-    // master's job is to be ready for the next BEGIN.
+    // No server notification; the sender times out independently.
 }
 
 void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
@@ -417,10 +412,9 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
-        // Close before rename so any stdio-buffered bytes hit disk first; a
-        // power loss after END_ACK OK would otherwise leave the renamed file
-        // short. The hash itself was computed from cr.payload in handleChunk,
-        // so it is independent of this flush.
+        // Close before rename so stdio-buffered bytes hit disk; a power loss
+        // after END_ACK OK would otherwise truncate the renamed file. The hash
+        // was fed from chunk payloads, independent of this flush.
         bool fileOpen = (staging_ != nullptr);
         bool fcloseOk = fileOpen && (fclose(staging_) == 0);
         staging_ = nullptr;
@@ -437,8 +431,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         }
 
         // Encode whenever the SHA succeeded — a fclose-only failure can still
-        // report the digest of bytes we actually processed, which is more
-        // useful to the server than an empty string.
+        // report the digest of bytes we processed.
         char computedHex[SHA256_HEX_LEN + 1] = {0};
         if (hashOk)
         {
@@ -447,9 +440,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
         if (!fcloseOk || !hashOk)
         {
-            // Split the diagnostic into the three distinct failure modes so
-            // an operator chasing the LOGE doesn't have to bisect three
-            // possible causes at once.
             if (!fileOpen)
             {
                 ESP_LOGE(TAG, "FW_TRANSFER_END finalize: staging_ was null (BEGIN/chunk-handler bug)");
@@ -486,16 +476,14 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             }
             else if (strcmp(computedHex, expectedHex) == 0)
             {
-                // unlink-then-rename — FAT rename onto an existing path can fail.
-                // Track whether unlink actually removed a stale file. If rename
-                // later fails, knowing we destroyed prior good firmware is the
-                // difference between "no-op retry" and "operator lost a file".
+                // unlink-then-rename — FAT rename onto an existing path can
+                // fail. `removedPrior` lets the rename-failure branch below
+                // distinguish "no-op retry" from "operator lost a file".
                 int unlinkRc = unlink(finalPath);
                 bool removedPrior = (unlinkRc == 0);
                 if (unlinkRc != 0 && errno != ENOENT)
                 {
-                    // Non-ENOENT failure — log the real first error before the
-                    // rename overwrites errno.
+                    // Capture errno before rename clobbers it.
                     ESP_LOGW(TAG, "pre-rename unlink(%s) failed: errno=%d (%s)", finalPath, errno, strerror(errno));
                 }
                 if (rename(kStagingPath, finalPath) == 0)
@@ -509,8 +497,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                     int renameErrno = errno;
                     if (removedPrior)
                     {
-                        // Worst case: stale firmware was the only valid copy
-                        // and we just deleted it without replacing it.
                         ESP_LOGE(
                             TAG,
                             "FW_TRANSFER_END: rename failed after removing prior %s — operator lost prior firmware",
@@ -581,8 +567,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         transferIdStr_.clear();
         bulk_.reset();
         watchdogStop();
-        // Idempotent — preserve staging.bin for forensics; the OK path
-        // already renamed it away.
+        // Keep staging.bin so HASH_MISMATCH preserves the artifact; the OK
+        // path's rename has already moved it out of the way.
         resetCryptoAndFile(/*keepStaging=*/true);
     }
 }

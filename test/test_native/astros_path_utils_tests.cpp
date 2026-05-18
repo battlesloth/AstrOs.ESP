@@ -117,8 +117,6 @@ TEST(ContentAddressedFirmwarePath, UsesExactlyFirst16CharsOfHash)
 
 TEST(ContentAddressedFirmwarePath, AcceptsExactly16CharHash)
 {
-    // No bytes available beyond the truncation point — the helper must still
-    // succeed because it only reads FIRMWARE_HASH_PREFIX_LEN chars.
     const char *hex = "aaaabbbbccccdddd";
     ASSERT_EQ(FIRMWARE_HASH_PREFIX_LEN, strlen(hex));
     char out[FIRMWARE_PATH_BUF_LEN] = {0};
@@ -128,9 +126,7 @@ TEST(ContentAddressedFirmwarePath, AcceptsExactly16CharHash)
 
 TEST(ContentAddressedFirmwarePath, RejectsShortHash)
 {
-    // 15-char hash should be rejected — the "%.16s" silent-truncation
-    // behavior in the original inline snprintf is exactly what extracting
-    // this helper exists to prevent.
+    // Locks down the 16-char minimum that prevents silent %.16s truncation.
     const char *hex = "aaaabbbbccccdd";
     ASSERT_LT(strlen(hex), FIRMWARE_HASH_PREFIX_LEN);
     char out[FIRMWARE_PATH_BUF_LEN] = {'X'};
@@ -159,8 +155,7 @@ TEST(ContentAddressedFirmwarePath, RejectsNullOut)
 
 TEST(ContentAddressedFirmwarePath, RejectsUndersizedBuffer)
 {
-    // One byte short of the required buffer size — must reject and NUL the
-    // output so the caller can't silently consume a truncated path.
+    // NUL on out[0] prevents the caller from consuming a truncated path.
     char out[FIRMWARE_PATH_BUF_LEN - 1] = {'X'};
     EXPECT_FALSE(contentAddressedFirmwarePath("0123456789abcdef", out, sizeof(out)));
     EXPECT_EQ('\0', out[0]);
@@ -168,10 +163,8 @@ TEST(ContentAddressedFirmwarePath, RejectsUndersizedBuffer)
 
 TEST(ContentAddressedFirmwarePath, ZeroLengthBufferDoesNotWriteOut)
 {
-    // outLen=0 with non-null out is a degenerate but legal call. The helper
-    // must reject without touching the buffer — a stray "out[0] = '\\0'"
-    // would be a 1-byte OOB write. The canary lets us prove the buffer
-    // wasn't touched.
+    // Reject must not touch the buffer — a stray out[0]='\0' would be a
+    // 1-byte OOB write.
     char canary[2] = {'X', 'Y'};
     EXPECT_FALSE(contentAddressedFirmwarePath("0123456789abcdef", canary, 0));
     EXPECT_EQ('X', canary[0]);

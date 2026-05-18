@@ -63,11 +63,8 @@ public:
 
     esp_err_t formatSdCard();
 
-    // OTA staging support. Both query the SD card.
-    // freeSpaceSdBytes returns nullopt when the card is unmounted or the
-    // FATFS query fails — callers must distinguish that from a legitimate 0
-    // (truly full card) and surface a different error to the operator.
-    // ensureSdFirmwareDir returns false on any non-EEXIST mkdir failure.
+    // nullopt distinguishes a probe failure (card unmounted, FATFS error)
+    // from a legitimate 0-bytes-free reading.
     std::optional<uint64_t> freeSpaceSdBytes();
     bool ensureSdFirmwareDir();
 };
