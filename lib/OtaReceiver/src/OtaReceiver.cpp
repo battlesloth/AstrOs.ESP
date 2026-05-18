@@ -421,11 +421,15 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         // power loss after END_ACK OK would otherwise leave the renamed file
         // short. The hash itself was computed from cr.payload in handleChunk,
         // so it is independent of this flush.
-        bool closeOk = (staging_ != nullptr) && (fclose(staging_) == 0);
+        bool fileOpen = (staging_ != nullptr);
+        bool fcloseOk = fileOpen && (fclose(staging_) == 0);
         staging_ = nullptr;
 
         uint8_t digest[32];
-        bool hashOk = shaActive_ && (mbedtls_sha256_finish(&shaCtx_, digest) == 0);
+        // Capture the active flag before teardown so the diagnostic below can
+        // distinguish "never initialized" from "finish failed".
+        bool shaWasActive = shaActive_;
+        bool hashOk = shaWasActive && (mbedtls_sha256_finish(&shaCtx_, digest) == 0);
         if (shaActive_)
         {
             mbedtls_sha256_free(&shaCtx_);
@@ -441,10 +445,30 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             AstrOsStringUtils::toHexLower(digest, sizeof(digest), computedHex);
         }
 
-        if (!closeOk || !hashOk)
+        if (!fcloseOk || !hashOk)
         {
-            ESP_LOGE(TAG, "FW_TRANSFER_END finalize failed (closeOk=%d hashOk=%d) — replying IO_ERROR", (int)closeOk,
-                     (int)hashOk);
+            // Split the diagnostic into the three distinct failure modes so
+            // an operator chasing the LOGE doesn't have to bisect three
+            // possible causes at once.
+            if (!fileOpen)
+            {
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: staging_ was null (BEGIN/chunk-handler bug)");
+            }
+            else if (!fcloseOk)
+            {
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: fclose failed errno=%d (%s)", errno, strerror(errno));
+            }
+            if (!hashOk)
+            {
+                if (!shaWasActive)
+                {
+                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: SHA context was never initialized (BEGIN bug)");
+                }
+                else
+                {
+                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: mbedtls_sha256_finish returned error");
+                }
+            }
             // Keep staging.bin so a follow-up can inspect what was written.
             AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
         }

@@ -166,10 +166,21 @@ TEST(ContentAddressedFirmwarePath, RejectsUndersizedBuffer)
     EXPECT_EQ('\0', out[0]);
 }
 
+TEST(ContentAddressedFirmwarePath, ZeroLengthBufferDoesNotWriteOut)
+{
+    // outLen=0 with non-null out is a degenerate but legal call. The helper
+    // must reject without touching the buffer — a stray "out[0] = '\\0'"
+    // would be a 1-byte OOB write. The canary lets us prove the buffer
+    // wasn't touched.
+    char canary[2] = {'X', 'Y'};
+    EXPECT_FALSE(contentAddressedFirmwarePath("0123456789abcdef", canary, 0));
+    EXPECT_EQ('X', canary[0]);
+    EXPECT_EQ('Y', canary[1]);
+}
+
 TEST(ContentAddressedFirmwarePath, IsDeterministic)
 {
-    // Same input always produces the same path — the property mesh
-    // forwarders will rely on for filename-based dedup.
+    // Same input must produce the same path.
     const char *hex = "feedfacecafebeef0011223344556677";
     char a[FIRMWARE_PATH_BUF_LEN] = {0};
     char b[FIRMWARE_PATH_BUF_LEN] = {0};
