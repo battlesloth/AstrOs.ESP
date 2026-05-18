@@ -162,7 +162,7 @@ I OtaReceiver: FW_DEPLOY_BEGIN: transferId=<id> target-count=<N> — all-FAILED 
 - SD inspection:
   - `staging.bin` is **absent** (renamed on success).
   - A single file named `<first-16-hex-chars-of-sha>.bin` exists.
-  - `sha256sum` of that file matches the value recorded in step 0 byte-for-byte.
+  - `sha256sum` of that file matches the recorded SHA-256 value byte-for-byte.
 - No `OTA Receiver Stack HWM:` warning (would mean the 4 KB task stack is
   too small after adding the on-stack `mbedtls_sha256_context`; bump to 5120
   if it fires).
