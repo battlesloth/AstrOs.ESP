@@ -28,8 +28,8 @@ namespace AstrOsPathUtils
     //
     // Each verified firmware blob on SD is named after the first 16 hex chars
     // of its SHA-256 digest, under /sdcard/firmware/. The 16-char prefix has
-    // ~1 in 2^64 collision odds and keeps the resulting path well inside FAT
-    // 8.3 long-filename limits.
+    // ~1 in 2^64 collision odds and keeps the resulting path well within FAT
+    // filename/path length limits.
 
     // Number of hex characters from the digest used to name the file.
     constexpr std::size_t FIRMWARE_HASH_PREFIX_LEN = 16;
