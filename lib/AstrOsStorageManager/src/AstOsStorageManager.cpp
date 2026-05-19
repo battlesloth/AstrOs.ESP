@@ -567,9 +567,14 @@ std::optional<uint64_t> AstrOsStorageManager::freeSpaceSdBytes()
     return static_cast<uint64_t>(freeClusters) * fs->csize * card->csd.sector_size;
 }
 
+#ifndef USE_SPIFFS
 bool AstrOsStorageManager::ensureSdFirmwareDir()
 {
-    const char *path = MOUNT_POINT "/firmware";
+    // Hard-coded /sdcard to match the rest of the OTA path constants
+    // (AstrOsPathUtils::FIRMWARE_DIR, kStagingPath). MOUNT_POINT is "/sdcard"
+    // in this build by construction of the #ifndef, so don't dress it up as
+    // portable when it isn't.
+    const char *path = "/sdcard/firmware";
     if (mkdir(path, 0775) == 0 || errno == EEXIST)
     {
         return true;
@@ -577,6 +582,7 @@ bool AstrOsStorageManager::ensureSdFirmwareDir()
     ESP_LOGE(TAG, "ensureSdFirmwareDir: mkdir(%s) failed: errno=%d (%s)", path, errno, strerror(errno));
     return false;
 }
+#endif
 
 esp_err_t AstrOsStorageManager::mountSdCard()
 {

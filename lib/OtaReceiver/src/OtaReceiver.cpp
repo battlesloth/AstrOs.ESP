@@ -15,7 +15,7 @@ static const char *TAG = "OtaReceiver";
 
 namespace
 {
-    constexpr const char *kStagingPath = "/sdcard/firmware/staging.bin";
+    constexpr const char *kStagingPath = AstrOsPathUtils::FIRMWARE_STAGING_PATH;
 } // namespace
 
 OtaReceiver AstrOs_OtaReceiver;

@@ -66,7 +66,11 @@ public:
     // nullopt distinguishes a probe failure (card unmounted, FATFS error)
     // from a legitimate 0-bytes-free reading.
     std::optional<uint64_t> freeSpaceSdBytes();
+#ifndef USE_SPIFFS
+    // OTA-only: hard-codes /sdcard/firmware. Absent from SPIFFS builds so
+    // callers fail to link rather than silently writing to the wrong volume.
     bool ensureSdFirmwareDir();
+#endif
 };
 
 extern AstrOsStorageManager AstrOs_Storage;
