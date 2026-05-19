@@ -125,3 +125,128 @@ I OtaReceiver: FW_DEPLOY_BEGIN: transferId=<id> target-count=<N> — all-FAILED 
   e.g., a CHUNK every 9 s indefinitely. Polling stays paused for the duration.
   The deadline-based watchdog will land alongside Phase 4 deploy/flash work where
   the abort semantics are decided together with disk-write timeouts.
+
+## Phase 4 — SD writer + streaming SHA-256
+
+### Preconditions
+
+- Master flashed with `feature/ota-phase4-sd-writer-sha256` (or `develop` once merged).
+- AstrOs.Server `develop` running, pointed at the master's serial port.
+- A known-good 1.2 MB `.bin`. Record its SHA-256 out-of-band:
+  `sha256sum firmware.bin` → save the hex digest.
+- SD card present, FAT-formatted, with at least ~5 MB free (well above the
+  1.2 MB pre-check threshold). The receiver auto-creates `/sdcard/firmware/`
+  on the first BEGIN.
+
+### Happy-path steps
+
+1. From the AstrOs.Server Firmware view, upload the recorded `.bin`.
+2. Click `Send to master`.
+3. After the UI reports "transfer complete", power down the master and pull
+   the SD card.
+4. On the host: `ls /sdcard/firmware/` and `sha256sum
+   /sdcard/firmware/<sha-prefix>.bin`.
+
+### Expected results
+
+- Master serial log (timestamps and exact values will differ):
+
+```
+I OtaReceiver: FW_TRANSFER_BEGIN accepted: transferId=<id> totalSize=1228800 chunks=300 sha=<full-hex>
+I OtaReceiver: FW_TRANSFER_END OK: transferId=<id> totalChunks=300 path=/sdcard/firmware/<sha-prefix>.bin sha=<full-hex>
+I OtaReceiver: FW_DEPLOY_BEGIN: transferId=<id> target-count=<N> — all-FAILED not_implemented
+```
+
+- The END_ACK now carries the **locally computed** hash, not the server's echo.
+  The server compares it to its own digest and reports OK if they match.
+- SD inspection:
+  - `staging.bin` is **absent** (renamed on success).
+  - A single file named `<first-16-hex-chars-of-sha>.bin` exists.
+  - `sha256sum` of that file matches the recorded SHA-256 value byte-for-byte.
+- No `OTA Receiver Stack HWM:` warning (would mean the 4 KB task stack is
+  too small after adding the on-stack `mbedtls_sha256_context`; bump to 5120
+  if it fires).
+
+### Negative path 6 — Watchdog discards staging.bin on stuck transfer
+
+**Preconditions:** A transfer is in flight (BEGIN ACK received, chunks streaming),
+SD card contains an in-progress `staging.bin`.
+
+**Steps:**
+1. Pull the serial cable mid-transfer.
+2. Wait ≥10 s for the idle watchdog to fire (visible in logs as
+   `OTA watchdog fired: transferId=<id> idle >10000ms — aborting transfer`).
+3. Reattach the serial cable.
+4. From the server, upload again with a different `.bin`.
+
+**Expected:**
+- After step 2, the watchdog log line appears and the receiver returns to idle
+  (`isActive()` becomes false). Note: confirming `staging.bin` is absent here
+  requires removing the SD card, which interrupts the test — defer the on-disk
+  check to step 5 below if needed.
+- The second BEGIN in step 4 is accepted cleanly (no `busy` reject).
+- The second transfer completes with its own `<sha-prefix>.bin` on the SD card.
+
+**Pass/Fail:** Pass if (a) the watchdog log fires within ~11 s, (b) the second
+upload completes OK, and (c) the SD card eventually shows only the **second**
+firmware's `<sha-prefix>.bin` (no leftover from the first attempt — the
+watchdog's `keepStaging=false` policy removes it).
+
+### Negative path 7 — Same-firmware re-upload is idempotent
+
+**Preconditions:** A successful Phase 4 transfer has already landed
+`/sdcard/firmware/<sha-prefix>.bin` on the card.
+
+**Steps:**
+1. Without changing the `.bin`, upload it again from the server.
+
+**Expected:**
+- BEGIN_ACK OK, normal chunk flow, END_ACK OK with the same computed hash.
+- On the SD card after success: still exactly one `<sha-prefix>.bin` with the
+  same name and same contents. The `unlink` before `rename` makes the
+  same-path-target case work; no `staging.bin` left behind.
+
+**Pass/Fail:** Pass if the second upload completes cleanly and the SD card
+state is unchanged.
+
+### Negative path 8 — HASH_MISMATCH preserves staging.bin
+
+**Preconditions:** Master idle, SD card empty of any prior `/sdcard/firmware/`
+contents.
+
+**Steps:**
+1. From the server, drive a transfer with a deliberately wrong END hash. The
+   simplest path is a server-side debug toggle that flips one byte of
+   `finalSha256Hex` in the `FW_TRANSFER_END` frame before sending; if the
+   toggle doesn't exist yet, hand-craft the frame from a serial console
+   after recording the real chunk stream.
+2. Watch the master serial log.
+3. Power the master down, pull the SD card.
+
+**Expected:**
+- Master serial log includes a single LOGW like
+  `FW_TRANSFER_END HASH_MISMATCH: transferId=<id> computed=<a> expected=<b> — staging.bin preserved`.
+- `FW_TRANSFER_END_ACK status=HASH_MISMATCH computedHex=<a>` reaches the
+  server.
+- SD inspection:
+  - `/sdcard/firmware/staging.bin` is **present** and its size equals
+    `totalSize` from BEGIN.
+  - **No** `<computed-prefix>.bin` or `<expected-prefix>.bin` was created.
+- A subsequent BEGIN truncates `staging.bin` cleanly — verify by uploading
+  the real firmware next and confirming the rename to `<prefix>.bin`
+  succeeds and `staging.bin` is gone afterward.
+
+**Pass/Fail:** Pass if the HASH_MISMATCH log fires, `staging.bin` survives
+on disk, and no renamed file was created. This is the **only** path that
+exercises the forensic-preserve contract — a regression here (e.g., an
+errant `resetCryptoAndFile(false)` on the HASH_MISMATCH branch) would
+silently destroy evidence operators rely on for post-mortem investigation.
+
+### Out of scope for Phase 4 (deferred to Phase 5)
+
+- Pre-filled SD card to force `sd_full` — verifies the BEGIN free-space gate.
+- Mid-transfer CRC injection persisting across retries — verifies the
+  receiver still completes after server-side retransmits.
+- 5-min whole-transfer wall-clock deadline. The Phase 3 idle watchdog covers
+  the dominant failure mode; the deadline backstop will be evaluated against
+  measured throughput before being built.

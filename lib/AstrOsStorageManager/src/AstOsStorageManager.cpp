@@ -548,6 +548,42 @@ esp_err_t AstrOsStorageManager::formatSdCard()
     return ESP_OK;
 }
 
+std::optional<uint64_t> AstrOsStorageManager::freeSpaceSdBytes()
+{
+    if (card == nullptr)
+    {
+        ESP_LOGE(TAG, "freeSpaceSdBytes: card not mounted");
+        return std::nullopt;
+    }
+    FATFS *fs = nullptr;
+    DWORD freeClusters = 0;
+    // "0:" is the FATFS drive prefix matching the esp_vfs_fat_sdspi_mount call.
+    FRESULT res = f_getfree("0:", &freeClusters, &fs);
+    if (res != FR_OK || fs == nullptr)
+    {
+        ESP_LOGE(TAG, "freeSpaceSdBytes: f_getfree failed (res=%d)", res);
+        return std::nullopt;
+    }
+    return static_cast<uint64_t>(freeClusters) * fs->csize * card->csd.sector_size;
+}
+
+#ifndef USE_SPIFFS
+bool AstrOsStorageManager::ensureSdFirmwareDir()
+{
+    // Hard-coded /sdcard to match the rest of the OTA path constants
+    // (AstrOsPathUtils::FIRMWARE_DIR, kStagingPath). MOUNT_POINT is "/sdcard"
+    // in this build by construction of the #ifndef, so don't dress it up as
+    // portable when it isn't.
+    const char *path = "/sdcard/firmware";
+    if (mkdir(path, 0775) == 0 || errno == EEXIST)
+    {
+        return true;
+    }
+    ESP_LOGE(TAG, "ensureSdFirmwareDir: mkdir(%s) failed: errno=%d (%s)", path, errno, strerror(errno));
+    return false;
+}
+#endif
+
 esp_err_t AstrOsStorageManager::mountSdCard()
 {
     esp_err_t err;

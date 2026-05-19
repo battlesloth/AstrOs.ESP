@@ -1,10 +1,23 @@
 #include <OtaReceiver.hpp>
 
+#include <AstrOsPathUtils.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
+#include <AstrOsStorageManager.hpp>
 #include <AstrOsStringUtils.hpp>
 #include <esp_log.h>
 
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
+
 static const char *TAG = "OtaReceiver";
+
+namespace
+{
+    constexpr const char *kStagingPath = AstrOsPathUtils::FIRMWARE_STAGING_PATH;
+} // namespace
 
 OtaReceiver AstrOs_OtaReceiver;
 
@@ -20,6 +33,8 @@ OtaReceiver::~OtaReceiver()
         esp_timer_delete(watchdog_);
         watchdog_ = nullptr;
     }
+    // Shutdown isn't a transfer outcome — keep any in-flight staging.bin.
+    resetCryptoAndFile(/*keepStaging=*/true);
 }
 
 void OtaReceiver::Init(QueueHandle_t otaQueue)
@@ -103,6 +118,32 @@ void OtaReceiver::watchdogStop()
     esp_timer_stop(watchdog_);
 }
 
+void OtaReceiver::resetCryptoAndFile(bool keepStaging)
+{
+    if (staging_ != nullptr)
+    {
+        if (fclose(staging_) != 0)
+        {
+            // Capture errno before strerror or any other libc call can clobber it.
+            // Buffered bytes may not have reached disk; a preserved file could be short.
+            const int closeErrno = errno;
+            ESP_LOGE(TAG, "fclose(staging_) failed: errno=%d (%s) — preserved file may be truncated", closeErrno,
+                     strerror(closeErrno));
+        }
+        staging_ = nullptr;
+        if (!keepStaging)
+        {
+            // Best-effort — may already be absent if rename succeeded.
+            unlink(kStagingPath);
+        }
+    }
+    if (shaActive_)
+    {
+        mbedtls_sha256_free(&shaCtx_);
+        shaActive_ = false;
+    }
+}
+
 void OtaReceiver::process(queue_ota_msg_t &msg)
 {
     switch (msg.kind)
@@ -143,10 +184,12 @@ void OtaReceiver::handleWatchdogFire()
     ESP_LOGW(TAG, "OTA watchdog fired: transferId=%s idle >%llums — aborting transfer", transferIdStr_.c_str(),
              kWatchdogIdleUs / 1000ULL);
     bulk_.reset();
+    // No END means no hash check — discard the unverified bytes (HASH_MISMATCH
+    // is the path that preserves).
+    resetCryptoAndFile(/*keepStaging=*/false);
     active_ = false;
     transferIdStr_.clear();
-    // No server notification — chunk_streamer has its own timeout. The
-    // master's job is to be ready for the next BEGIN.
+    // No server notification; the sender times out independently.
 }
 
 void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
@@ -184,6 +227,69 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
+    // Rejected BEGIN must leave active_/transferIdStr_ untouched.
+    if (!AstrOs_Storage.ensureSdFirmwareDir())
+    {
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: ensureSdFirmwareDir failed — replying io_error");
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        return;
+    }
+
+    auto freeBytes = AstrOs_Storage.freeSpaceSdBytes();
+    if (!freeBytes.has_value())
+    {
+        // Probe failure is an I/O fault; sd_full would mislead the operator.
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: freeSpaceSdBytes probe failed — replying io_error");
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        return;
+    }
+
+    // A prior HASH_MISMATCH (or finalize IO_ERROR) leaves staging.bin on disk
+    // for forensics. The fopen("wb") below truncates it before any new bytes
+    // land, so its current clusters return to the free pool — count them as
+    // available so we don't falsely reject a same-size re-upload as sd_full.
+    uint64_t reclaimableStaging = 0;
+    struct stat existingStaging;
+    if (stat(kStagingPath, &existingStaging) == 0 && S_ISREG(existingStaging.st_mode))
+    {
+        reclaimableStaging = static_cast<uint64_t>(existingStaging.st_size);
+    }
+    uint64_t availableBytes = *freeBytes + reclaimableStaging;
+    if (availableBytes < msg.begin.totalSize)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN: sd_full (free=%llu reclaim=%llu need=%u)", (unsigned long long)*freeBytes,
+                 (unsigned long long)reclaimableStaging, (unsigned)msg.begin.totalSize);
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "sd_full");
+        return;
+    }
+
+    // "wb" truncates — cleans up any HASH_MISMATCH leftover from a prior transfer.
+    staging_ = fopen(kStagingPath, "wb");
+    if (staging_ == nullptr)
+    {
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: fopen(%s) failed: errno=%d (%s)", kStagingPath, errno, strerror(errno));
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        return;
+    }
+
+    mbedtls_sha256_init(&shaCtx_);
+    if (mbedtls_sha256_starts(&shaCtx_, /*is224=*/0) != 0)
+    {
+        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: mbedtls_sha256_starts failed");
+        mbedtls_sha256_free(&shaCtx_);
+        fclose(staging_);
+        staging_ = nullptr;
+        unlink(kStagingPath);
+        bulk_.reset();
+        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
+        return;
+    }
+    shaActive_ = true;
+
     active_ = true;
     transferIdStr_ = transferIdIn;
 
@@ -218,6 +324,49 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
 
     if (cr.decision == AstrOsBulkTransport::Decision::ACK)
     {
+        // Persist before ACK — a short fwrite means the bytes we'd be
+        // acknowledging aren't on disk.
+        if (staging_ == nullptr || !shaActive_)
+        {
+            // Defensive — should be unreachable if BEGIN succeeded.
+            ESP_LOGE(TAG, "handleChunk ACK but staging/sha not initialized — aborting transfer");
+            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
+                                                   "FLASH_FULL");
+            resetCryptoAndFile(/*keepStaging=*/false);
+            bulk_.reset();
+            active_ = false;
+            transferIdStr_.clear();
+            watchdogStop();
+            return;
+        }
+        size_t wrote = fwrite(cr.payload, 1, cr.payloadLen, staging_);
+        if (wrote != cr.payloadLen)
+        {
+            ESP_LOGE(TAG, "fwrite short: wrote=%zu of %u (errno=%d %s) — aborting transfer", wrote,
+                     (unsigned)cr.payloadLen, errno, strerror(errno));
+            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
+                                                   "FLASH_FULL");
+            resetCryptoAndFile(/*keepStaging=*/false);
+            bulk_.reset();
+            active_ = false;
+            transferIdStr_.clear();
+            watchdogStop();
+            return;
+        }
+        if (mbedtls_sha256_update(&shaCtx_, cr.payload, cr.payloadLen) != 0)
+        {
+            // Update failure corrupts the digest; abort now rather than
+            // reporting HASH_MISMATCH at END.
+            ESP_LOGE(TAG, "mbedtls_sha256_update failed — aborting transfer");
+            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
+                                                   "FLASH_FULL");
+            resetCryptoAndFile(/*keepStaging=*/false);
+            bulk_.reset();
+            active_ = false;
+            transferIdStr_.clear();
+            watchdogStop();
+            return;
+        }
         AstrOs_SerialMsgHandler.sendFwChunkAck(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                cr.windowRemaining);
     }
@@ -278,10 +427,125 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
 
     if (er.status == AstrOsBulkTransport::EndResult::Status::OK)
     {
-        // No local hash yet — echo the server's hash so its compare succeeds.
-        ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u", transferIdIn.c_str(),
-                 (unsigned)msg.end.totalChunks);
-        AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", finalShaIn);
+        // Close before rename so stdio-buffered bytes hit disk; a power loss
+        // after END_ACK OK would otherwise truncate the renamed file. The hash
+        // was fed from chunk payloads, independent of this flush.
+        // Capture errno at the fclose call site — mbedtls finish/free below
+        // could clobber it before the diagnostic log runs.
+        bool fileOpen = (staging_ != nullptr);
+        bool fcloseOk = false;
+        int fcloseErrno = 0;
+        if (fileOpen)
+        {
+            if (fclose(staging_) == 0)
+            {
+                fcloseOk = true;
+            }
+            else
+            {
+                fcloseErrno = errno;
+            }
+        }
+        staging_ = nullptr;
+
+        uint8_t digest[32];
+        // Capture the active flag before teardown so the diagnostic below can
+        // distinguish "never initialized" from "finish failed".
+        bool shaWasActive = shaActive_;
+        bool hashOk = shaWasActive && (mbedtls_sha256_finish(&shaCtx_, digest) == 0);
+        if (shaActive_)
+        {
+            mbedtls_sha256_free(&shaCtx_);
+            shaActive_ = false;
+        }
+
+        // Encode whenever the SHA succeeded — a fclose-only failure can still
+        // report the digest of bytes we processed.
+        char computedHex[SHA256_HEX_LEN + 1] = {0};
+        if (hashOk)
+        {
+            AstrOsStringUtils::toHexLower(digest, sizeof(digest), computedHex);
+        }
+
+        if (!fcloseOk || !hashOk)
+        {
+            if (!fileOpen)
+            {
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: staging_ was null (BEGIN/chunk-handler bug)");
+            }
+            else if (!fcloseOk)
+            {
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: fclose failed errno=%d (%s)", fcloseErrno,
+                         strerror(fcloseErrno));
+            }
+            if (!hashOk)
+            {
+                if (!shaWasActive)
+                {
+                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: SHA context was never initialized (BEGIN bug)");
+                }
+                else
+                {
+                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: mbedtls_sha256_finish returned error");
+                }
+            }
+            // Keep staging.bin so a follow-up can inspect what was written.
+            AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
+        }
+        else
+        {
+            const char *expectedHex = msg.end.finalSha256Hex;
+            char finalPath[AstrOsPathUtils::FIRMWARE_PATH_BUF_LEN];
+            bool pathOk = AstrOsPathUtils::contentAddressedFirmwarePath(computedHex, finalPath, sizeof(finalPath));
+            if (!pathOk)
+            {
+                // Computed hex came from mbedtls_sha256_finish on 32 bytes, so
+                // it's always 64 chars — this branch should be unreachable.
+                ESP_LOGE(TAG, "contentAddressedFirmwarePath failed for computed=%s — replying IO_ERROR", computedHex);
+                AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
+            }
+            else if (strcmp(computedHex, expectedHex) == 0)
+            {
+                // unlink-then-rename — FAT rename onto an existing path can
+                // fail. `removedPrior` lets the rename-failure branch below
+                // distinguish "no-op retry" from "operator lost a file".
+                int unlinkRc = unlink(finalPath);
+                bool removedPrior = (unlinkRc == 0);
+                if (unlinkRc != 0 && errno != ENOENT)
+                {
+                    // Capture errno before rename clobbers it.
+                    ESP_LOGW(TAG, "pre-rename unlink(%s) failed: errno=%d (%s)", finalPath, errno, strerror(errno));
+                }
+                if (rename(kStagingPath, finalPath) == 0)
+                {
+                    ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u path=%s sha=%s",
+                             transferIdIn.c_str(), (unsigned)msg.end.totalChunks, finalPath, computedHex);
+                    AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", computedHex);
+                }
+                else
+                {
+                    int renameErrno = errno;
+                    if (removedPrior)
+                    {
+                        ESP_LOGE(
+                            TAG,
+                            "FW_TRANSFER_END: rename failed after removing prior %s — operator lost prior firmware",
+                            finalPath);
+                    }
+                    ESP_LOGE(TAG, "FW_TRANSFER_END: rename(%s -> %s) failed: errno=%d (%s)", kStagingPath, finalPath,
+                             renameErrno, strerror(renameErrno));
+                    AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
+                }
+            }
+            else
+            {
+                ESP_LOGW(TAG,
+                         "FW_TRANSFER_END HASH_MISMATCH: transferId=%s computed=%s expected=%s — staging.bin preserved",
+                         transferIdIn.c_str(), computedHex, expectedHex);
+                // Preserve staging.bin for post-mortem inspection.
+                AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "HASH_MISMATCH", computedHex);
+            }
+        }
     }
     else
     {
@@ -333,6 +597,15 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         transferIdStr_.clear();
         bulk_.reset();
         watchdogStop();
+        // Discard unverified bytes. The OK status branch already nulled
+        // staging_ after fclose, so the forensic-preserve cases
+        // (HASH_MISMATCH, post-verify rename failure, finalize IO_ERROR)
+        // skip the unlink inside resetCryptoAndFile and leave staging.bin
+        // intact for inspection. Only the non-OK teardown reasons
+        // (SENDER_TOTAL_MISMATCH, RECEIVER_SHORT_COUNT) still hold an open
+        // staging_ here — those are the "other aborts" the PR description
+        // promises to discard, alongside the watchdog path.
+        resetCryptoAndFile(/*keepStaging=*/false);
     }
 }
 

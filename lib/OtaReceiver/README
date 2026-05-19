@@ -9,8 +9,9 @@ replies via AstrOs_SerialMsgHandler.
 Classification
 --------------
 
-MIXED — includes <freertos/...>, <esp_log.h>, and (when SD persistence
-lands) <mbedtls/sha256.h>. Does NOT compile under [env:test].
+MIXED — includes <freertos/...>, <esp_log.h>, and <mbedtls/sha256.h>
+(streaming hash for the SD-staging path). Does NOT compile under
+[env:test].
 
 Queue ownership invariants
 --------------------------
