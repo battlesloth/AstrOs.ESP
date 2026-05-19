@@ -16,8 +16,9 @@ namespace AstrOsPathUtils
             return false;
         }
         // Need at least FIRMWARE_HASH_PREFIX_LEN chars before the NUL — a
-        // shorter input would let snprintf's "%.16s" silently truncate to
-        // whatever it found, producing names that don't reflect the digest.
+        // shorter input would let snprintf's precision-clipped "%.*s" silently
+        // truncate to whatever it found, producing names that don't reflect
+        // the digest.
         for (std::size_t i = 0; i < FIRMWARE_HASH_PREFIX_LEN; ++i)
         {
             if (hashHex[i] == '\0')
@@ -25,7 +26,8 @@ namespace AstrOsPathUtils
                 return false;
             }
         }
-        int written = std::snprintf(out, outLen, "%s%.16s.bin", FIRMWARE_DIR, hashHex);
+        int written =
+            std::snprintf(out, outLen, "%s%.*s.bin", FIRMWARE_DIR, static_cast<int>(FIRMWARE_HASH_PREFIX_LEN), hashHex);
         if (written <= 0 || static_cast<std::size_t>(written) >= outLen)
         {
             out[0] = '\0';

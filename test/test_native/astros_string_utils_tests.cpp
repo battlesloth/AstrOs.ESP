@@ -58,7 +58,7 @@ TEST(StringUtils, ToHexLower_SingleByteAllNibbles)
         AstrOsStringUtils::toHexLower(&in, 1, out);
 
         char expected[3];
-        snprintf(expected, sizeof(expected), "%02x", in);
+        std::snprintf(expected, sizeof(expected), "%02x", in);
         EXPECT_STREQ(expected, out) << "byte=" << b;
     }
 }

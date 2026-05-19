@@ -45,10 +45,11 @@ namespace AstrOsPathUtils
     // name on successful END+verify.
     constexpr const char *FIRMWARE_STAGING_PATH = "/sdcard/firmware/staging.bin";
 
-    // Minimum out-buffer size for contentAddressedFirmwarePath including NUL:
-    // strlen("/sdcard/firmware/") + FIRMWARE_HASH_PREFIX_LEN + strlen(".bin")
-    //   = 17 + 16 + 4 + 1 = 38.
-    constexpr std::size_t FIRMWARE_PATH_BUF_LEN = 38;
+    // Minimum out-buffer size for contentAddressedFirmwarePath including NUL.
+    // Derived so any change to FIRMWARE_DIR or FIRMWARE_HASH_PREFIX_LEN is
+    // picked up automatically. sizeof(".bin") is 5 (4 chars + NUL).
+    constexpr std::size_t FIRMWARE_PATH_BUF_LEN =
+        std::char_traits<char>::length(FIRMWARE_DIR) + FIRMWARE_HASH_PREFIX_LEN + sizeof(".bin");
 
     // Builds "/sdcard/firmware/<first-16-of-hashHex>.bin" into `out`.
     // Returns true on success. Returns false if:
