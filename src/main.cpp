@@ -93,7 +93,7 @@ static esp_timer_handle_t pollingTimer;
 static bool polling = false;
 
 static esp_timer_handle_t maintenanceTimer;
-static esp_timer_handle_t servoMoveTimer;
+static esp_timer_handle_t servoShutdownTimer;
 
 // Silent-error counters — incremented from cross-task contexts (Wi-Fi driver task
 // for espnowRecvCallback, astrosRxTask on core 0). Read from maintenanceTimerCallback
@@ -399,7 +399,7 @@ static void initTimers(void)
     const esp_timer_create_args_t sTimerArgs = {.callback = &servoShutdownTimerCallback,
                                                 .arg = NULL,
                                                 .dispatch_method = ESP_TIMER_TASK,
-                                                .name = "servoMove",
+                                                .name = "servoShutdown",
                                                 .skip_unhandled_events = true};
 
     ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
@@ -410,9 +410,9 @@ static void initTimers(void)
     ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started maintenance timer");
 
-    ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoMoveTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
-    ESP_LOGI("init_timer", "Started servo move timer");
+    ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoShutdownTimer));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoShutdownTimer, 300 * 1000));
+    ESP_LOGI("init_timer", "Started servo shutdown timer");
 }
 
 static void pollingTimerCallback(void *arg)
@@ -745,7 +745,7 @@ static void servoShutdownTimerCallback(void *arg)
         maestroMod->CheckServos(300);
     }
 
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoShutdownTimer, 300 * 1000));
 }
 
 #pragma endregion
