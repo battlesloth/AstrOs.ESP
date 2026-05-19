@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const char *TAG = "OtaReceiver";
@@ -244,10 +245,22 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
         return;
     }
-    if (*freeBytes < msg.begin.totalSize)
+
+    // A prior HASH_MISMATCH (or finalize IO_ERROR) leaves staging.bin on disk
+    // for forensics. The fopen("wb") below truncates it before any new bytes
+    // land, so its current clusters return to the free pool — count them as
+    // available so we don't falsely reject a same-size re-upload as sd_full.
+    uint64_t reclaimableStaging = 0;
+    struct stat existingStaging;
+    if (stat(kStagingPath, &existingStaging) == 0 && S_ISREG(existingStaging.st_mode))
     {
-        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN: sd_full (free=%llu need=%u)", (unsigned long long)*freeBytes,
-                 (unsigned)msg.begin.totalSize);
+        reclaimableStaging = static_cast<uint64_t>(existingStaging.st_size);
+    }
+    uint64_t availableBytes = *freeBytes + reclaimableStaging;
+    if (availableBytes < msg.begin.totalSize)
+    {
+        ESP_LOGW(TAG, "FW_TRANSFER_BEGIN: sd_full (free=%llu reclaim=%llu need=%u)", (unsigned long long)*freeBytes,
+                 (unsigned long long)reclaimableStaging, (unsigned)msg.begin.totalSize);
         bulk_.reset();
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "sd_full");
         return;
@@ -584,9 +597,15 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         transferIdStr_.clear();
         bulk_.reset();
         watchdogStop();
-        // Keep staging.bin so HASH_MISMATCH preserves the artifact; the OK
-        // path's rename has already moved it out of the way.
-        resetCryptoAndFile(/*keepStaging=*/true);
+        // Discard unverified bytes. The OK status branch already nulled
+        // staging_ after fclose, so the forensic-preserve cases
+        // (HASH_MISMATCH, post-verify rename failure, finalize IO_ERROR)
+        // skip the unlink inside resetCryptoAndFile and leave staging.bin
+        // intact for inspection. Only the non-OK teardown reasons
+        // (SENDER_TOTAL_MISMATCH, RECEIVER_SHORT_COUNT) still hold an open
+        // staging_ here — those are the "other aborts" the PR description
+        // promises to discard, alongside the watchdog path.
+        resetCryptoAndFile(/*keepStaging=*/false);
     }
 }
 
