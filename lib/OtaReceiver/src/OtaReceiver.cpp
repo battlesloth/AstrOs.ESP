@@ -6,6 +6,7 @@
 #include <AstrOsStringUtils.hpp>
 #include <esp_log.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -415,8 +416,22 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         // Close before rename so stdio-buffered bytes hit disk; a power loss
         // after END_ACK OK would otherwise truncate the renamed file. The hash
         // was fed from chunk payloads, independent of this flush.
+        // Capture errno at the fclose call site — mbedtls finish/free below
+        // could clobber it before the diagnostic log runs.
         bool fileOpen = (staging_ != nullptr);
-        bool fcloseOk = fileOpen && (fclose(staging_) == 0);
+        bool fcloseOk = false;
+        int fcloseErrno = 0;
+        if (fileOpen)
+        {
+            if (fclose(staging_) == 0)
+            {
+                fcloseOk = true;
+            }
+            else
+            {
+                fcloseErrno = errno;
+            }
+        }
         staging_ = nullptr;
 
         uint8_t digest[32];
@@ -446,7 +461,8 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             }
             else if (!fcloseOk)
             {
-                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: fclose failed errno=%d (%s)", errno, strerror(errno));
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: fclose failed errno=%d (%s)", fcloseErrno,
+                         strerror(fcloseErrno));
             }
             if (!hashOk)
             {

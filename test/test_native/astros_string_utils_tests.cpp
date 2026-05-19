@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstring>
 
 #define UNIT_SEPARATOR (char)0x1F
