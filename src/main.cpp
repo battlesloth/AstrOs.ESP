@@ -159,7 +159,7 @@ static void loadGpioConfig();
 static void initTimers(void);
 static void pollingTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
-static void servoMoveTimerCallback(void *arg);
+static void servoShutdownTimerCallback(void *arg);
 
 // espnow call backs
 bool cachePeer(espnow_peer_t peer);
@@ -396,7 +396,7 @@ static void initTimers(void)
                                                 .skip_unhandled_events = true};
 
     // May need to make this a GPT timer?
-    const esp_timer_create_args_t sTimerArgs = {.callback = &servoMoveTimerCallback,
+    const esp_timer_create_args_t sTimerArgs = {.callback = &servoShutdownTimerCallback,
                                                 .arg = NULL,
                                                 .dispatch_method = ESP_TIMER_TASK,
                                                 .name = "servoMove",
@@ -714,13 +714,11 @@ void animationDispatchTask(void *arg)
     }
 }
 
-static void servoMoveTimerCallback(void *arg)
+// Periodically check if servos should be shut down to extend servo life.
+// currently there hasn't been a demand for servos to hold tension. May need
+// to add an option for that in the future
+static void servoShutdownTimerCallback(void *arg)
 {
-    // get time at start of loop
-    // auto loopStart = esp_timer_get_time();
-
-    // ServoMod.MoveServos();
-
     // Snapshot module handles under the mutex, then release it before calling
     // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
     // which spins on a per-module mutex. Holding maestroModulesMutex across
@@ -739,7 +737,7 @@ static void servoMoveTimerCallback(void *arg)
     }
     else
     {
-        ESP_LOGW(TAG, "servoMoveTimerCallback: maestroModulesMutex timeout — skipping cycle");
+        ESP_LOGW(TAG, "servoShutdownTimerCallback: maestroModulesMutex timeout — skipping cycle");
     }
 
     for (auto &maestroMod : snapshot)
@@ -747,13 +745,6 @@ static void servoMoveTimerCallback(void *arg)
         maestroMod->CheckServos(300);
     }
 
-    // get time at end of loop
-    // auto loopEnd = esp_timer_get_time();
-
-    // start loop  so it will trigger 500 ms from the start of the loop
-    // int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
-    // auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
-    // ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
     ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
 }
 
@@ -1626,12 +1617,6 @@ static void loadMaestroConfigs()
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
     ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
 
-    // Phase 1: structural map mutation under maestroModulesMutex only. We
-    // record pending UpdateConfig calls against existing modules instead of
-    // applying them inline — UpdateConfig() spin-waits on each module's own
-    // mutex, and LoadConfig() does NVS reads + HomeServos() UART traffic.
-    // Running either under the map mutex would stall servoQueueTask and trip
-    // the 100ms timeout in servoMoveTimerCallback repeatedly.
     struct PendingUpdate
     {
         std::shared_ptr<MaestroModule> module;
