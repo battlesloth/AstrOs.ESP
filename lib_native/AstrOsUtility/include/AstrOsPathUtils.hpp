@@ -34,17 +34,16 @@ namespace AstrOsPathUtils
     // Number of hex characters from the digest used to name the file.
     constexpr std::size_t FIRMWARE_HASH_PREFIX_LEN = 16;
 
-// Single source of truth for the on-disk firmware tree. Defined as a macro
-// (not a constexpr) so the constants below can concatenate it with literal
-// adjacency — C++17 has no way to constexpr-join two const char*.
-#define ASTROS_FIRMWARE_DIR_LITERAL "/sdcard/firmware/"
+    // Firmware tree root — keep these literals in sync. Both must share the
+    // /sdcard/firmware/ prefix; the build won't catch drift between them, so
+    // any change to one requires the matching change to the other.
 
     // Directory under which all verified firmware blobs are stored.
-    constexpr const char *FIRMWARE_DIR = ASTROS_FIRMWARE_DIR_LITERAL;
+    constexpr const char *FIRMWARE_DIR = "/sdcard/firmware/";
 
     // In-progress OTA write target. Renamed to the content-addressed final
     // name on successful END+verify.
-    constexpr const char *FIRMWARE_STAGING_PATH = ASTROS_FIRMWARE_DIR_LITERAL "staging.bin";
+    constexpr const char *FIRMWARE_STAGING_PATH = "/sdcard/firmware/staging.bin";
 
     // Minimum out-buffer size for contentAddressedFirmwarePath including NUL:
     // strlen("/sdcard/firmware/") + FIRMWARE_HASH_PREFIX_LEN + strlen(".bin")

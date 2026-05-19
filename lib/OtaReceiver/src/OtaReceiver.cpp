@@ -123,10 +123,11 @@ void OtaReceiver::resetCryptoAndFile(bool keepStaging)
     {
         if (fclose(staging_) != 0)
         {
-            // Buffered bytes may not have reached disk; a preserved file
-            // could be short.
-            ESP_LOGE(TAG, "fclose(staging_) failed: errno=%d (%s) — preserved file may be truncated", errno,
-                     strerror(errno));
+            // Capture errno before strerror or any other libc call can clobber it.
+            // Buffered bytes may not have reached disk; a preserved file could be short.
+            const int closeErrno = errno;
+            ESP_LOGE(TAG, "fclose(staging_) failed: errno=%d (%s) — preserved file may be truncated", closeErrno,
+                     strerror(closeErrno));
         }
         staging_ = nullptr;
         if (!keepStaging)

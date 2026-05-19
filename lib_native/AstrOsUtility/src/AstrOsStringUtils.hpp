@@ -180,6 +180,10 @@ public:
     /// @brief Lowercase-hex encode `len` bytes from `in` into `out`. Writes
     ///        exactly `2*len + 1` chars including the trailing NUL; caller
     ///        owns the buffer and is responsible for sizing it.
+    /// @pre   `out != nullptr` (always — even `len == 0` writes a NUL).
+    /// @pre   `in != nullptr` when `len > 0` (`in` may be null only if `len == 0`).
+    ///        No defensive checks; violating these is undefined behavior. This
+    ///        is an internal utility — validate at the boundary, not here.
     static void toHexLower(const uint8_t *in, size_t len, char *out)
     {
         static const char kHex[] = "0123456789abcdef";
