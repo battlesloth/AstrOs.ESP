@@ -36,7 +36,7 @@ TEST(OtaPacketTypes, PacketTypeMapContainsOtaTypes)
 
 // M1 — Task 2: packed payload structs with byte-offset assertions.
 
-TEST(OtaWirePayloads, OtaBeginRoundTripsViaByteArray)
+TEST(OtaWirePayloads, OtaBeginPayloadMatchesLittleEndianByteLayout)
 {
     OtaBeginPayload p{};
     p.xferId = 0x42;
@@ -151,6 +151,21 @@ TEST(OtaPacketBuilder, GenerateOtaPacketRejectsOversizedPayload)
 
     auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, big, sizeof(big));
     EXPECT_EQ(0u, packets.size());
+}
+
+TEST(OtaPacketBuilder, GenerateOtaPacketAcceptsMaxPayloadSize)
+{
+    // Boundary test: ASTROS_PACKET_PAYLOAD_SIZE = 180 is the largest accepted
+    // payload. Catches a regression to `>=` on the size check.
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t maxPayload[ASTROS_PACKET_PAYLOAD_SIZE] = {0};
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, maxPayload, sizeof(maxPayload));
+    ASSERT_EQ(1u, packets.size());
+    EXPECT_EQ(20u + ASTROS_PACKET_PAYLOAD_SIZE, packets[0].size);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
 }
 
 TEST(OtaPacketBuilder, GenerateOtaDataAckProducesTinyFrame)
@@ -311,6 +326,26 @@ TEST(OtaRecordParsers, ParseOtaBeginRejectsShortPayload)
         free(pkt.data);
 }
 
+TEST(OtaRecordParsers, ParseOtaBeginRejectsWrongPacketType)
+{
+    // Cross-type confusion guard: parseOtaBegin must reject a packet whose
+    // packetType is anything other than OTA_BEGIN, even if the payload size
+    // happens to match.
+    auto svc = AstrOsEspNowMessageService();
+    OtaBeginAckPayload ack{0x42};
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN_ACK, reinterpret_cast<const uint8_t *>(&ack), sizeof(ack));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    // parsed.packetType is OTA_BEGIN_ACK (not OTA_BEGIN). parseOtaBegin must reject.
+    auto rec = AstrOsEspNowProtocol::parseOtaBegin(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
 TEST(OtaRecordParsers, ParseOtaDataRoundTrip)
 {
     auto svc = AstrOsEspNowMessageService();
@@ -462,6 +497,25 @@ TEST(OtaRecordParsers, ParseOtaDataNakRejectsNoneReason)
     // OtaWirePayloads.hpp at the NONE declaration).
     auto svc = AstrOsEspNowMessageService();
     OtaDataNakPayload bad{0x07, 1023, 1024, 8, static_cast<uint8_t>(OtaDataNakReason::NONE)};
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_NAK, reinterpret_cast<const uint8_t *>(&bad), sizeof(bad));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaDataNak(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataNakRejectsAboveWriteReason)
+{
+    // Upper bound: reason byte > WRITE (4) is out of range. Mirrors the
+    // NONE-reason rejection on the lower bound, and the analogous Begin/End
+    // out-of-range tests.
+    auto svc = AstrOsEspNowMessageService();
+    OtaDataNakPayload bad{0x07, 1023, 1024, 8, 99};
     auto packets =
         svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_NAK, reinterpret_cast<const uint8_t *>(&bad), sizeof(bad));
     ASSERT_EQ(1u, packets.size());
