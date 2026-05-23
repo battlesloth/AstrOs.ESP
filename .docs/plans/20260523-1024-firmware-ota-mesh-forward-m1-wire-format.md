@@ -1570,11 +1570,11 @@ Final housekeeping commit that checks off M1 in the design doc's task list and (
 - Modify: `.docs/plans/20260523-1023-firmware-ota-mesh-forward-design.md` (no — design doc has the per-milestone bullet but is not a task checklist)
 - Modify: `.docs/plans/20260523-1024-firmware-ota-mesh-forward-m1-wire-format.md` (this file — check off all `- [ ]` boxes as work completes)
 
-- [ ] **Step 1: Verify all tasks above checked off**
+- [x] **Step 1: Verify all tasks above checked off**
 
 Open this file and confirm every `- [ ]` from Tasks 1-6 is now `- [x]`. If any are still unchecked, do not proceed — go back and complete them.
 
-- [ ] **Step 2: Final verification**
+- [x] **Step 2: Final verification**
 
 Run: `pio test -e test 2>&1 | tail -10`
 Expected: 100% pass, includes ~30 new OTA-suite tests.
@@ -1588,12 +1588,12 @@ Expected: SUCCESS.
 Run: `git log --oneline HEAD~6..HEAD`
 Expected: 6 commits, one per task, all on `feature/ota-mesh-forward-m1-wire-format`.
 
-- [ ] **Step 3: Confirm `lib_native/` purity**
+- [x] **Step 3: Confirm `lib_native/` purity**
 
 Run: `grep -RnE 'esp_|freertos|driver/|<esp_|<freertos' lib_native/AstrOsMessaging/src/OtaWirePayloads.hpp lib_native/AstrOsEspNowProtocol/include/AstrOsEspNowProtocol.hpp lib_native/AstrOsEspNowProtocol/src/AstrOsEspNowProtocol.cpp || echo "PURE OK"`
 Expected: `PURE OK` — no ESP-IDF/FreeRTOS includes leaked into PURE libs.
 
-- [ ] **Step 4: Ready to open PR**
+- [x] **Step 4: Ready to open PR**
 
 M1 is feature-complete. Branch `feature/ota-mesh-forward-m1-wire-format` carries 7 commits (1 design doc + 6 implementation). Open a PR targeting `develop`:
 
