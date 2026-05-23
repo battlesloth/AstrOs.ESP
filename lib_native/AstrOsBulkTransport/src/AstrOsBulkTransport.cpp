@@ -384,10 +384,7 @@ namespace AstrOsBulkTransport
         nextSeqToSend_ = 0;
         highestConfirmedSeq_ = 0;
         anyConfirmed_ = false;
-        for (auto &e : inFlight_)
-        {
-            e = InFlightEntry{};
-        }
+        inFlight_.fill(InFlightEntry{});
         status_ = Status::AWAITING_BEGIN_ACK;
         return BeginSenderResult::ok();
     }
@@ -541,10 +538,7 @@ namespace AstrOsBulkTransport
         // logs it in M3); it's in the signature so future reason-aware
         // retry policies don't break the API.
         nextSeqToSend_ = nextExpectedSeq;
-        for (auto &e : inFlight_)
-        {
-            e = InFlightEntry{};
-        }
+        inFlight_.fill(InFlightEntry{});
         return NakResult::ok(nextExpectedSeq);
     }
 
@@ -639,10 +633,7 @@ namespace AstrOsBulkTransport
         nextSeqToSend_ = 0;
         highestConfirmedSeq_ = 0;
         anyConfirmed_ = false;
-        for (auto &e : inFlight_)
-        {
-            e = InFlightEntry{};
-        }
+        inFlight_.fill(InFlightEntry{});
         status_ = Status::IDLE;
     }
 } // namespace AstrOsBulkTransport
