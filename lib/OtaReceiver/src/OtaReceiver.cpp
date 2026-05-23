@@ -137,11 +137,8 @@ void OtaReceiver::resetCryptoAndFile(bool keepStaging)
             unlink(kStagingPath);
         }
     }
-    if (shaActive_)
-    {
-        mbedtls_sha256_free(&shaCtx_);
-        shaActive_ = false;
-    }
+    // AstrOsSha256 owns no heap; just drop the active flag.
+    shaActive_ = false;
 }
 
 void OtaReceiver::process(queue_ota_msg_t &msg)
@@ -276,18 +273,7 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    mbedtls_sha256_init(&shaCtx_);
-    if (mbedtls_sha256_starts(&shaCtx_, /*is224=*/0) != 0)
-    {
-        ESP_LOGE(TAG, "FW_TRANSFER_BEGIN: mbedtls_sha256_starts failed");
-        mbedtls_sha256_free(&shaCtx_);
-        fclose(staging_);
-        staging_ = nullptr;
-        unlink(kStagingPath);
-        bulk_.reset();
-        AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
-        return;
-    }
+    AstrOsSha256_init(&shaCtx_);
     shaActive_ = true;
 
     active_ = true;
@@ -339,6 +325,18 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
             watchdogStop();
             return;
         }
+        // Diagnostic: log first chunk's esp_image_header so we can identify
+        // which firmware was actually streamed when chasing HASH_MISMATCH —
+        // first byte is magic 0xE9;
+        if (msg.chunk.seq == 0 && cr.payloadLen >= 16 && cr.payload != nullptr)
+        {
+            char hex[33] = {0};
+            for (int i = 0; i < 16; ++i)
+            {
+                std::snprintf(hex + 2 * i, 3, "%02x", cr.payload[i]);
+            }
+            ESP_LOGI(TAG, "FW_CHUNK seq=0 first16=%s", hex);
+        }
         size_t wrote = fwrite(cr.payload, 1, cr.payloadLen, staging_);
         if (wrote != cr.payloadLen)
         {
@@ -353,20 +351,7 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
             watchdogStop();
             return;
         }
-        if (mbedtls_sha256_update(&shaCtx_, cr.payload, cr.payloadLen) != 0)
-        {
-            // Update failure corrupts the digest; abort now rather than
-            // reporting HASH_MISMATCH at END.
-            ESP_LOGE(TAG, "mbedtls_sha256_update failed — aborting transfer");
-            AstrOs_SerialMsgHandler.sendFwChunkNak(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
-                                                   "FLASH_FULL");
-            resetCryptoAndFile(/*keepStaging=*/false);
-            bulk_.reset();
-            active_ = false;
-            transferIdStr_.clear();
-            watchdogStop();
-            return;
-        }
+        AstrOsSha256_update(&shaCtx_, cr.payload, cr.payloadLen);
         AstrOs_SerialMsgHandler.sendFwChunkAck(transferIdIn, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                cr.windowRemaining);
     }
@@ -430,7 +415,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         // Close before rename so stdio-buffered bytes hit disk; a power loss
         // after END_ACK OK would otherwise truncate the renamed file. The hash
         // was fed from chunk payloads, independent of this flush.
-        // Capture errno at the fclose call site — mbedtls finish/free below
+        // Capture errno at the fclose call site — AstrOsSha256_final below
         // could clobber it before the diagnostic log runs.
         bool fileOpen = (staging_ != nullptr);
         bool fcloseOk = false;
@@ -449,13 +434,14 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         staging_ = nullptr;
 
         uint8_t digest[32];
-        // Capture the active flag before teardown so the diagnostic below can
-        // distinguish "never initialized" from "finish failed".
+        // shaActive_ tracks whether BEGIN initialized the context for this
+        // transfer; AstrOsSha256_final is infallible so the only "not OK"
+        // case is a never-initialized context (BEGIN/chunk-handler bug).
         bool shaWasActive = shaActive_;
-        bool hashOk = shaWasActive && (mbedtls_sha256_finish(&shaCtx_, digest) == 0);
-        if (shaActive_)
+        bool hashOk = shaWasActive;
+        if (shaWasActive)
         {
-            mbedtls_sha256_free(&shaCtx_);
+            AstrOsSha256_final(&shaCtx_, digest);
             shaActive_ = false;
         }
 
@@ -480,14 +466,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             }
             if (!hashOk)
             {
-                if (!shaWasActive)
-                {
-                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: SHA context was never initialized (BEGIN bug)");
-                }
-                else
-                {
-                    ESP_LOGE(TAG, "FW_TRANSFER_END finalize: mbedtls_sha256_finish returned error");
-                }
+                ESP_LOGE(TAG, "FW_TRANSFER_END finalize: SHA context was never initialized (BEGIN bug)");
             }
             // Keep staging.bin so a follow-up can inspect what was written.
             AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
@@ -499,7 +478,7 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
             bool pathOk = AstrOsPathUtils::contentAddressedFirmwarePath(computedHex, finalPath, sizeof(finalPath));
             if (!pathOk)
             {
-                // Computed hex came from mbedtls_sha256_finish on 32 bytes, so
+                // Computed hex came from AstrOsSha256_final on 32 bytes, so
                 // it's always 64 chars — this branch should be unreachable.
                 ESP_LOGE(TAG, "contentAddressedFirmwarePath failed for computed=%s — replying IO_ERROR", computedHex);
                 AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "IO_ERROR", computedHex);
