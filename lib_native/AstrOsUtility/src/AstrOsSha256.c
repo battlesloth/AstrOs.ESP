@@ -130,7 +130,6 @@ void AstrOsSha256_final(AstrOsSha256Ctx *ctx, uint8_t hash[ASTROS_SHA256_DIGEST_
         memset(ctx->data, 0, 56);
     }
 
-    // Append the bit length in big-endian.
     ctx->bitlen += (uint64_t)ctx->datalen * 8;
     ctx->data[63] = (uint8_t)(ctx->bitlen);
     ctx->data[62] = (uint8_t)(ctx->bitlen >> 8);
@@ -142,7 +141,6 @@ void AstrOsSha256_final(AstrOsSha256Ctx *ctx, uint8_t hash[ASTROS_SHA256_DIGEST_
     ctx->data[56] = (uint8_t)(ctx->bitlen >> 56);
     sha256_transform(ctx, ctx->data);
 
-    // Emit big-endian.
     for (i = 0; i < 4; ++i)
     {
         hash[i] = (uint8_t)(ctx->state[0] >> (24 - i * 8));

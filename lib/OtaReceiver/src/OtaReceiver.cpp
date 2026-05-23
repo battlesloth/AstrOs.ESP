@@ -327,8 +327,7 @@ void OtaReceiver::handleChunk(queue_ota_msg_t &msg)
         }
         // Diagnostic: log first chunk's esp_image_header so we can identify
         // which firmware was actually streamed when chasing HASH_MISMATCH —
-        // first byte is magic 0xE9; offsets 0x30..0x60 carry the app
-        // descriptor (project_name, version) in plaintext.
+        // first byte is magic 0xE9;
         if (msg.chunk.seq == 0 && cr.payloadLen >= 16 && cr.payload != nullptr)
         {
             char hex[33] = {0};

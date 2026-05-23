@@ -30,15 +30,13 @@ extern "C"
         uint32_t state[8];
     } AstrOsSha256Ctx;
 
-    // Initialise a fresh context. No matching free is needed; the
-    // context owns no heap and is safe to discard at any point.
+    // No matching free needed — the context owns no heap and is safe
+    // to discard at any point.
     void AstrOsSha256_init(AstrOsSha256Ctx *ctx);
 
-    // Feed `len` bytes from `data` into the running digest.
     void AstrOsSha256_update(AstrOsSha256Ctx *ctx, const uint8_t *data, size_t len);
 
-    // Emit the 32-byte digest. The context must not be reused after
-    // this without a fresh AstrOsSha256_init.
+    // Context must be re-initialised before reuse.
     void AstrOsSha256_final(AstrOsSha256Ctx *ctx, uint8_t hash[ASTROS_SHA256_DIGEST_LEN]);
 
 #ifdef __cplusplus
