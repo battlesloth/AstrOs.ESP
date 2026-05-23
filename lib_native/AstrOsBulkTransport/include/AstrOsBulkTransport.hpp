@@ -452,6 +452,27 @@ namespace AstrOsBulkTransport
         AckResult(Decision d, uint32_t n) : decision(d), newlyConfirmedCount(n) {}
     };
 
+    // Result of BulkSender::tick. `retransmitSeqs[0..count-1]` are the
+    // seqs whose ackTimeout fired and need re-emission on the wire.
+    // `abandon` is set when any seq's retryCount would exceed
+    // maxRetries — at that point the sender transitions to ABANDONED
+    // and stops issuing further retransmit lists.
+    //
+    // Bounded by MAX_WINDOW_SIZE so this struct stays heap-free. A
+    // single tick can produce at most `windowSize` retransmissions
+    // (the in-flight table is the upper bound).
+    //
+    // Unlike the other result types, TickResult is structurally an
+    // output buffer (caller reads count then iterates retransmitSeqs).
+    // The const-fields + private-ctor pattern doesn't fit — count is
+    // written by tick() as it fills the array, then returned by value.
+    struct TickResult
+    {
+        std::array<uint32_t, MAX_WINDOW_SIZE> retransmitSeqs;
+        uint8_t count = 0;
+        bool abandon = false;
+    };
+
     // Result of BulkSender::onDataNak. On OK, `nextSeqToResend` is the
     // seq that the next `nextChunkToSend` call will emit (mirrors the
     // wire-level `nextExpectedSeq` field from OTA_DATA_NAK).
@@ -525,6 +546,7 @@ namespace AstrOsBulkTransport
         [[nodiscard]] SendResult nextChunkToSend(uint64_t nowMs);
         [[nodiscard]] AckResult onDataAck(uint8_t xferId, uint32_t cumulativeSeq);
         [[nodiscard]] NakResult onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason reason);
+        [[nodiscard]] TickResult tick(uint64_t nowMs);
         void reset();
         Status status() const
         {

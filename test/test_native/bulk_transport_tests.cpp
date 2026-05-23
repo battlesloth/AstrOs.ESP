@@ -1035,3 +1035,72 @@ TEST(BulkTransport, BulkSenderOnDataNakWithZeroNextExpectedDoesNotAdvanceConfirm
     auto ackR = s.onDataAck(7, 0);
     EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, ackR.decision);
 }
+
+TEST(BulkTransport, BulkSenderTickReturnsNothingWhenNoTimeoutsFired)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, /*ackTimeoutMs=*/400, /*maxRetries=*/3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, /*nowMs=*/1000, sent);
+    ASSERT_EQ(8u, sent.size());
+
+    auto t = s.tick(/*nowMs=*/1100); // only 100 ms passed — under the 400 ms timeout
+    EXPECT_EQ(0, t.count);
+    EXPECT_FALSE(t.abandon);
+}
+
+TEST(BulkTransport, BulkSenderTickRetransmitsTimedOutSeqs)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+
+    auto t = s.tick(/*nowMs=*/1500); // 500 ms passed — past the 400 ms timeout
+    EXPECT_EQ(8, t.count);
+    EXPECT_FALSE(t.abandon);
+    // All 8 in-flight seqs should be flagged for retransmission.
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        EXPECT_EQ(i, t.retransmitSeqs[i]);
+    }
+}
+
+TEST(BulkTransport, BulkSenderTickAbandonsAfterMaxRetries)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, /*ackTimeoutMs=*/400, /*maxRetries=*/2).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 0, sent);
+
+    // First tick at 500 ms: retryCount 0 → 1 for every seq.
+    auto t1 = s.tick(500);
+    EXPECT_EQ(8, t1.count);
+    EXPECT_FALSE(t1.abandon);
+
+    // Second tick at 1000 ms: retryCount 1 → 2 for every seq.
+    auto t2 = s.tick(1000);
+    EXPECT_EQ(8, t2.count);
+    EXPECT_FALSE(t2.abandon);
+
+    // Third tick at 1500 ms: retryCount would go 2 → 3 (> maxRetries=2).
+    // Abandon, no further retransmissions.
+    auto t3 = s.tick(1500);
+    EXPECT_TRUE(t3.abandon);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::ABANDONED, s.status());
+}
+
+TEST(BulkTransport, BulkSenderTickReturnsZeroOnInactive)
+{
+    AstrOsBulkTransport::BulkSender s;
+    // Never called begin — IDLE.
+    auto t = s.tick(10000);
+    EXPECT_EQ(0, t.count);
+    EXPECT_FALSE(t.abandon);
+}

@@ -536,6 +536,52 @@ namespace AstrOsBulkTransport
         return NakResult::ok(nextExpectedSeq);
     }
 
+    TickResult BulkSender::tick(uint64_t nowMs)
+    {
+        TickResult result{};
+        if (status_ != Status::STREAMING)
+        {
+            return result;
+        }
+
+        for (auto &e : inFlight_)
+        {
+            if (!e.occupied)
+            {
+                continue;
+            }
+            // Timeout fired iff (nowMs - sendTimestampMs) >= ackTimeoutMs_.
+            // Use subtraction in uint64_t so wrap-around isn't a concern at
+            // typical millisecond scales; if a future caller passes nowMs <
+            // sendTimestampMs (clock went backwards), the underflow wraps
+            // to a huge value and the timeout looks "fired" — acceptable
+            // failure mode (retransmits a slot that wasn't actually timed
+            // out). The MIXED caller is responsible for monotonic time.
+            if (nowMs - e.sendTimestampMs < ackTimeoutMs_)
+            {
+                continue;
+            }
+
+            // Retry count check: if incrementing would exceed maxRetries_,
+            // abandon the whole transfer immediately. The wire-level
+            // contract says "abort this padawan, move to next" — at the
+            // PURE layer we just transition to ABANDONED.
+            if (e.retryCount + 1 > maxRetries_)
+            {
+                status_ = Status::ABANDONED;
+                result.abandon = true;
+                result.count = 0;
+                return result;
+            }
+
+            e.retryCount++;
+            e.sendTimestampMs = nowMs;
+            result.retransmitSeqs[result.count] = e.seq;
+            result.count++;
+        }
+        return result;
+    }
+
     void BulkSender::reset()
     {
         xferId_ = 0;
