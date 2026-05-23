@@ -43,6 +43,14 @@ namespace AstrOsENC
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
     constexpr const static char *SERVO_TEST = "SERVO_TEST";
     constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
+    constexpr const static char *OTA_BEGIN = "OTA_BEGIN";
+    constexpr const static char *OTA_BEGIN_ACK = "OTA_BEGIN_ACK";
+    constexpr const static char *OTA_BEGIN_NAK = "OTA_BEGIN_NAK";
+    constexpr const static char *OTA_DATA = "OTA_DATA";
+    constexpr const static char *OTA_DATA_ACK = "OTA_DATA_ACK";
+    constexpr const static char *OTA_DATA_NAK = "OTA_DATA_NAK";
+    constexpr const static char *OTA_END = "OTA_END";
+    constexpr const static char *OTA_END_ACK = "OTA_END_ACK";
 } // namespace AstrOsENC
 
 enum class AstrOsPacketType
@@ -71,7 +79,15 @@ enum class AstrOsPacketType
     FORMAT_SD_ACK,
     FORMAT_SD_NAK,
     SERVO_TEST,
-    SERVO_TEST_ACK
+    SERVO_TEST_ACK,
+    OTA_BEGIN,
+    OTA_BEGIN_ACK,
+    OTA_BEGIN_NAK,
+    OTA_DATA,
+    OTA_DATA_ACK,
+    OTA_DATA_NAK,
+    OTA_END,
+    OTA_END_ACK,
 };
 
 typedef struct

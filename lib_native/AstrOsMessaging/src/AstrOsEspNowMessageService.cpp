@@ -33,6 +33,14 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::FORMAT_SD_NAK] = AstrOsENC::FORMAT_SD_NAK;
     packetTypeMap[AstrOsPacketType::SERVO_TEST] = AstrOsENC::SERVO_TEST;
     packetTypeMap[AstrOsPacketType::SERVO_TEST_ACK] = AstrOsENC::SERVO_TEST_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN] = AstrOsENC::OTA_BEGIN;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN_ACK] = AstrOsENC::OTA_BEGIN_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN_NAK] = AstrOsENC::OTA_BEGIN_NAK;
+    packetTypeMap[AstrOsPacketType::OTA_DATA] = AstrOsENC::OTA_DATA;
+    packetTypeMap[AstrOsPacketType::OTA_DATA_ACK] = AstrOsENC::OTA_DATA_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_DATA_NAK] = AstrOsENC::OTA_DATA_NAK;
+    packetTypeMap[AstrOsPacketType::OTA_END] = AstrOsENC::OTA_END;
+    packetTypeMap[AstrOsPacketType::OTA_END_ACK] = AstrOsENC::OTA_END_ACK;
 }
 
 AstrOsEspNowMessageService::~AstrOsEspNowMessageService() {}
