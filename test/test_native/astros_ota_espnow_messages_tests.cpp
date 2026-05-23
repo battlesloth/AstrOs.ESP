@@ -32,9 +32,6 @@ TEST(OtaPacketTypes, PacketTypeMapContainsOtaTypes)
         free(p.data);
 }
 
-// OtaWirePayloads.hpp is pulled in transitively via <AstrOsMessaging.hpp>
-// once Step 3 below wires the umbrella header to include it.
-
 // M1 — Task 2: packed payload structs with byte-offset assertions.
 
 TEST(OtaWirePayloads, OtaBeginRoundTripsViaByteArray)
@@ -77,6 +74,7 @@ TEST(OtaWirePayloads, OtaDataNakReasonValuesMatchSpec)
 {
     // Spec freezes these values: CRC=1, SIZE=2, OUT_OF_ORDER=3, WRITE=4.
     // Reordering or renumbering breaks the wire contract.
+    EXPECT_EQ(0, static_cast<int>(OtaDataNakReason::NONE));
     EXPECT_EQ(1, static_cast<int>(OtaDataNakReason::CRC));
     EXPECT_EQ(2, static_cast<int>(OtaDataNakReason::SIZE));
     EXPECT_EQ(3, static_cast<int>(OtaDataNakReason::OUT_OF_ORDER));

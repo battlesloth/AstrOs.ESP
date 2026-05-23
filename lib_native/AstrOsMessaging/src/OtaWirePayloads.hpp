@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 
 // On-wire byte layouts for ESP-NOW OTA frames (PR set 1).
@@ -28,6 +27,8 @@ enum class OtaBeginNakReason : uint8_t
 
 enum class OtaDataNakReason : uint8_t
 {
+    NONE = 0, // sentinel for uninitialized; NOT a valid wire value — the M1 Task 5
+              // parser rejects records whose on-wire reason byte is 0
     CRC = 1,
     SIZE = 2,
     OUT_OF_ORDER = 3,
