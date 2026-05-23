@@ -297,6 +297,20 @@ namespace AstrOsBulkTransport
     static_assert(static_cast<uint8_t>(BeginAckResult::Decision::WRONG_XFER_ID) == 1);
     static_assert(static_cast<uint8_t>(BeginAckResult::Decision::NOT_AWAITING_BEGIN_ACK) == 2);
 
+    static_assert(static_cast<uint8_t>(SendResult::Decision::SEND) == 0);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::WINDOW_FULL) == 1);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::ALL_SENT) == 2);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::NOT_STREAMING) == 3);
+
+    // SendResult immutability: every public field must be const so a
+    // factory-produced result can't be mutated into an invalid combo
+    // (WINDOW_FULL with a meaningful seq, etc.). Mirrors ChunkResult's
+    // discipline.
+    static_assert(std::is_const_v<decltype(SendResult::decision)>);
+    static_assert(std::is_const_v<decltype(SendResult::seq)>);
+    static_assert(!std::is_copy_assignable_v<SendResult>);
+    static_assert(std::is_copy_constructible_v<SendResult>);
+
     BeginSenderResult BulkSender::begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize,
                                         uint32_t ackTimeoutMs, uint8_t maxRetries)
     {
@@ -365,6 +379,61 @@ namespace AstrOsBulkTransport
         }
         status_ = Status::STREAMING;
         return BeginAckResult::ok();
+    }
+
+    SendResult BulkSender::nextChunkToSend(uint64_t nowMs)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return SendResult::notStreaming();
+        }
+
+        // ALL_SENT check first: if every chunk has been launched into
+        // the in-flight table (or already evicted by ACK), there's
+        // nothing left to claim. The MIXED caller treats ALL_SENT
+        // (plus an empty in-flight table) as the signal to send OTA_END.
+        if (nextSeqToSend_ >= totalChunks_)
+        {
+            return SendResult::allSent();
+        }
+
+        // Count occupied slots. WINDOW_FULL fires when we've already
+        // launched `windowSize_` chunks that haven't been acked yet.
+        // O(MAX_WINDOW_SIZE) linear scan; trivial at 16 entries.
+        uint8_t occupied = 0;
+        for (const auto &e : inFlight_)
+        {
+            if (e.occupied)
+            {
+                occupied++;
+            }
+        }
+        if (occupied >= windowSize_)
+        {
+            return SendResult::windowFull();
+        }
+
+        // Claim the first unoccupied slot. The slot index is internal;
+        // callers identify chunks by seq, not slot.
+        for (auto &e : inFlight_)
+        {
+            if (!e.occupied)
+            {
+                e.seq = nextSeqToSend_;
+                e.sendTimestampMs = nowMs;
+                e.retryCount = 0;
+                e.occupied = true;
+                const uint32_t emittedSeq = nextSeqToSend_;
+                nextSeqToSend_++;
+                return SendResult::send(emittedSeq);
+            }
+        }
+
+        // Unreachable: if `occupied < windowSize_ <= MAX_WINDOW_SIZE`,
+        // at least one slot is free. The early-return above already
+        // returned WINDOW_FULL in the full case.
+        assert(false && "BulkSender::nextChunkToSend: in-flight table full despite occupied < windowSize_");
+        std::abort();
     }
 
     void BulkSender::reset()

@@ -829,3 +829,74 @@ TEST(BulkTransport, BulkSenderResetReturnsToIdle)
     s.reset();
     EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::IDLE, s.status());
 }
+
+namespace
+{
+    // Helper: drive `nextChunkToSend` in a loop until WINDOW_FULL or ALL_SENT.
+    // Records each emitted seq in `outSeqs`. Returns the final Decision.
+    AstrOsBulkTransport::SendResult::Decision drainSends(AstrOsBulkTransport::BulkSender &s, uint64_t nowMs,
+                                                         std::vector<uint32_t> &outSeqs)
+    {
+        for (;;)
+        {
+            auto r = s.nextChunkToSend(nowMs);
+            if (r.decision == AstrOsBulkTransport::SendResult::Decision::SEND)
+            {
+                outSeqs.push_back(r.seq);
+                continue;
+            }
+            return r.decision;
+        }
+    }
+} // namespace
+
+TEST(BulkTransport, BulkSenderNextChunkRejectedBeforeStreaming)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.nextChunkToSend(/*nowMs=*/0);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::NOT_STREAMING, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderNextChunkAfterBeginAckEmitsSeqZero)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    auto r = s.nextChunkToSend(/*nowMs=*/1000);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, r.decision);
+    EXPECT_EQ(0u, r.seq);
+}
+
+TEST(BulkTransport, BulkSenderFillsWindowThenStopsWithWindowFull)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, /*totalChunks=*/100, 128, /*windowSize=*/8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    auto terminal = drainSends(s, 1000, sent);
+
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::WINDOW_FULL, terminal);
+    ASSERT_EQ(8u, sent.size());
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        EXPECT_EQ(i, sent[i]);
+    }
+}
+
+TEST(BulkTransport, BulkSenderEmitsAllChunksWhenTotalIsBelowWindow)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, /*totalChunks=*/3, 128, /*windowSize=*/8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    auto terminal = drainSends(s, 1000, sent);
+
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::ALL_SENT, terminal);
+    ASSERT_EQ(3u, sent.size());
+    EXPECT_EQ(0u, sent[0]);
+    EXPECT_EQ(1u, sent[1]);
+    EXPECT_EQ(2u, sent[2]);
+}

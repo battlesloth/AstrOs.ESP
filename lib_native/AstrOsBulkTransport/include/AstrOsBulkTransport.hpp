@@ -373,6 +373,47 @@ namespace AstrOsBulkTransport
         }
     };
 
+    // Result of BulkSender::nextChunkToSend. On SEND, `seq` is the seq
+    // to emit on the wire and the in-flight table now owns a slot for
+    // it. Other Decisions leave the sender state unchanged.
+    //
+    // Const-fields + private constructor mirror ChunkResult's
+    // discipline so a returned result cannot be mutated into an
+    // invalid combination (e.g. WINDOW_FULL with a real seq).
+    struct SendResult
+    {
+        enum class Decision : uint8_t
+        {
+            SEND = 0,         // emit `seq` on the wire
+            WINDOW_FULL = 1,  // in-flight count == windowSize; ACK something first
+            ALL_SENT = 2,     // nextSeqToSend_ == totalChunks_; nothing left to send
+            NOT_STREAMING = 3 // status != STREAMING
+        };
+
+        const Decision decision;
+        const uint32_t seq;
+
+        static SendResult send(uint32_t s)
+        {
+            return SendResult(Decision::SEND, s);
+        }
+        static SendResult windowFull()
+        {
+            return SendResult(Decision::WINDOW_FULL, 0);
+        }
+        static SendResult allSent()
+        {
+            return SendResult(Decision::ALL_SENT, 0);
+        }
+        static SendResult notStreaming()
+        {
+            return SendResult(Decision::NOT_STREAMING, 0);
+        }
+
+    private:
+        SendResult(Decision d, uint32_t s) : decision(d), seq(s) {}
+    };
+
     // Sliding-window sender state machine for the firmware OTA path.
     // Used by the master-side OtaForwarder (M3) to push chunks to a
     // padawan and react to ACK/NAK responses. PURE — no I/O, no
@@ -407,6 +448,7 @@ namespace AstrOsBulkTransport
         [[nodiscard]] BeginSenderResult begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize,
                                               uint8_t windowSize, uint32_t ackTimeoutMs, uint8_t maxRetries);
         [[nodiscard]] BeginAckResult onBeginAck(uint8_t xferId);
+        [[nodiscard]] SendResult nextChunkToSend(uint64_t nowMs);
         void reset();
         Status status() const
         {
