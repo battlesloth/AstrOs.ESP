@@ -3,6 +3,7 @@
 
 #include "AstrOsEspNowMessageService.hpp"
 #include "AstrOsSerialMessageService.hpp"
+#include "OtaWirePayloads.hpp"
 #include "PacketTracker.hpp"
 
 #endif
