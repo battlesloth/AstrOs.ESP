@@ -199,6 +199,15 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
     parsedPacket.payloadSize = packet[19];
     parsedPacket.payload = packet + 20;
 
+    if (isOtaPacketType(parsedPacket.packetType))
+    {
+        // OTA frames carry binary payloads with no validator-string prefix.
+        // payload and payloadSize already point at the right bytes; skip
+        // the validatePacket() call below which would mark the packet
+        // UNKNOWN (the binary bytes won't match the validator string).
+        return parsedPacket;
+    }
+
     auto validated = validatePacket(parsedPacket);
     if (validated == -1)
     {

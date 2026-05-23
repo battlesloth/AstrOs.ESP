@@ -168,3 +168,75 @@ TEST(OtaPacketBuilder, GenerateOtaDataAckProducesTinyFrame)
     for (auto &pkt : packets)
         free(pkt.data);
 }
+
+// M1 — Task 4: parsePacket recognizes OTA types and skips validator-string strip.
+
+TEST(OtaPacketParser, ParseOtaBeginReturnsBinaryPayloadIntact)
+{
+    auto svc = AstrOsEspNowMessageService();
+
+    OtaBeginPayload original{};
+    original.xferId = 0xAB;
+    original.totalSize = 1228800;
+    original.chunkSize = 128;
+    original.totalChunks = 9600;
+    for (int i = 0; i < 32; i++)
+        original.sha256Expected[i] = static_cast<uint8_t>(0xF0 | (i & 0x0F));
+    original.flags = 0;
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    ASSERT_EQ(1u, packets.size());
+
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    EXPECT_EQ(AstrOsPacketType::OTA_BEGIN, parsed.packetType);
+    EXPECT_EQ(static_cast<int>(sizeof(OtaBeginPayload)), parsed.payloadSize);
+    // payload pointer points DIRECTLY at the OtaBeginPayload bytes (no validator stripped).
+    EXPECT_EQ(0, std::memcmp(parsed.payload, &original, sizeof(original)));
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaPacketParser, ParseOtaDataAckReturnsBinaryPayloadIntact)
+{
+    auto svc = AstrOsEspNowMessageService();
+
+    OtaDataAckPayload original{};
+    original.xferId = 0x07;
+    original.highestContiguousSeq = 4095;
+    original.nextExpectedSeq = 4096;
+    original.windowRemaining = 8;
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_ACK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    ASSERT_EQ(1u, packets.size());
+
+    auto parsed = svc.parsePacket(packets[0].data);
+    EXPECT_EQ(AstrOsPacketType::OTA_DATA_ACK, parsed.packetType);
+    EXPECT_EQ(static_cast<int>(sizeof(OtaDataAckPayload)), parsed.payloadSize);
+    EXPECT_EQ(0, std::memcmp(parsed.payload, &original, sizeof(original)));
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaPacketParser, ParseExistingStringTypeStillStripsValidator)
+{
+    // Regression: parsePacket must continue to strip the validator string
+    // for non-OTA types like BASIC. (This guards against accidentally
+    // routing the OTA path for everything.)
+    auto svc = AstrOsEspNowMessageService();
+    auto packets = svc.generatePackets(AstrOsPacketType::BASIC, "hello");
+    ASSERT_EQ(1u, packets.size());
+
+    auto parsed = svc.parsePacket(packets[0].data);
+    EXPECT_EQ(AstrOsPacketType::BASIC, parsed.packetType);
+    // After stripping "BASIC" + UNIT_SEPARATOR (5+1 = 6 bytes), payload is "hello" (5 bytes).
+    EXPECT_EQ(5, parsed.payloadSize);
+    EXPECT_EQ(0, std::memcmp(parsed.payload, "hello", 5));
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
