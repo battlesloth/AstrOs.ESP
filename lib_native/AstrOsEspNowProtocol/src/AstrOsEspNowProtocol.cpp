@@ -257,6 +257,22 @@ namespace AstrOsEspNowProtocol
         case AstrOsPacketType::POLL:
             return unsupportedOrWrongRole(!isMasterNode);
 
+        // OTA frames are handled by the MIXED OtaForwarder (master) / OtaWriter
+        // (padawan) directly via parseOta* free functions; the PURE dispatcher
+        // returns UnsupportedType with role gating to enforce direction-of-travel.
+        // Master receives ACK/NAK from padawans; padawan receives BEGIN/DATA/END
+        // from master.
+        case AstrOsPacketType::OTA_BEGIN_ACK:
+        case AstrOsPacketType::OTA_BEGIN_NAK:
+        case AstrOsPacketType::OTA_DATA_ACK:
+        case AstrOsPacketType::OTA_DATA_NAK:
+        case AstrOsPacketType::OTA_END_ACK:
+            return unsupportedOrWrongRole(isMasterNode);
+        case AstrOsPacketType::OTA_BEGIN:
+        case AstrOsPacketType::OTA_DATA:
+        case AstrOsPacketType::OTA_END:
+            return unsupportedOrWrongRole(!isMasterNode);
+
         // Single-record handlers extracted in Phase 1.
         case AstrOsPacketType::CONFIG:
             return handleConfig(packet, tracker, nowMs);

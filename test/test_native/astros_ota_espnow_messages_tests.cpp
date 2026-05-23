@@ -516,3 +516,156 @@ TEST(OtaRecordParsers, ParseOtaEndAckRejectsOutOfRangeStatus)
     for (auto &pkt : packets)
         free(pkt.data);
 }
+
+// M1 — Task 6: handlePacket dispatcher recognizes OTA types and applies role gating.
+
+#include <PacketTracker.hpp>
+
+namespace
+{
+    astros_packet_t buildOtaPacketForDispatch(AstrOsPacketType type, const uint8_t *payload, size_t len,
+                                              std::vector<astros_espnow_data_t> &keepAlive)
+    {
+        auto svc = AstrOsEspNowMessageService();
+        auto packets = svc.generateOtaPacket(type, payload, len);
+        keepAlive.insert(keepAlive.end(), packets.begin(), packets.end());
+        return svc.parsePacket(packets[0].data);
+    }
+} // namespace
+
+TEST(OtaDispatcher, MasterReceivesAckTypes_ReturnsUnsupportedType)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    OtaBeginAckPayload ack{0x42};
+    auto parsed = buildOtaPacketForDispatch(AstrOsPacketType::OTA_BEGIN_ACK, reinterpret_cast<const uint8_t *>(&ack),
+                                            sizeof(ack), keepAlive);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(parsed, tracker, /*isMasterNode=*/true, /*nowMs=*/0);
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, result.status);
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
+
+TEST(OtaDispatcher, PadawanReceivesAckType_ReturnsWrongRole)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    OtaBeginAckPayload ack{0x42};
+    auto parsed = buildOtaPacketForDispatch(AstrOsPacketType::OTA_BEGIN_ACK, reinterpret_cast<const uint8_t *>(&ack),
+                                            sizeof(ack), keepAlive);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(parsed, tracker, /*isMasterNode=*/false, /*nowMs=*/0);
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, result.status);
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
+
+TEST(OtaDispatcher, PadawanReceivesBeginType_ReturnsUnsupportedType)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    OtaBeginPayload begin{};
+    begin.xferId = 0x42;
+    auto parsed = buildOtaPacketForDispatch(AstrOsPacketType::OTA_BEGIN, reinterpret_cast<const uint8_t *>(&begin),
+                                            sizeof(begin), keepAlive);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(parsed, tracker, /*isMasterNode=*/false, /*nowMs=*/0);
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, result.status);
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
+
+TEST(OtaDispatcher, MasterReceivesBeginType_ReturnsWrongRole)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    OtaBeginPayload begin{};
+    begin.xferId = 0x42;
+    auto parsed = buildOtaPacketForDispatch(AstrOsPacketType::OTA_BEGIN, reinterpret_cast<const uint8_t *>(&begin),
+                                            sizeof(begin), keepAlive);
+
+    auto result = AstrOsEspNowProtocol::handlePacket(parsed, tracker, /*isMasterNode=*/true, /*nowMs=*/0);
+    EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, result.status);
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
+
+TEST(OtaDispatcher, AllUpstreamTypesGateMasterOnly)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    // All padawan→master types: master receives → UnsupportedType; padawan receives → WrongRole.
+    AstrOsPacketType upstreamTypes[] = {
+        AstrOsPacketType::OTA_BEGIN_ACK, AstrOsPacketType::OTA_BEGIN_NAK, AstrOsPacketType::OTA_DATA_ACK,
+        AstrOsPacketType::OTA_DATA_NAK,  AstrOsPacketType::OTA_END_ACK,
+    };
+
+    for (auto type : upstreamTypes)
+    {
+        // payload bytes don't matter for dispatch — we never parse them in M1.
+        uint8_t dummy[34] = {0};
+        size_t len = (type == AstrOsPacketType::OTA_END_ACK)     ? 34u
+                     : (type == AstrOsPacketType::OTA_DATA_ACK)  ? 10u
+                     : (type == AstrOsPacketType::OTA_DATA_NAK)  ? 11u
+                     : (type == AstrOsPacketType::OTA_BEGIN_NAK) ? 2u
+                                                                 : 1u; // OTA_BEGIN_ACK
+        auto parsed = buildOtaPacketForDispatch(type, dummy, len, keepAlive);
+
+        auto masterResult = AstrOsEspNowProtocol::handlePacket(parsed, tracker, true, 0);
+        auto padawanResult = AstrOsEspNowProtocol::handlePacket(parsed, tracker, false, 0);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, masterResult.status)
+            << "type=" << static_cast<int>(type);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, padawanResult.status)
+            << "type=" << static_cast<int>(type);
+    }
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
+
+TEST(OtaDispatcher, AllDownstreamTypesGatePadawanOnly)
+{
+    PacketTracker tracker;
+    std::vector<astros_espnow_data_t> keepAlive;
+
+    // All master→padawan types: padawan receives → UnsupportedType; master receives → WrongRole.
+    // For OTA_DATA we send a minimal 9-byte header + 0-byte payload (payloadLen=0 in header).
+    OtaDataHeader emptyDataHdr{};
+    uint8_t otaBeginBuf[sizeof(OtaBeginPayload)] = {0};
+    uint8_t otaEndBuf[sizeof(OtaEndPayload)] = {0};
+
+    struct
+    {
+        AstrOsPacketType type;
+        const uint8_t *payload;
+        size_t len;
+    } downstream[] = {
+        {AstrOsPacketType::OTA_BEGIN, otaBeginBuf, sizeof(otaBeginBuf)},
+        {AstrOsPacketType::OTA_DATA, reinterpret_cast<const uint8_t *>(&emptyDataHdr), sizeof(emptyDataHdr)},
+        {AstrOsPacketType::OTA_END, otaEndBuf, sizeof(otaEndBuf)},
+    };
+
+    for (const auto &d : downstream)
+    {
+        auto parsed = buildOtaPacketForDispatch(d.type, d.payload, d.len, keepAlive);
+        auto padawanResult = AstrOsEspNowProtocol::handlePacket(parsed, tracker, false, 0);
+        auto masterResult = AstrOsEspNowProtocol::handlePacket(parsed, tracker, true, 0);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::UnsupportedType, padawanResult.status)
+            << "type=" << static_cast<int>(d.type);
+        EXPECT_EQ(AstrOsEspNowProtocol::HandlerStatus::WrongRole, masterResult.status)
+            << "type=" << static_cast<int>(d.type);
+    }
+
+    for (auto &p : keepAlive)
+        free(p.data);
+}
