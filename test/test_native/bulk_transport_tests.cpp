@@ -1149,6 +1149,18 @@ TEST(BulkTransport, BulkSenderOnEndAckRejectsWrongXferId)
     EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::STREAMING, s.status());
 }
 
+TEST(BulkTransport, BulkSenderOnEndAckRejectsBeforeStreaming)
+{
+    // Symmetry with the NOT_STREAMING tests for the other BulkSender
+    // methods. Closes the test-matrix gap so a future refactor that
+    // accidentally drops the status guard from onEndAck is caught.
+    AstrOsBulkTransport::BulkSender s;
+    // Never called begin — status is IDLE.
+    auto r = s.onEndAck(7, OtaEndStatus::OK);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::NOT_STREAMING, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::IDLE, s.status());
+}
+
 TEST(BulkTransport, BulkSenderEndToEndHappyPath)
 {
     // Drives the full state machine through a small transfer with the
