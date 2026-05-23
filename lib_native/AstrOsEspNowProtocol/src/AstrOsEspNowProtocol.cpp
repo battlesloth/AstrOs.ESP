@@ -1,6 +1,7 @@
 #include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsStringUtils.hpp>
 
+#include <cstring>
 #include <sstream>
 
 namespace AstrOsEspNowProtocol
@@ -256,6 +257,22 @@ namespace AstrOsEspNowProtocol
         case AstrOsPacketType::POLL:
             return unsupportedOrWrongRole(!isMasterNode);
 
+        // OTA frames are handled by the MIXED OtaForwarder (master) / OtaWriter
+        // (padawan) directly via parseOta* free functions; the PURE dispatcher
+        // returns UnsupportedType with role gating to enforce direction-of-travel.
+        // Master receives ACK/NAK from padawans; padawan receives BEGIN/DATA/END
+        // from master.
+        case AstrOsPacketType::OTA_BEGIN_ACK:
+        case AstrOsPacketType::OTA_BEGIN_NAK:
+        case AstrOsPacketType::OTA_DATA_ACK:
+        case AstrOsPacketType::OTA_DATA_NAK:
+        case AstrOsPacketType::OTA_END_ACK:
+            return unsupportedOrWrongRole(isMasterNode);
+        case AstrOsPacketType::OTA_BEGIN:
+        case AstrOsPacketType::OTA_DATA:
+        case AstrOsPacketType::OTA_END:
+            return unsupportedOrWrongRole(!isMasterNode);
+
         // Single-record handlers extracted in Phase 1.
         case AstrOsPacketType::CONFIG:
             return handleConfig(packet, tracker, nowMs);
@@ -289,6 +306,167 @@ namespace AstrOsEspNowProtocol
         default:
             return {HandlerStatus::UnknownType, std::nullopt, ""};
         }
+    }
+
+    OtaBeginRecord parseOtaBegin(const astros_packet_t &packet)
+    {
+        OtaBeginRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_BEGIN ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaBeginPayload)))
+        {
+            return rec; // valid stays false
+        }
+        OtaBeginPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        rec.xferId = p.xferId;
+        rec.totalSize = p.totalSize;
+        rec.chunkSize = p.chunkSize;
+        rec.totalChunks = p.totalChunks;
+        std::memcpy(rec.sha256Expected, p.sha256Expected, 32);
+        rec.flags = p.flags;
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaBeginAckRecord parseOtaBeginAck(const astros_packet_t &packet)
+    {
+        OtaBeginAckRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_BEGIN_ACK ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaBeginAckPayload)))
+        {
+            return rec;
+        }
+        OtaBeginAckPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        rec.xferId = p.xferId;
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaBeginNakRecord parseOtaBeginNak(const astros_packet_t &packet)
+    {
+        OtaBeginNakRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_BEGIN_NAK ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaBeginNakPayload)))
+        {
+            return rec;
+        }
+        OtaBeginNakPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        if (p.reason > static_cast<uint8_t>(OtaBeginNakReason::BEGIN_FAILED))
+        {
+            return rec; // out-of-range reason
+        }
+        rec.xferId = p.xferId;
+        rec.reason = static_cast<OtaBeginNakReason>(p.reason);
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaDataRecord parseOtaData(const astros_packet_t &packet)
+    {
+        OtaDataRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_DATA ||
+            packet.payloadSize < static_cast<int>(sizeof(OtaDataHeader)))
+        {
+            return rec;
+        }
+        OtaDataHeader hdr;
+        std::memcpy(&hdr, packet.payload, sizeof(hdr));
+        // The actual firmware-bytes count is packet.payloadSize - sizeof(header).
+        // hdr.payloadLen MUST equal that, else reject.
+        const int actualBytes = packet.payloadSize - static_cast<int>(sizeof(OtaDataHeader));
+        if (static_cast<int>(hdr.payloadLen) != actualBytes)
+        {
+            return rec;
+        }
+        rec.xferId = hdr.xferId;
+        rec.seq = hdr.seq;
+        rec.payloadLen = hdr.payloadLen;
+        rec.crc16 = hdr.crc16;
+        rec.payload = packet.payload + sizeof(OtaDataHeader); // raw byte cursor — legal
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaDataAckRecord parseOtaDataAck(const astros_packet_t &packet)
+    {
+        OtaDataAckRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_DATA_ACK ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaDataAckPayload)))
+        {
+            return rec;
+        }
+        OtaDataAckPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        rec.xferId = p.xferId;
+        rec.highestContiguousSeq = p.highestContiguousSeq;
+        rec.nextExpectedSeq = p.nextExpectedSeq;
+        rec.windowRemaining = p.windowRemaining;
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaDataNakRecord parseOtaDataNak(const astros_packet_t &packet)
+    {
+        OtaDataNakRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_DATA_NAK ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaDataNakPayload)))
+        {
+            return rec;
+        }
+        OtaDataNakPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        if (p.reason < static_cast<uint8_t>(OtaDataNakReason::CRC) ||
+            p.reason > static_cast<uint8_t>(OtaDataNakReason::WRITE))
+        {
+            return rec;
+        }
+        rec.xferId = p.xferId;
+        rec.highestContiguousSeq = p.highestContiguousSeq;
+        rec.nextExpectedSeq = p.nextExpectedSeq;
+        rec.windowRemaining = p.windowRemaining;
+        rec.reason = static_cast<OtaDataNakReason>(p.reason);
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaEndRecord parseOtaEnd(const astros_packet_t &packet)
+    {
+        OtaEndRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_END ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaEndPayload)))
+        {
+            return rec;
+        }
+        OtaEndPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        rec.xferId = p.xferId;
+        rec.totalChunksSent = p.totalChunksSent;
+        std::memcpy(rec.sha256Final, p.sha256Final, 32);
+        rec.valid = true;
+        return rec;
+    }
+
+    OtaEndAckRecord parseOtaEndAck(const astros_packet_t &packet)
+    {
+        OtaEndAckRecord rec;
+        if (packet.packetType != AstrOsPacketType::OTA_END_ACK ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaEndAckPayload)))
+        {
+            return rec;
+        }
+        OtaEndAckPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+        if (p.status > static_cast<uint8_t>(OtaEndStatus::WRITE_ERROR))
+        {
+            return rec;
+        }
+        rec.xferId = p.xferId;
+        rec.status = static_cast<OtaEndStatus>(p.status);
+        std::memcpy(rec.sha256Computed, p.sha256Computed, 32);
+        rec.valid = true;
+        return rec;
     }
 
 } // namespace AstrOsEspNowProtocol

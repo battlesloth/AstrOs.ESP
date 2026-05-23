@@ -43,6 +43,14 @@ namespace AstrOsENC
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
     constexpr const static char *SERVO_TEST = "SERVO_TEST";
     constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
+    constexpr const static char *OTA_BEGIN = "OTA_BEGIN";
+    constexpr const static char *OTA_BEGIN_ACK = "OTA_BEGIN_ACK";
+    constexpr const static char *OTA_BEGIN_NAK = "OTA_BEGIN_NAK";
+    constexpr const static char *OTA_DATA = "OTA_DATA";
+    constexpr const static char *OTA_DATA_ACK = "OTA_DATA_ACK";
+    constexpr const static char *OTA_DATA_NAK = "OTA_DATA_NAK";
+    constexpr const static char *OTA_END = "OTA_END";
+    constexpr const static char *OTA_END_ACK = "OTA_END_ACK";
 } // namespace AstrOsENC
 
 enum class AstrOsPacketType
@@ -71,7 +79,15 @@ enum class AstrOsPacketType
     FORMAT_SD_ACK,
     FORMAT_SD_NAK,
     SERVO_TEST,
-    SERVO_TEST_ACK
+    SERVO_TEST_ACK,
+    OTA_BEGIN,
+    OTA_BEGIN_ACK,
+    OTA_BEGIN_NAK,
+    OTA_DATA,
+    OTA_DATA_ACK,
+    OTA_DATA_NAK,
+    OTA_END,
+    OTA_END_ACK,
 };
 
 typedef struct
@@ -104,8 +120,18 @@ public:
     std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "",
                                                         std::string message = "");
     std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
+    // Binary-frame builder for OTA packets. Unlike generateEspNowMsg/generatePackets,
+    // this path does NOT inject a validator-string prefix into the payload — the full
+    // ASTROS_PACKET_PAYLOAD_SIZE budget is available for binary content. Always
+    // produces exactly one packet (OTA frames fit in a single ESP-NOW transmission
+    // by design). Returns an empty vector if `type` is not an OTA type or `len`
+    // exceeds ASTROS_PACKET_PAYLOAD_SIZE.
+    std::vector<astros_espnow_data_t> generateOtaPacket(AstrOsPacketType type, const uint8_t *payload, size_t len);
     astros_packet_t parsePacket(uint8_t *packet);
     int validatePacket(astros_packet_t packet);
 };
+
+// True iff `type` is one of the 8 OTA packet types added in M1.
+bool isOtaPacketType(AstrOsPacketType type);
 
 #endif
