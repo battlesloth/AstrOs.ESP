@@ -513,7 +513,7 @@ namespace AstrOsBulkTransport
         // being treated as new progress (which would corrupt the
         // newlyConfirmedCount arithmetic). The protection against tick
         // charging retries against already-accepted seqs comes from the
-        // unconditional in-flight eviction loop below — not from this
+        // unconditional inFlight_.fill() reset below — not from this
         // watermark advance.
         //
         // nextExpectedSeq == 0 is the "receiver got nothing" case — no

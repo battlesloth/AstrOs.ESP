@@ -1110,7 +1110,7 @@ TEST(BulkTransport, BulkSenderTickRetransmitsOnlyPerEntryTimedOutSeqs)
     EXPECT_EQ(3, t.count); // only seqs 1, 2, 3 — NOT seqs 4, 5, 6
     EXPECT_FALSE(t.abandon);
     // Per-seq timestamp drives the decision, not a global timer.
-    // Iteration order is slot-array order; collect into a set for stable comparison.
+    // Iteration order is slot-array order; collect into a sorted vector for stable comparison.
     std::vector<uint32_t> retransmitted(t.retransmitSeqs.begin(), t.retransmitSeqs.begin() + t.count);
     std::sort(retransmitted.begin(), retransmitted.end());
     EXPECT_EQ(1u, retransmitted[0]);
