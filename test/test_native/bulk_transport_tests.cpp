@@ -985,3 +985,53 @@ TEST(BulkTransport, BulkSenderOnDataNakRejectsWrongXferId)
     auto r = s.onDataNak(/*xferId=*/99, 3, AstrOsBulkTransport::NakReason::CRC);
     EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::WRONG_XFER_ID, r.decision);
 }
+
+TEST(BulkTransport, BulkSenderOnDataNakRejectsBeforeStreaming)
+{
+    // Symmetry with the OnDataAck variant: NAK with status==IDLE returns
+    // NOT_STREAMING. Closes the test-matrix gap (ACK has this test; NAK
+    // didn't until now).
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.onDataNak(7, 0, AstrOsBulkTransport::NakReason::CRC);
+    EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::NOT_STREAMING, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataNakImplicitlyAdvancesConfirmedWatermark)
+{
+    // NAK with nextExpectedSeq=3 implies seqs 0..2 are confirmed. A
+    // subsequent ACK at cumulativeSeq=2 must be rejected as stale — the
+    // implicit confirmation already covered that range. This pins the
+    // cumulative-ACK semantics of NAK so a future regression that drops
+    // the highestConfirmedSeq_ advance gets caught.
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+
+    ASSERT_EQ(AstrOsBulkTransport::NakResult::Decision::OK,
+              s.onDataNak(7, /*nextExpectedSeq=*/3, AstrOsBulkTransport::NakReason::CRC).decision);
+
+    auto staleR = s.onDataAck(7, 2);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::STALE, staleR.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataNakWithZeroNextExpectedDoesNotAdvanceConfirmed)
+{
+    // NAK with nextExpectedSeq=0 means "receiver got nothing" — no implicit
+    // confirmation. Subsequent ACK at cumulativeSeq=0 must NOT be stale;
+    // the NAK didn't confirm anything.
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+
+    ASSERT_EQ(AstrOsBulkTransport::NakResult::Decision::OK,
+              s.onDataNak(7, /*nextExpectedSeq=*/0, AstrOsBulkTransport::NakReason::CRC).decision);
+
+    auto ackR = s.onDataAck(7, 0);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, ackR.decision);
+}

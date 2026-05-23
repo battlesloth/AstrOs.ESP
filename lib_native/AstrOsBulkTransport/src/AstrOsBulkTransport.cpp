@@ -501,23 +501,37 @@ namespace AstrOsBulkTransport
             return NakResult::wrongXferId();
         }
 
-        // Rewind: future sends start from nextExpectedSeq. Evict all
-        // in-flight slots whose seq >= nextExpectedSeq — they were
-        // either NAK'd directly or discarded by the receiver as out-
-        // of-order. The MIXED layer doesn't need to know which slot
-        // belongs to which seq; it just calls nextChunkToSend in a
-        // loop after a NAK.
+        // NAK semantics: nextExpectedSeq carries cumulative-ACK information —
+        // the receiver implicitly confirms seqs 0..nextExpectedSeq-1. Advance
+        // highestConfirmedSeq_ accordingly so tick doesn't keep charging
+        // retries against already-accepted seqs (which would eventually
+        // trigger a spurious ABANDONED transition).
         //
-        // Reason is currently unused by the state machine (the wire
-        // layer logs it in M3); it's in the signature so future
-        // reason-aware retry policies don't break the API.
+        // nextExpectedSeq == 0 is the "receiver got nothing" case — no
+        // implicit confirmation; leave the watermark untouched.
+        if (nextExpectedSeq > 0)
+        {
+            const uint32_t impliedCumulative = nextExpectedSeq - 1;
+            if (!anyConfirmed_ || impliedCumulative > highestConfirmedSeq_)
+            {
+                highestConfirmedSeq_ = impliedCumulative;
+                anyConfirmed_ = true;
+            }
+        }
+
+        // Rewind: future sends start from nextExpectedSeq. Evict ALL in-flight
+        // slots — those below nextExpectedSeq are now implicitly confirmed
+        // (handled above) and those at or above need retransmission via
+        // subsequent nextChunkToSend calls. The MIXED layer doesn't need to
+        // know which slot belongs to which seq.
+        //
+        // Reason is currently unused by the state machine (the wire layer
+        // logs it in M3); it's in the signature so future reason-aware
+        // retry policies don't break the API.
         nextSeqToSend_ = nextExpectedSeq;
         for (auto &e : inFlight_)
         {
-            if (e.occupied && e.seq >= nextExpectedSeq)
-            {
-                e = InFlightEntry{};
-            }
+            e = InFlightEntry{};
         }
         return NakResult::ok(nextExpectedSeq);
     }
