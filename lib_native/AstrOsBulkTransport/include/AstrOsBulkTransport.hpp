@@ -1,5 +1,6 @@
 #pragma once
 
+#include <OtaWirePayloads.hpp>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -505,6 +506,42 @@ namespace AstrOsBulkTransport
         bool abandon = false;
     };
 
+    // Result of BulkSender::onEndAck. Terminal transitions only —
+    // after DONE_OK or ABANDONED the sender stays in that state until
+    // reset(). WRONG_XFER_ID and NOT_STREAMING leave state unchanged.
+    struct [[nodiscard]] EndAckResult
+    {
+        enum class Decision : uint8_t
+        {
+            DONE_OK = 0,
+            ABANDONED = 1,
+            WRONG_XFER_ID = 2,
+            NOT_STREAMING = 3
+        };
+
+        const Decision decision;
+
+        static EndAckResult doneOk()
+        {
+            return EndAckResult(Decision::DONE_OK);
+        }
+        static EndAckResult abandoned()
+        {
+            return EndAckResult(Decision::ABANDONED);
+        }
+        static EndAckResult wrongXferId()
+        {
+            return EndAckResult(Decision::WRONG_XFER_ID);
+        }
+        static EndAckResult notStreaming()
+        {
+            return EndAckResult(Decision::NOT_STREAMING);
+        }
+
+    private:
+        explicit EndAckResult(Decision d) : decision(d) {}
+    };
+
     // Sliding-window sender state machine for the firmware OTA path.
     // Used by the master-side OtaForwarder (M3) to push chunks to a
     // padawan and react to ACK/NAK responses. PURE — no I/O, no
@@ -547,6 +584,7 @@ namespace AstrOsBulkTransport
         [[nodiscard]] AckResult onDataAck(uint8_t xferId, uint32_t cumulativeSeq);
         [[nodiscard]] NakResult onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason reason);
         [[nodiscard]] TickResult tick(uint64_t nowMs);
+        [[nodiscard]] EndAckResult onEndAck(uint8_t xferId, OtaEndStatus status);
         void reset();
         Status status() const
         {

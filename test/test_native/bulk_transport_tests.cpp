@@ -1105,3 +1105,80 @@ TEST(BulkTransport, BulkSenderTickReturnsZeroOnInactive)
     EXPECT_EQ(0, t.count);
     EXPECT_FALSE(t.abandon);
 }
+
+TEST(BulkTransport, BulkSenderOnEndAckOkTransitionsToDoneOk)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    auto r = s.onEndAck(7, OtaEndStatus::OK);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::DONE_OK, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::DONE_OK, s.status());
+}
+
+TEST(BulkTransport, BulkSenderOnEndAckHashMismatchAbandons)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    auto r = s.onEndAck(7, OtaEndStatus::HASH_MISMATCH);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::ABANDONED, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::ABANDONED, s.status());
+}
+
+TEST(BulkTransport, BulkSenderOnEndAckWriteErrorAbandons)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    auto r = s.onEndAck(7, OtaEndStatus::WRITE_ERROR);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::ABANDONED, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::ABANDONED, s.status());
+}
+
+TEST(BulkTransport, BulkSenderOnEndAckRejectsWrongXferId)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+    auto r = s.onEndAck(/*xferId=*/99, OtaEndStatus::OK);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::WRONG_XFER_ID, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::STREAMING, s.status());
+}
+
+TEST(BulkTransport, BulkSenderEndToEndHappyPath)
+{
+    // Drives the full state machine through a small transfer with the
+    // exact API call pattern M3's OtaForwarder will use.
+    // windowSize=8 > totalChunks=4 so all 4 chunks fit in the window
+    // and drainSends returns ALL_SENT after emitting all of them.
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(/*xferId=*/42, /*totalChunks=*/4, 128, /*windowSize=*/8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK, s.status());
+
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(42).decision);
+    ASSERT_EQ(AstrOsBulkTransport::BulkSender::Status::STREAMING, s.status());
+
+    // Pump nextChunkToSend — all 4 chunks fit in the window before ALL_SENT.
+    std::vector<uint32_t> sent;
+    auto term = drainSends(s, 1000, sent);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::ALL_SENT, term);
+    ASSERT_EQ(4u, sent.size()); // seqs 0..3 emitted
+
+    // Receiver cumulatively ACKs all 4 (seqs 0..3).
+    auto ackR = s.onDataAck(42, /*cumulativeSeq=*/3);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, ackR.decision);
+    EXPECT_EQ(4u, ackR.newlyConfirmedCount);
+
+    // nextChunkToSend still reports ALL_SENT — nothing left to emit.
+    auto sendR = s.nextChunkToSend(1100);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::ALL_SENT, sendR.decision);
+
+    // Send OTA_END, receiver replies OK.
+    auto endR = s.onEndAck(42, OtaEndStatus::OK);
+    EXPECT_EQ(AstrOsBulkTransport::EndAckResult::Decision::DONE_OK, endR.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::DONE_OK, s.status());
+}

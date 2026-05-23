@@ -328,6 +328,14 @@ namespace AstrOsBulkTransport
     static_assert(std::is_const_v<decltype(NakResult::nextSeqToResend)>);
     static_assert(!std::is_copy_assignable_v<NakResult>);
 
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::DONE_OK) == 0);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::ABANDONED) == 1);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::WRONG_XFER_ID) == 2);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::NOT_STREAMING) == 3);
+
+    static_assert(std::is_const_v<decltype(EndAckResult::decision)>);
+    static_assert(!std::is_copy_assignable_v<EndAckResult>);
+
     BeginSenderResult BulkSender::begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize,
                                         uint32_t ackTimeoutMs, uint8_t maxRetries)
     {
@@ -580,6 +588,30 @@ namespace AstrOsBulkTransport
             result.count++;
         }
         return result;
+    }
+
+    EndAckResult BulkSender::onEndAck(uint8_t xferId, OtaEndStatus status)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return EndAckResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return EndAckResult::wrongXferId();
+        }
+
+        // OK is the only success status; HASH_MISMATCH and WRITE_ERROR
+        // both abandon. The MIXED layer (M3) logs the specific status
+        // for diagnostics; the state machine only cares about
+        // success-vs-abandon.
+        if (status == OtaEndStatus::OK)
+        {
+            status_ = Status::DONE_OK;
+            return EndAckResult::doneOk();
+        }
+        status_ = Status::ABANDONED;
+        return EndAckResult::abandoned();
     }
 
     void BulkSender::reset()
