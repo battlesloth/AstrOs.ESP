@@ -2,6 +2,7 @@
 #define OTARECEIVER_HPP
 
 #include <AstrOsBulkTransport.hpp>
+#include <AstrOsSha256.h>
 #include <OtaQueueMessage.h>
 
 #include <atomic>
@@ -14,7 +15,6 @@
 #include <freertos/queue.h>
 
 #include <esp_timer.h>
-#include <mbedtls/sha256.h>
 
 // Threading: all members are accessed only from otaReceiverTask via
 // `process(...)`. The one exception is `active_` (see its declaration), which
@@ -48,9 +48,12 @@ private:
     // Staging-file handle and streaming SHA-256 context. Both are live only
     // between a successful BEGIN and the terminating END / abort. Every exit
     // path routes through resetCryptoAndFile() so we never leak an open FILE*
-    // or an mbedtls_sha256_context into the next transfer.
+    // across transfers. AstrOsSha256 is pure software (no shared hardware
+    // engine), avoiding the cross-task race we observed when mbedtls' OTA
+    // context's state got clobbered by another SHA consumer; `shaActive_`
+    // gates init-vs-update ordering without needing an explicit free.
     FILE *staging_ = nullptr;
-    mbedtls_sha256_context shaCtx_;
+    AstrOsSha256Ctx shaCtx_;
     bool shaActive_ = false;
 
 public:
