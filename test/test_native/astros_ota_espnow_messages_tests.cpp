@@ -685,12 +685,28 @@ TEST(OtaDispatcher, AllUpstreamTypesGateMasterOnly)
     for (auto type : upstreamTypes)
     {
         // payload bytes don't matter for dispatch — we never parse them in M1.
-        uint8_t dummy[34] = {0};
-        size_t len = (type == AstrOsPacketType::OTA_END_ACK)     ? 34u
-                     : (type == AstrOsPacketType::OTA_DATA_ACK)  ? 10u
-                     : (type == AstrOsPacketType::OTA_DATA_NAK)  ? 11u
-                     : (type == AstrOsPacketType::OTA_BEGIN_NAK) ? 2u
-                                                                 : 1u; // OTA_BEGIN_ACK
+        uint8_t dummy[sizeof(OtaEndAckPayload)] = {0};
+        size_t len = 0;
+        switch (type)
+        {
+        case AstrOsPacketType::OTA_BEGIN_ACK:
+            len = sizeof(OtaBeginAckPayload);
+            break;
+        case AstrOsPacketType::OTA_BEGIN_NAK:
+            len = sizeof(OtaBeginNakPayload);
+            break;
+        case AstrOsPacketType::OTA_DATA_ACK:
+            len = sizeof(OtaDataAckPayload);
+            break;
+        case AstrOsPacketType::OTA_DATA_NAK:
+            len = sizeof(OtaDataNakPayload);
+            break;
+        case AstrOsPacketType::OTA_END_ACK:
+            len = sizeof(OtaEndAckPayload);
+            break;
+        default:
+            break;
+        }
         auto parsed = buildOtaPacketForDispatch(type, dummy, len, keepAlive);
 
         auto masterResult = AstrOsEspNowProtocol::handlePacket(parsed, tracker, true, 0);
