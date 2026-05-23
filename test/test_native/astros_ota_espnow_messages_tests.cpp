@@ -224,6 +224,25 @@ TEST(OtaPacketParser, ParseOtaDataAckReturnsBinaryPayloadIntact)
         free(pkt.data);
 }
 
+TEST(OtaPacketParser, ParseRejectsOtaPacketWithOversizedPayloadByte)
+{
+    // Hand-construct a frame where the on-wire payloadSize byte exceeds the
+    // ASTROS_PACKET_PAYLOAD_SIZE budget. parsePacket must mark this UNKNOWN
+    // rather than trusting the byte and exposing downstream parsers to a
+    // potential out-of-bounds read.
+    uint8_t frame[20 + ASTROS_PACKET_PAYLOAD_SIZE];
+    std::memset(frame, 0, sizeof(frame));
+    // 16-byte id (zeros), packetNum=1, totalPackets=1
+    frame[16] = 1;
+    frame[17] = 1;
+    frame[18] = static_cast<uint8_t>(AstrOsPacketType::OTA_BEGIN);
+    frame[19] = ASTROS_PACKET_PAYLOAD_SIZE + 1; // oversize sentinel — must reject
+
+    auto svc = AstrOsEspNowMessageService();
+    auto parsed = svc.parsePacket(frame);
+    EXPECT_EQ(AstrOsPacketType::UNKNOWN, parsed.packetType);
+}
+
 TEST(OtaPacketParser, ParseExistingStringTypeStillStripsValidator)
 {
     // Regression: parsePacket must continue to strip the validator string

@@ -122,14 +122,14 @@ namespace AstrOsEspNowProtocol
         bool valid = false;
     };
 
-    OtaBeginRecord parseOtaBegin(const astros_packet_t &packet);
-    OtaBeginAckRecord parseOtaBeginAck(const astros_packet_t &packet);
-    OtaBeginNakRecord parseOtaBeginNak(const astros_packet_t &packet);
-    OtaDataRecord parseOtaData(const astros_packet_t &packet);
-    OtaDataAckRecord parseOtaDataAck(const astros_packet_t &packet);
-    OtaDataNakRecord parseOtaDataNak(const astros_packet_t &packet);
-    OtaEndRecord parseOtaEnd(const astros_packet_t &packet);
-    OtaEndAckRecord parseOtaEndAck(const astros_packet_t &packet);
+    [[nodiscard]] OtaBeginRecord parseOtaBegin(const astros_packet_t &packet);
+    [[nodiscard]] OtaBeginAckRecord parseOtaBeginAck(const astros_packet_t &packet);
+    [[nodiscard]] OtaBeginNakRecord parseOtaBeginNak(const astros_packet_t &packet);
+    [[nodiscard]] OtaDataRecord parseOtaData(const astros_packet_t &packet);
+    [[nodiscard]] OtaDataAckRecord parseOtaDataAck(const astros_packet_t &packet);
+    [[nodiscard]] OtaDataNakRecord parseOtaDataNak(const astros_packet_t &packet);
+    [[nodiscard]] OtaEndRecord parseOtaEnd(const astros_packet_t &packet);
+    [[nodiscard]] OtaEndAckRecord parseOtaEndAck(const astros_packet_t &packet);
 
     // Decodes an already-parsed, already-validated ESP-NOW packet.
     // Returns an InterfaceMessage for the MIXED adapter to forward to

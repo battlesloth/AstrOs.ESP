@@ -205,6 +205,16 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
         // payload and payloadSize already point at the right bytes; skip
         // the validatePacket() call below which would mark the packet
         // UNKNOWN (the binary bytes won't match the validator string).
+        //
+        // Defense: reject if the on-wire payloadSize exceeds the per-packet
+        // budget. A corrupt or truncated radio frame could deliver a buffer
+        // shorter than packet[19] bytes — the downstream parsers' reinterpret_cast
+        // would then read out-of-bounds. ESP-NOW's max payload is 180 bytes;
+        // anything beyond that is malformed by construction.
+        if (parsedPacket.payloadSize > ASTROS_PACKET_PAYLOAD_SIZE)
+        {
+            parsedPacket.packetType = AstrOsPacketType::UNKNOWN;
+        }
         return parsedPacket;
     }
 
