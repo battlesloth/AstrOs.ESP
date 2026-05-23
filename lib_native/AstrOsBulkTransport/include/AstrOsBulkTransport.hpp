@@ -414,6 +414,76 @@ namespace AstrOsBulkTransport
         SendResult(Decision d, uint32_t s) : decision(d), seq(s) {}
     };
 
+    // Result of BulkSender::onDataAck. On OK, `newlyConfirmedCount` is
+    // the number of in-flight slots freed by this cumulative ACK —
+    // useful when the caller wants to know "did room open up that
+    // wasn't there before?" without diffing internal state.
+    struct [[nodiscard]] AckResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_STREAMING = 2,
+            STALE = 3 // cumulativeSeq <= highestConfirmedSeq_ (already covered)
+        };
+
+        const Decision decision;
+        const uint32_t newlyConfirmedCount;
+
+        static AckResult ok(uint32_t n)
+        {
+            return AckResult(Decision::OK, n);
+        }
+        static AckResult wrongXferId()
+        {
+            return AckResult(Decision::WRONG_XFER_ID, 0);
+        }
+        static AckResult notStreaming()
+        {
+            return AckResult(Decision::NOT_STREAMING, 0);
+        }
+        static AckResult stale()
+        {
+            return AckResult(Decision::STALE, 0);
+        }
+
+    private:
+        AckResult(Decision d, uint32_t n) : decision(d), newlyConfirmedCount(n) {}
+    };
+
+    // Result of BulkSender::onDataNak. On OK, `nextSeqToResend` is the
+    // seq that the next `nextChunkToSend` call will emit (mirrors the
+    // wire-level `nextExpectedSeq` field from OTA_DATA_NAK).
+    struct [[nodiscard]] NakResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_STREAMING = 2
+        };
+
+        const Decision decision;
+        const uint32_t nextSeqToResend;
+
+        static NakResult ok(uint32_t s)
+        {
+            return NakResult(Decision::OK, s);
+        }
+        static NakResult wrongXferId()
+        {
+            return NakResult(Decision::WRONG_XFER_ID, 0);
+        }
+        static NakResult notStreaming()
+        {
+            return NakResult(Decision::NOT_STREAMING, 0);
+        }
+
+    private:
+        NakResult(Decision d, uint32_t s) : decision(d), nextSeqToResend(s) {}
+    };
+
     // Sliding-window sender state machine for the firmware OTA path.
     // Used by the master-side OtaForwarder (M3) to push chunks to a
     // padawan and react to ACK/NAK responses. PURE — no I/O, no
@@ -453,6 +523,8 @@ namespace AstrOsBulkTransport
         // esp_timer_get_time()/1000. Non-monotonic clocks would corrupt the
         // tick-driven timeout detection in M2.T4.
         [[nodiscard]] SendResult nextChunkToSend(uint64_t nowMs);
+        [[nodiscard]] AckResult onDataAck(uint8_t xferId, uint32_t cumulativeSeq);
+        [[nodiscard]] NakResult onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason reason);
         void reset();
         Status status() const
         {

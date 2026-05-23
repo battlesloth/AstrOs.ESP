@@ -900,3 +900,88 @@ TEST(BulkTransport, BulkSenderEmitsAllChunksWhenTotalIsBelowWindow)
     EXPECT_EQ(1u, sent[1]);
     EXPECT_EQ(2u, sent[2]);
 }
+
+TEST(BulkTransport, BulkSenderOnDataAckAdvancesHighestConfirmed)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+    ASSERT_EQ(8u, sent.size()); // window full at 0..7
+
+    // Cumulative ACK up through seq 3: frees slots for 0..3.
+    auto r = s.onDataAck(7, /*cumulativeSeq=*/3);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, r.decision);
+    EXPECT_EQ(4u, r.newlyConfirmedCount); // seqs 0, 1, 2, 3 newly confirmed
+
+    // Now nextChunkToSend should emit seq 8 (window frees 4 slots).
+    auto sr = s.nextChunkToSend(1100);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, sr.decision);
+    EXPECT_EQ(8u, sr.seq);
+}
+
+TEST(BulkTransport, BulkSenderRejectsStaleAck)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+
+    ASSERT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, s.onDataAck(7, 5).decision);
+    // Stale: cumulativeSeq=3 already covered by the previous ACK at 5.
+    auto r = s.onDataAck(7, 3);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::STALE, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataAckRejectsWrongXferId)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+    auto r = s.onDataAck(/*xferId=*/99, 3);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::WRONG_XFER_ID, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataAckRejectsBeforeStreaming)
+{
+    AstrOsBulkTransport::BulkSender s;
+    // No begin / onBeginAck — status is IDLE.
+    auto r = s.onDataAck(7, 0);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::NOT_STREAMING, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataNakRewindsToNextExpectedSeq)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    std::vector<uint32_t> sent;
+    drainSends(s, 1000, sent);
+    ASSERT_EQ(8u, sent.size()); // sent 0..7
+
+    // Receiver NAKs with nextExpectedSeq=3 — meaning seqs 0..2 are OK,
+    // but seq 3 needs retransmission (and 4..7 will be discarded by
+    // the receiver since they're out of order).
+    auto r = s.onDataNak(7, /*nextExpectedSeq=*/3, AstrOsBulkTransport::NakReason::CRC);
+    EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::OK, r.decision);
+    EXPECT_EQ(3u, r.nextSeqToResend);
+
+    // The next send should re-emit seq 3 (not 8).
+    auto sr = s.nextChunkToSend(1100);
+    EXPECT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, sr.decision);
+    EXPECT_EQ(3u, sr.seq);
+}
+
+TEST(BulkTransport, BulkSenderOnDataNakRejectsWrongXferId)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+    auto r = s.onDataNak(/*xferId=*/99, 3, AstrOsBulkTransport::NakReason::CRC);
+    EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::WRONG_XFER_ID, r.decision);
+}

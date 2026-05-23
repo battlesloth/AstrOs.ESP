@@ -311,6 +311,23 @@ namespace AstrOsBulkTransport
     static_assert(!std::is_copy_assignable_v<SendResult>);
     static_assert(std::is_copy_constructible_v<SendResult>);
 
+    static_assert(static_cast<uint8_t>(AckResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::NOT_STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::STALE) == 3);
+
+    static_assert(static_cast<uint8_t>(NakResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::NOT_STREAMING) == 2);
+
+    static_assert(std::is_const_v<decltype(AckResult::decision)>);
+    static_assert(std::is_const_v<decltype(AckResult::newlyConfirmedCount)>);
+    static_assert(!std::is_copy_assignable_v<AckResult>);
+
+    static_assert(std::is_const_v<decltype(NakResult::decision)>);
+    static_assert(std::is_const_v<decltype(NakResult::nextSeqToResend)>);
+    static_assert(!std::is_copy_assignable_v<NakResult>);
+
     BeginSenderResult BulkSender::begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize,
                                         uint32_t ackTimeoutMs, uint8_t maxRetries)
     {
@@ -434,6 +451,75 @@ namespace AstrOsBulkTransport
         // returned WINDOW_FULL in the full case.
         assert(false && "BulkSender::nextChunkToSend: in-flight table full despite occupied < windowSize_");
         std::abort();
+    }
+
+    AckResult BulkSender::onDataAck(uint8_t xferId, uint32_t cumulativeSeq)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return AckResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return AckResult::wrongXferId();
+        }
+        // Stale check: cumulativeSeq must strictly advance from the
+        // previous high-water mark. The `anyConfirmed_` flag
+        // disambiguates "no ACK yet seen" (any cumulativeSeq is fresh)
+        // from "seq 0 already confirmed" (only cumulativeSeq > 0 is
+        // fresh).
+        if (anyConfirmed_ && cumulativeSeq <= highestConfirmedSeq_)
+        {
+            return AckResult::stale();
+        }
+
+        const uint32_t prev = anyConfirmed_ ? highestConfirmedSeq_ + 1 : 0;
+        highestConfirmedSeq_ = cumulativeSeq;
+        anyConfirmed_ = true;
+
+        // Evict all in-flight slots whose seq <= cumulativeSeq.
+        for (auto &e : inFlight_)
+        {
+            if (e.occupied && e.seq <= cumulativeSeq)
+            {
+                e = InFlightEntry{};
+            }
+        }
+
+        const uint32_t newlyConfirmed = cumulativeSeq + 1 - prev;
+        return AckResult::ok(newlyConfirmed);
+    }
+
+    NakResult BulkSender::onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason /*reason*/)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return NakResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return NakResult::wrongXferId();
+        }
+
+        // Rewind: future sends start from nextExpectedSeq. Evict all
+        // in-flight slots whose seq >= nextExpectedSeq — they were
+        // either NAK'd directly or discarded by the receiver as out-
+        // of-order. The MIXED layer doesn't need to know which slot
+        // belongs to which seq; it just calls nextChunkToSend in a
+        // loop after a NAK.
+        //
+        // Reason is currently unused by the state machine (the wire
+        // layer logs it in M3); it's in the signature so future
+        // reason-aware retry policies don't break the API.
+        nextSeqToSend_ = nextExpectedSeq;
+        for (auto &e : inFlight_)
+        {
+            if (e.occupied && e.seq >= nextExpectedSeq)
+            {
+                e = InFlightEntry{};
+            }
+        }
+        return NakResult::ok(nextExpectedSeq);
     }
 
     void BulkSender::reset()
