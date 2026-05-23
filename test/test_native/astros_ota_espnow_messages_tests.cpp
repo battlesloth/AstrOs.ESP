@@ -353,6 +353,7 @@ TEST(OtaRecordParsers, ParseOtaBeginAckRoundTrip)
     OtaBeginAckPayload original{0x42};
     auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN_ACK, reinterpret_cast<const uint8_t *>(&original),
                                          sizeof(original));
+    ASSERT_EQ(1u, packets.size());
     auto parsed = svc.parsePacket(packets[0].data);
 
     auto rec = AstrOsEspNowProtocol::parseOtaBeginAck(parsed);
@@ -429,6 +430,25 @@ TEST(OtaRecordParsers, ParseOtaDataNakRoundTrip)
     EXPECT_EQ(1024u, rec.nextExpectedSeq);
     EXPECT_EQ(8, rec.windowRemaining);
     EXPECT_EQ(OtaDataNakReason::CRC, rec.reason);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataNakRejectsNoneReason)
+{
+    // OtaDataNakReason::NONE = 0 is a C++ sentinel only — it must not appear
+    // on the wire. parseOtaDataNak rejects reason byte 0 (per the comment in
+    // OtaWirePayloads.hpp at the NONE declaration).
+    auto svc = AstrOsEspNowMessageService();
+    OtaDataNakPayload bad{0x07, 1023, 1024, 8, static_cast<uint8_t>(OtaDataNakReason::NONE)};
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_NAK, reinterpret_cast<const uint8_t *>(&bad), sizeof(bad));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaDataNak(parsed);
+    EXPECT_FALSE(rec.valid);
 
     for (auto &pkt : packets)
         free(pkt.data);
