@@ -1,6 +1,7 @@
 #include <AstrOsBulkTransport.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -1068,6 +1069,53 @@ TEST(BulkTransport, BulkSenderTickRetransmitsTimedOutSeqs)
     {
         EXPECT_EQ(i, t.retransmitSeqs[i]);
     }
+}
+
+TEST(BulkTransport, BulkSenderTickRetransmitsOnlyPerEntryTimedOutSeqs)
+{
+    // Per-entry timestamp granularity: send 4 chunks at t=1000, ACK one of them,
+    // send 3 more at t=1200 (so in-flight has mixed timestamps from t=1000 and
+    // t=1200). Tick at t=1450 with ackTimeout=400. Only the t=1000 seqs are
+    // past timeout (1450-1000=450 >= 400); t=1200 seqs aren't (1450-1200=250 < 400).
+    //
+    // Catches a regression where tick uses a single global timer instead of
+    // per-entry sendTimestampMs.
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, /*ackTimeoutMs=*/400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    // Send seqs 0..3 at t=1000.
+    std::vector<uint32_t> firstBatch;
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        auto r = s.nextChunkToSend(1000);
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, r.decision);
+        firstBatch.push_back(r.seq);
+    }
+    ASSERT_EQ(4u, firstBatch.size());
+
+    // ACK seq 0 — frees one slot. In-flight now {1, 2, 3} at t=1000.
+    ASSERT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, s.onDataAck(7, 0).decision);
+
+    // Send seqs 4..6 at t=1200. In-flight now {1, 2, 3} at t=1000 + {4, 5, 6} at t=1200.
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        auto r = s.nextChunkToSend(1200);
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, r.decision);
+    }
+
+    // Tick at t=1450. Slots from t=1000: 450 ms elapsed (>= 400, timed out).
+    //                Slots from t=1200: 250 ms elapsed (< 400, not timed out).
+    auto t = s.tick(1450);
+    EXPECT_EQ(3, t.count); // only seqs 1, 2, 3 — NOT seqs 4, 5, 6
+    EXPECT_FALSE(t.abandon);
+    // Per-seq timestamp drives the decision, not a global timer.
+    // Iteration order is slot-array order; collect into a set for stable comparison.
+    std::vector<uint32_t> retransmitted(t.retransmitSeqs.begin(), t.retransmitSeqs.begin() + t.count);
+    std::sort(retransmitted.begin(), retransmitted.end());
+    EXPECT_EQ(1u, retransmitted[0]);
+    EXPECT_EQ(2u, retransmitted[1]);
+    EXPECT_EQ(3u, retransmitted[2]);
 }
 
 TEST(BulkTransport, BulkSenderTickAbandonsAfterMaxRetries)

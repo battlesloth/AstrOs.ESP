@@ -511,9 +511,13 @@ namespace AstrOsBulkTransport
 
         // NAK semantics: nextExpectedSeq carries cumulative-ACK information —
         // the receiver implicitly confirms seqs 0..nextExpectedSeq-1. Advance
-        // highestConfirmedSeq_ accordingly so tick doesn't keep charging
-        // retries against already-accepted seqs (which would eventually
-        // trigger a spurious ABANDONED transition).
+        // highestConfirmedSeq_ so a subsequent OTA_DATA_ACK at or below the
+        // implied cumulative seq is correctly rejected as STALE rather than
+        // being treated as new progress (which would corrupt the
+        // newlyConfirmedCount arithmetic). The protection against tick
+        // charging retries against already-accepted seqs comes from the
+        // unconditional in-flight eviction loop below — not from this
+        // watermark advance.
         //
         // nextExpectedSeq == 0 is the "receiver got nothing" case — no
         // implicit confirmation; leave the watermark untouched.
@@ -601,15 +605,25 @@ namespace AstrOsBulkTransport
             return EndAckResult::wrongXferId();
         }
 
-        // OK is the only success status; HASH_MISMATCH and WRITE_ERROR
-        // both abandon. The MIXED layer (M3) logs the specific status
-        // for diagnostics; the state machine only cares about
-        // success-vs-abandon.
-        if (status == OtaEndStatus::OK)
+        // OK is the only success status; HASH_MISMATCH and WRITE_ERROR both
+        // abandon. The MIXED layer logs the specific status for diagnostics;
+        // the state machine only cares about success-vs-abandon. Switch (not
+        // if-chain) so a future extension of OtaEndStatus produces a -Wswitch
+        // diagnostic at this site rather than silently routing the new
+        // enumerator to ABANDONED.
+        switch (status)
         {
+        case OtaEndStatus::OK:
             status_ = Status::DONE_OK;
             return EndAckResult::doneOk();
+        case OtaEndStatus::HASH_MISMATCH:
+        case OtaEndStatus::WRITE_ERROR:
+            status_ = Status::ABANDONED;
+            return EndAckResult::abandoned();
         }
+        // Fallback: any future enumerator that lands in OtaEndStatus without
+        // an explicit case above is treated as abandon (safe default) but the
+        // -Wswitch diagnostic above will have already flagged the gap.
         status_ = Status::ABANDONED;
         return EndAckResult::abandoned();
     }

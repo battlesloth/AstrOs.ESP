@@ -499,7 +499,7 @@ namespace AstrOsBulkTransport
     // output buffer (caller reads count then iterates retransmitSeqs).
     // The const-fields + private-ctor pattern doesn't fit — count is
     // written by tick() as it fills the array, then returned by value.
-    struct TickResult
+    struct [[nodiscard]] TickResult
     {
         std::array<uint32_t, MAX_WINDOW_SIZE> retransmitSeqs;
         uint8_t count = 0;
