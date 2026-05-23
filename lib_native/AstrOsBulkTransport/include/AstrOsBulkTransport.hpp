@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -298,5 +299,134 @@ namespace AstrOsBulkTransport
         uint16_t chunkSize_ = 0;
         uint8_t windowSize_ = 0;
         bool active_ = false;
+    };
+    // Maximum window size BulkSender supports. Covers both the
+    // ESP-NOW path (window=8 per the frozen contract) and the
+    // serial path (window=16 per the same contract). Bounds the
+    // in-flight table and TickResult retransmit array so the
+    // sender stays heap-free.
+    constexpr uint8_t MAX_WINDOW_SIZE = 16;
+
+    // One row of the BulkSender in-flight table. The sender keeps
+    // up to MAX_WINDOW_SIZE entries; each tracks a single sent-but-
+    // not-yet-acknowledged seq with its latest send-timestamp and
+    // retry count. Public for tests; not part of the wire contract.
+    struct InFlightEntry
+    {
+        uint32_t seq = 0;
+        uint64_t sendTimestampMs = 0;
+        uint8_t retryCount = 0;
+        bool occupied = false;
+    };
+
+    // [[nodiscard]] mirrors BulkReceiver::BeginResult — silently
+    // dropping the return value would leave the caller unable to
+    // distinguish "transfer ready" from "begin rejected, sender
+    // still IDLE", which is the silent-failure mode this attribute
+    // closes.
+    struct [[nodiscard]] BeginSenderResult
+    {
+        enum class Reason : uint8_t
+        {
+            OK = 0,
+            ZERO_TOTAL_CHUNKS = 1,
+            ZERO_CHUNK_SIZE = 2,
+            ZERO_WINDOW_SIZE = 3,
+            ZERO_ACK_TIMEOUT = 4,
+            ZERO_MAX_RETRIES = 5,
+            WINDOW_TOO_LARGE = 6 // windowSize > MAX_WINDOW_SIZE
+        };
+        bool valid = false;
+        Reason reason = Reason::ZERO_TOTAL_CHUNKS;
+
+        static BeginSenderResult ok()
+        {
+            return {true, Reason::OK};
+        }
+        static BeginSenderResult invalid(Reason r)
+        {
+            return {false, r};
+        }
+    };
+
+    struct [[nodiscard]] BeginAckResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_AWAITING_BEGIN_ACK = 2
+        };
+        Decision decision = Decision::NOT_AWAITING_BEGIN_ACK;
+
+        static BeginAckResult ok()
+        {
+            return {Decision::OK};
+        }
+        static BeginAckResult wrongXferId()
+        {
+            return {Decision::WRONG_XFER_ID};
+        }
+        static BeginAckResult notAwaiting()
+        {
+            return {Decision::NOT_AWAITING_BEGIN_ACK};
+        }
+    };
+
+    // Sliding-window sender state machine for the firmware OTA path.
+    // Used by the master-side OtaForwarder (M3) to push chunks to a
+    // padawan and react to ACK/NAK responses. PURE — no I/O, no
+    // FreeRTOS, no ESP-IDF. The MIXED caller does the actual byte
+    // emission; this class tracks "what to send next" and "is the
+    // transfer healthy".
+    //
+    // State machine:
+    //   IDLE
+    //     → AWAITING_BEGIN_ACK (via begin())
+    //     → STREAMING (via onBeginAck OK)
+    //         ⮨ self (per-chunk send/ack/nak/tick cycle)
+    //         → DONE_OK (via onEndAck OK)
+    //         → ABANDONED (via onEndAck != OK, OR tick(abandon=true))
+    //
+    // AWAITING_END_ACK is intentionally NOT a distinct state — it's
+    // implicit ("STREAMING with all seqs confirmed and in-flight
+    // table empty"). The MIXED caller checks SendResult::ALL_SENT
+    // to know when it's time to send OTA_END.
+    class BulkSender
+    {
+    public:
+        enum class Status : uint8_t
+        {
+            IDLE = 0,
+            AWAITING_BEGIN_ACK = 1,
+            STREAMING = 2,
+            DONE_OK = 3,
+            ABANDONED = 4
+        };
+
+        [[nodiscard]] BeginSenderResult begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize,
+                                              uint8_t windowSize, uint32_t ackTimeoutMs, uint8_t maxRetries);
+        [[nodiscard]] BeginAckResult onBeginAck(uint8_t xferId);
+        void reset();
+        Status status() const
+        {
+            return status_;
+        }
+
+    private:
+        uint8_t xferId_ = 0;
+        uint32_t totalChunks_ = 0;
+        uint16_t chunkSize_ = 0;
+        uint8_t windowSize_ = 0;
+        uint32_t ackTimeoutMs_ = 0;
+        uint8_t maxRetries_ = 0;
+
+        uint32_t nextSeqToSend_ = 0;
+        uint32_t highestConfirmedSeq_ = 0;
+        bool anyConfirmed_ = false; // disambiguates "seq 0 confirmed" from "nothing confirmed yet"
+
+        std::array<InFlightEntry, MAX_WINDOW_SIZE> inFlight_{};
+
+        Status status_ = Status::IDLE;
     };
 } // namespace AstrOsBulkTransport

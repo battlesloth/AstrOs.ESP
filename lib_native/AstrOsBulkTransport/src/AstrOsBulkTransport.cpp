@@ -275,4 +275,113 @@ namespace AstrOsBulkTransport
         }
         return false; // unknown reason — conservative: preserve state
     }
+
+    // BulkSender::Status integer values are API-stable and consumed by
+    // switch statements in M3's OtaForwarder. Pin them so a future
+    // reorder breaks the build, not the dispatch.
+    static_assert(static_cast<uint8_t>(BulkSender::Status::IDLE) == 0);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::AWAITING_BEGIN_ACK) == 1);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::DONE_OK) == 3);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::ABANDONED) == 4);
+
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::OK) == 0);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_TOTAL_CHUNKS) == 1);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_CHUNK_SIZE) == 2);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_WINDOW_SIZE) == 3);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_ACK_TIMEOUT) == 4);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_MAX_RETRIES) == 5);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::WINDOW_TOO_LARGE) == 6);
+
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::NOT_AWAITING_BEGIN_ACK) == 2);
+
+    BeginSenderResult BulkSender::begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize,
+                                        uint32_t ackTimeoutMs, uint8_t maxRetries)
+    {
+        // Reject protocol-illegal parameters in the order the contract
+        // freezes them. Each rejection leaves the sender in IDLE so a
+        // subsequent corrected begin() works cleanly. Order matters: a
+        // future reorder of these guards would change which Reason a
+        // caller sees for multi-fault input.
+        if (totalChunks == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_TOTAL_CHUNKS);
+        }
+        if (chunkSize == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_CHUNK_SIZE);
+        }
+        if (windowSize == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_WINDOW_SIZE);
+        }
+        if (windowSize > MAX_WINDOW_SIZE)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::WINDOW_TOO_LARGE);
+        }
+        if (ackTimeoutMs == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_ACK_TIMEOUT);
+        }
+        if (maxRetries == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_MAX_RETRIES);
+        }
+
+        xferId_ = xferId;
+        totalChunks_ = totalChunks;
+        chunkSize_ = chunkSize;
+        windowSize_ = windowSize;
+        ackTimeoutMs_ = ackTimeoutMs;
+        maxRetries_ = maxRetries;
+        nextSeqToSend_ = 0;
+        highestConfirmedSeq_ = 0;
+        anyConfirmed_ = false;
+        for (auto &e : inFlight_)
+        {
+            e = InFlightEntry{};
+        }
+        status_ = Status::AWAITING_BEGIN_ACK;
+        return BeginSenderResult::ok();
+    }
+
+    BeginAckResult BulkSender::onBeginAck(uint8_t xferId)
+    {
+        if (status_ != Status::AWAITING_BEGIN_ACK)
+        {
+            return BeginAckResult::notAwaiting();
+        }
+        if (xferId != xferId_)
+        {
+            return BeginAckResult::wrongXferId();
+        }
+        status_ = Status::STREAMING;
+        return BeginAckResult::ok();
+    }
+
+    void BulkSender::reset()
+    {
+        xferId_ = 0;
+        totalChunks_ = 0;
+        chunkSize_ = 0;
+        windowSize_ = 0;
+        ackTimeoutMs_ = 0;
+        maxRetries_ = 0;
+        nextSeqToSend_ = 0;
+        highestConfirmedSeq_ = 0;
+        anyConfirmed_ = false;
+        for (auto &e : inFlight_)
+        {
+            e = InFlightEntry{};
+        }
+        status_ = Status::IDLE;
+    }
 } // namespace AstrOsBulkTransport

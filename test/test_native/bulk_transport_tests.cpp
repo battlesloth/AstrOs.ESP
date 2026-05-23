@@ -715,3 +715,113 @@ TEST(BulkTransport, ShouldTeardownOnEndResultNotActivePreservesState)
     EXPECT_FALSE(AstrOsBulkTransport::shouldTeardownOnEndResult(
         AstrOsBulkTransport::EndResult::ioError(AstrOsBulkTransport::EndResult::Reason::NOT_ACTIVE)));
 }
+
+//=================================================================================================
+// BulkSender — M2 wire-format-compatible sender state machine.
+//
+// Mirrors BulkReceiver's result-type discipline: const-fields + private
+// constructor + static factories on each result, [[nodiscard]] enforced
+// per-type, file-scope static_assert pinning of wire-stable enum values.
+//=================================================================================================
+
+TEST(BulkTransport, BulkSenderStartsInIdle)
+{
+    AstrOsBulkTransport::BulkSender s;
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::IDLE, s.status());
+}
+
+TEST(BulkTransport, BulkSenderBeginAcceptsValidParams)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(/*xferId=*/7, /*totalChunks=*/100, /*chunkSize=*/128,
+                     /*windowSize=*/8, /*ackTimeoutMs=*/400, /*maxRetries=*/3);
+    EXPECT_TRUE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::OK, r.reason);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK, s.status());
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsZeroTotalChunks)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(/*xferId=*/7, /*totalChunks=*/0, /*chunkSize=*/128,
+                     /*windowSize=*/8, /*ackTimeoutMs=*/400, /*maxRetries=*/3);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::ZERO_TOTAL_CHUNKS, r.reason);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::IDLE, s.status());
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsZeroChunkSize)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(7, 100, 0, 8, 400, 3);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::ZERO_CHUNK_SIZE, r.reason);
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsZeroWindowSize)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(7, 100, 128, 0, 400, 3);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::ZERO_WINDOW_SIZE, r.reason);
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsZeroAckTimeout)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(7, 100, 128, 8, 0, 3);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::ZERO_ACK_TIMEOUT, r.reason);
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsZeroMaxRetries)
+{
+    AstrOsBulkTransport::BulkSender s;
+    auto r = s.begin(7, 100, 128, 8, 400, 0);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::ZERO_MAX_RETRIES, r.reason);
+}
+
+TEST(BulkTransport, BulkSenderBeginRejectsWindowTooLarge)
+{
+    AstrOsBulkTransport::BulkSender s;
+    // MAX_WINDOW_SIZE = 16; windowSize = 17 must reject.
+    auto r = s.begin(7, 100, 128, 17, 400, 3);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(AstrOsBulkTransport::BeginSenderResult::Reason::WINDOW_TOO_LARGE, r.reason);
+}
+
+TEST(BulkTransport, BulkSenderOnBeginAckAdvancesToStreaming)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    auto r = s.onBeginAck(/*xferId=*/7);
+    EXPECT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::STREAMING, s.status());
+}
+
+TEST(BulkTransport, BulkSenderOnBeginAckRejectsWrongXferId)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    auto r = s.onBeginAck(/*xferId=*/99);
+    EXPECT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::WRONG_XFER_ID, r.decision);
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK, s.status());
+}
+
+TEST(BulkTransport, BulkSenderOnBeginAckRejectsBeforeBegin)
+{
+    AstrOsBulkTransport::BulkSender s;
+    // No begin() called — status is IDLE.
+    auto r = s.onBeginAck(7);
+    EXPECT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::NOT_AWAITING_BEGIN_ACK, r.decision);
+}
+
+TEST(BulkTransport, BulkSenderResetReturnsToIdle)
+{
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, 100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK, s.status());
+    s.reset();
+    EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::IDLE, s.status());
+}
