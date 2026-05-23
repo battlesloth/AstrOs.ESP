@@ -641,6 +641,19 @@ Existing 309+ native tests must continue to pass. M2 adds ~6–8 new
 6. **Read-back chunk size for `esp_partition_read`** — proposed 4 KB. M4
    measures whether smaller chunks improve variance vs SHA update
    overhead.
+7. **MIXED dispatcher residual switch — silent-drop OTA cases** (raised by
+   M1 PR-toolkit silent-failure review, 2026-05-23). `lib/AstrOsEspNow/src/AstrOsEspNowService.cpp`'s
+   `handleMessage` residual switch currently hits the `default: ESP_LOGE`
+   arm for any OTA packet that returns `UnsupportedType` from the PURE
+   dispatcher. Benign on M1-only deployments (no OTA traffic on the wire
+   yet), but during the M3→M4 window the master will start emitting
+   `OTA_BEGIN` to padawans that may still be on M1+M2 firmware, producing
+   `ESP_LOGE("Dispatcher returned UnsupportedType...")` noise on the
+   padawan side. M3's plan should add explicit OTA cases to the padawan's
+   residual switch (silent-drop with one-time `ESP_LOGW`) and route to
+   the new `otaWriterQueue` in M4. The M3 author should confirm this is
+   in their scope before writing code; otherwise a one-line patch can ship
+   between M2 and M3 as scaffolding.
 
 ## Related documents
 
