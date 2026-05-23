@@ -1093,6 +1093,7 @@ TEST(BulkTransport, BulkSenderTickAbandonsAfterMaxRetries)
     // Abandon, no further retransmissions.
     auto t3 = s.tick(1500);
     EXPECT_TRUE(t3.abandon);
+    EXPECT_EQ(0, t3.count); // abandon path resets count, not a partial retransmit list
     EXPECT_EQ(AstrOsBulkTransport::BulkSender::Status::ABANDONED, s.status());
 }
 
