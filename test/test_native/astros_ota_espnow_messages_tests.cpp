@@ -1,5 +1,6 @@
 #include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsMessaging.hpp>
+#include <PacketTracker.hpp>
 #include <cstring>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -518,8 +519,6 @@ TEST(OtaRecordParsers, ParseOtaEndAckRejectsOutOfRangeStatus)
 }
 
 // M1 — Task 6: handlePacket dispatcher recognizes OTA types and applies role gating.
-
-#include <PacketTracker.hpp>
 
 namespace
 {
