@@ -120,8 +120,18 @@ public:
     std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "",
                                                         std::string message = "");
     std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
+    // Binary-frame builder for OTA packets. Unlike generateEspNowMsg/generatePackets,
+    // this path does NOT inject a validator-string prefix into the payload — the full
+    // ASTROS_PACKET_PAYLOAD_SIZE budget is available for binary content. Always
+    // produces exactly one packet (OTA frames fit in a single ESP-NOW transmission
+    // by design). Returns an empty vector if `type` is not an OTA type or `len`
+    // exceeds ASTROS_PACKET_PAYLOAD_SIZE.
+    std::vector<astros_espnow_data_t> generateOtaPacket(AstrOsPacketType type, const uint8_t *payload, size_t len);
     astros_packet_t parsePacket(uint8_t *packet);
     int validatePacket(astros_packet_t packet);
 };
+
+// True iff `type` is one of the 8 OTA packet types added in M1.
+bool isOtaPacketType(AstrOsPacketType type);
 
 #endif

@@ -94,3 +94,77 @@ TEST(OtaWirePayloads, OtaEndStatusValuesMatchSpec)
     EXPECT_EQ(1, static_cast<int>(OtaEndStatus::HASH_MISMATCH));
     EXPECT_EQ(2, static_cast<int>(OtaEndStatus::WRITE_ERROR));
 }
+
+// M1 — Task 3: generateOtaPacket builds a single-packet binary frame
+// with no validator-string injection.
+
+TEST(OtaPacketBuilder, GenerateOtaBeginProducesOneFrame)
+{
+    auto svc = AstrOsEspNowMessageService();
+
+    OtaBeginPayload payload{};
+    payload.xferId = 0x42;
+    payload.totalSize = 0x12345678;
+    payload.chunkSize = 128;
+    payload.totalChunks = 9600;
+    for (int i = 0; i < 32; i++)
+        payload.sha256Expected[i] = static_cast<uint8_t>(i);
+    payload.flags = 0;
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN, reinterpret_cast<const uint8_t *>(&payload),
+                                         sizeof(payload));
+    ASSERT_EQ(1u, packets.size());
+    ASSERT_EQ(20u + sizeof(payload), packets[0].size);
+
+    uint8_t *p = packets[0].data;
+    // bytes 0..15 = id (random — don't check content, just that they exist)
+    EXPECT_EQ(1, p[16]); // packetNumber
+    EXPECT_EQ(1, p[17]); // totalPackets
+    EXPECT_EQ(static_cast<uint8_t>(AstrOsPacketType::OTA_BEGIN), p[18]);
+    EXPECT_EQ(static_cast<uint8_t>(sizeof(payload)), p[19]); // payloadSize = 44
+
+    // Payload bytes start at offset 20 with NO validator-string prefix.
+    EXPECT_EQ(0x42, p[20]); // xferId byte 0 of payload
+    EXPECT_EQ(0x78, p[21]); // totalSize byte 0 (LE)
+    // ... (full bit-for-bit equality)
+    EXPECT_EQ(0, std::memcmp(p + 20, &payload, sizeof(payload)));
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaPacketBuilder, GenerateOtaPacketRejectsNonOtaType)
+{
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t dummy[1] = {0};
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::BASIC, dummy, sizeof(dummy));
+    EXPECT_EQ(0u, packets.size()); // empty vector signals rejection
+}
+
+TEST(OtaPacketBuilder, GenerateOtaPacketRejectsOversizedPayload)
+{
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t big[ASTROS_PACKET_PAYLOAD_SIZE + 1] = {0};
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, big, sizeof(big));
+    EXPECT_EQ(0u, packets.size());
+}
+
+TEST(OtaPacketBuilder, GenerateOtaDataAckProducesTinyFrame)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaDataAckPayload ack{};
+    ack.xferId = 7;
+    ack.highestContiguousSeq = 1024;
+    ack.nextExpectedSeq = 1025;
+    ack.windowRemaining = 8;
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_ACK, reinterpret_cast<const uint8_t *>(&ack), sizeof(ack));
+    ASSERT_EQ(1u, packets.size());
+    EXPECT_EQ(20u + 10u, packets[0].size); // header + 10B payload
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
