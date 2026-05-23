@@ -380,7 +380,7 @@ namespace AstrOsBulkTransport
     // Const-fields + private constructor mirror ChunkResult's
     // discipline so a returned result cannot be mutated into an
     // invalid combination (e.g. WINDOW_FULL with a real seq).
-    struct SendResult
+    struct [[nodiscard]] SendResult
     {
         enum class Decision : uint8_t
         {
@@ -448,6 +448,10 @@ namespace AstrOsBulkTransport
         [[nodiscard]] BeginSenderResult begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize,
                                               uint8_t windowSize, uint32_t ackTimeoutMs, uint8_t maxRetries);
         [[nodiscard]] BeginAckResult onBeginAck(uint8_t xferId);
+        // Precondition: `nowMs` must be monotonically non-decreasing across
+        // successive calls. M3's MIXED caller drives this from
+        // esp_timer_get_time()/1000. Non-monotonic clocks would corrupt the
+        // tick-driven timeout detection in M2.T4.
         [[nodiscard]] SendResult nextChunkToSend(uint64_t nowMs);
         void reset();
         Status status() const
