@@ -15,7 +15,7 @@ TEST(OtaPacketTypes, EnumValuesPresent)
     EXPECT_EQ(8u, sizeof(types) / sizeof(types[0]));
 }
 
-TEST(OtaPacketTypes, GeneratePacketsReturnsEmptyForOtaTypes)
+TEST(OtaPacketTypes, PacketTypeMapContainsOtaTypes)
 {
     // The existing string-payload path (generatePackets) is NOT how OTA frames get built.
     // It calls packetTypeMap[type] and returns empty on unknown types. After Task 1 the
