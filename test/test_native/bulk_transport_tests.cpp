@@ -719,9 +719,13 @@ TEST(BulkTransport, ShouldTeardownOnEndResultNotActivePreservesState)
 //=================================================================================================
 // BulkSender — M2 wire-format-compatible sender state machine.
 //
-// Mirrors BulkReceiver's result-type discipline: const-fields + private
-// constructor + static factories on each result, [[nodiscard]] enforced
-// per-type, file-scope static_assert pinning of wire-stable enum values.
+// Mirrors the BulkReceiver result-type family: each result struct carries
+// [[nodiscard]] at the type level + file-scope static_assert pinning of
+// integer enum values. BeginSenderResult / BeginAckResult use the simpler
+// BeginResult / EndResult pattern (mutable bool valid + Reason fields,
+// static factories). Later M2 tasks introduce ChunkResult-style
+// const-fields + private-ctor result types (SendResult, AckResult, NakResult,
+// EndAckResult) where the additional invariant enforcement earns its keep.
 //=================================================================================================
 
 TEST(BulkTransport, BulkSenderStartsInIdle)
