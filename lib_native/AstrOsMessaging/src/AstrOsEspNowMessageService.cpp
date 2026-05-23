@@ -161,22 +161,18 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateOtaPacket(
     uint8_t *id = AstrOsEspNowMessageService::generateId();
     uint8_t *frame = (uint8_t *)malloc(20 + len);
 
-    int packetNumber = 1;
-    int totalPackets = 1;
-    uint8_t typeByte = static_cast<uint8_t>(type);
-    uint8_t payloadSize = static_cast<uint8_t>(len);
+    const uint8_t packetNumber = 1;
+    const uint8_t totalPackets = 1;
+    const uint8_t typeByte = static_cast<uint8_t>(type);
+    const uint8_t payloadSize = static_cast<uint8_t>(len);
 
     int offset = 0;
     std::memcpy(frame, id, 16);
     offset += 16;
-    std::memcpy(frame + offset, &packetNumber, 1);
-    offset += 1;
-    std::memcpy(frame + offset, &totalPackets, 1);
-    offset += 1;
-    std::memcpy(frame + offset, &typeByte, 1);
-    offset += 1;
-    std::memcpy(frame + offset, &payloadSize, 1);
-    offset += 1;
+    frame[offset++] = packetNumber;
+    frame[offset++] = totalPackets;
+    frame[offset++] = typeByte;
+    frame[offset++] = payloadSize;
     if (len > 0)
     {
         std::memcpy(frame + offset, payload, len);
