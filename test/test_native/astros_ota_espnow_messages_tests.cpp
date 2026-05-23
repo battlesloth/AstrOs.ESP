@@ -1,3 +1,4 @@
+#include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsMessaging.hpp>
 #include <cstring>
 #include <gmock/gmock.h>
@@ -236,6 +237,261 @@ TEST(OtaPacketParser, ParseExistingStringTypeStillStripsValidator)
     // After stripping "BASIC" + UNIT_SEPARATOR (5+1 = 6 bytes), payload is "hello" (5 bytes).
     EXPECT_EQ(5, parsed.payloadSize);
     EXPECT_EQ(0, std::memcmp(parsed.payload, "hello", 5));
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+// M1 — Task 5: POD record types + parsers in AstrOsEspNowProtocol.
+
+TEST(OtaRecordParsers, ParseOtaBeginRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaBeginPayload original{};
+    original.xferId = 0x42;
+    original.totalSize = 1228800;
+    original.chunkSize = 128;
+    original.totalChunks = 9600;
+    for (int i = 0; i < 32; i++)
+        original.sha256Expected[i] = static_cast<uint8_t>(i);
+    original.flags = 0;
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaBegin(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x42, rec.xferId);
+    EXPECT_EQ(1228800u, rec.totalSize);
+    EXPECT_EQ(128u, rec.chunkSize);
+    EXPECT_EQ(9600u, rec.totalChunks);
+    for (int i = 0; i < 32; i++)
+        EXPECT_EQ(static_cast<uint8_t>(i), rec.sha256Expected[i]);
+    EXPECT_EQ(0u, rec.flags);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaBeginRejectsShortPayload)
+{
+    // Construct a malformed OTA_BEGIN with only 10 bytes of payload (not 44).
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t shortPayload[10] = {0};
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN, shortPayload, sizeof(shortPayload));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaBegin(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    // OTA_DATA = 9-byte header + N bytes of firmware payload. Build one with 16 fw bytes.
+    uint8_t frame[sizeof(OtaDataHeader) + 16];
+    OtaDataHeader hdr{};
+    hdr.xferId = 0x07;
+    hdr.seq = 42;
+    hdr.payloadLen = 16;
+    hdr.crc16 = 0xABCD;
+    std::memcpy(frame, &hdr, sizeof(hdr));
+    for (int i = 0; i < 16; i++)
+        frame[sizeof(hdr) + i] = static_cast<uint8_t>(0xA0 | i);
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, frame, sizeof(frame));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaData(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x07, rec.xferId);
+    EXPECT_EQ(42u, rec.seq);
+    EXPECT_EQ(16u, rec.payloadLen);
+    EXPECT_EQ(0xABCDu, rec.crc16);
+    // rec.payload points into the parsed packet's payload buffer.
+    EXPECT_EQ(0xA0, rec.payload[0]);
+    EXPECT_EQ(0xAF, rec.payload[15]);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataRejectsPayloadLenMismatch)
+{
+    // header.payloadLen = 32 but the actual packet only carries 16 bytes of payload.
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t frame[sizeof(OtaDataHeader) + 16];
+    OtaDataHeader hdr{};
+    hdr.xferId = 1;
+    hdr.seq = 0;
+    hdr.payloadLen = 32; // lying — actual payload is 16 bytes
+    hdr.crc16 = 0;
+    std::memcpy(frame, &hdr, sizeof(hdr));
+    std::memset(frame + sizeof(hdr), 0xCC, 16);
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, frame, sizeof(frame));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaData(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaBeginAckRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaBeginAckPayload original{0x42};
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN_ACK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaBeginAck(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x42, rec.xferId);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaBeginNakRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaBeginNakPayload original{0x42, static_cast<uint8_t>(OtaBeginNakReason::NO_PARTITION)};
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN_NAK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaBeginNak(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x42, rec.xferId);
+    EXPECT_EQ(OtaBeginNakReason::NO_PARTITION, rec.reason);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaBeginNakRejectsOutOfRangeReason)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaBeginNakPayload bad{0x42, 99}; // 99 is not a valid OtaBeginNakReason
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_BEGIN_NAK, reinterpret_cast<const uint8_t *>(&bad), sizeof(bad));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaBeginNak(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataAckRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaDataAckPayload original{0x07, 1023, 1024, 8};
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_ACK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaDataAck(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x07, rec.xferId);
+    EXPECT_EQ(1023u, rec.highestContiguousSeq);
+    EXPECT_EQ(1024u, rec.nextExpectedSeq);
+    EXPECT_EQ(8, rec.windowRemaining);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaDataNakRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaDataNakPayload original{0x07, 1023, 1024, 8, static_cast<uint8_t>(OtaDataNakReason::CRC)};
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA_NAK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaDataNak(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x07, rec.xferId);
+    EXPECT_EQ(1023u, rec.highestContiguousSeq);
+    EXPECT_EQ(1024u, rec.nextExpectedSeq);
+    EXPECT_EQ(8, rec.windowRemaining);
+    EXPECT_EQ(OtaDataNakReason::CRC, rec.reason);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaEndRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaEndPayload original{};
+    original.xferId = 0x42;
+    original.totalChunksSent = 9600;
+    for (int i = 0; i < 32; i++)
+        original.sha256Final[i] = static_cast<uint8_t>(0xC0 | (i & 0x0F));
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_END, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaEnd(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x42, rec.xferId);
+    EXPECT_EQ(9600u, rec.totalChunksSent);
+    for (int i = 0; i < 32; i++)
+        EXPECT_EQ(static_cast<uint8_t>(0xC0 | (i & 0x0F)), rec.sha256Final[i]);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaEndAckRoundTrip)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaEndAckPayload original{};
+    original.xferId = 0x42;
+    original.status = static_cast<uint8_t>(OtaEndStatus::OK);
+    for (int i = 0; i < 32; i++)
+        original.sha256Computed[i] = static_cast<uint8_t>(0xB0 | (i & 0x0F));
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_END_ACK, reinterpret_cast<const uint8_t *>(&original),
+                                         sizeof(original));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaEndAck(parsed);
+    ASSERT_TRUE(rec.valid);
+    EXPECT_EQ(0x42, rec.xferId);
+    EXPECT_EQ(OtaEndStatus::OK, rec.status);
+    for (int i = 0; i < 32; i++)
+        EXPECT_EQ(static_cast<uint8_t>(0xB0 | (i & 0x0F)), rec.sha256Computed[i]);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaRecordParsers, ParseOtaEndAckRejectsOutOfRangeStatus)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaEndAckPayload bad{};
+    bad.xferId = 0x42;
+    bad.status = 99; // not a valid OtaEndStatus
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_END_ACK, reinterpret_cast<const uint8_t *>(&bad), sizeof(bad));
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaEndAck(parsed);
+    EXPECT_FALSE(rec.valid);
 
     for (auto &pkt : packets)
         free(pkt.data);
