@@ -497,6 +497,10 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                 }
                 if (rename(kStagingPath, finalPath) == 0)
                 {
+                    {
+                        std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+                        lastFirmwarePath_ = finalPath;
+                    }
                     ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u path=%s sha=%s",
                              transferIdIn.c_str(), (unsigned)msg.end.totalChunks, finalPath, computedHex);
                     AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", computedHex);
@@ -623,4 +627,14 @@ void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
              results.size());
 
     AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
+}
+
+std::optional<std::string> OtaReceiver::getLastFirmwarePath() const
+{
+    std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+    if (lastFirmwarePath_.empty())
+    {
+        return std::nullopt;
+    }
+    return lastFirmwarePath_;
 }
