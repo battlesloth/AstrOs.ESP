@@ -1,5 +1,7 @@
 #pragma once
 
+#include <OtaWirePayloads.hpp>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -298,5 +300,352 @@ namespace AstrOsBulkTransport
         uint16_t chunkSize_ = 0;
         uint8_t windowSize_ = 0;
         bool active_ = false;
+    };
+    // Maximum window size BulkSender supports. Covers both the
+    // ESP-NOW path (window=8 per the frozen contract) and the
+    // serial path (window=16 per the same contract). Bounds the
+    // in-flight table and TickResult retransmit array so the
+    // sender stays heap-free.
+    constexpr uint8_t MAX_WINDOW_SIZE = 16;
+
+    // One row of the BulkSender in-flight table. The sender keeps
+    // up to MAX_WINDOW_SIZE entries; each tracks a single sent-but-
+    // not-yet-acknowledged seq with its latest send-timestamp and
+    // retry count. Public for tests; not part of the wire contract.
+    struct InFlightEntry
+    {
+        uint32_t seq = 0;
+        uint64_t sendTimestampMs = 0;
+        uint8_t retryCount = 0;
+        bool occupied = false;
+    };
+
+    // [[nodiscard]] mirrors BulkReceiver::BeginResult — silently
+    // dropping the return value would leave the caller unable to
+    // distinguish "transfer ready" from "begin rejected, sender
+    // still IDLE", which is the silent-failure mode this attribute
+    // closes.
+    struct [[nodiscard]] BeginSenderResult
+    {
+        enum class Reason : uint8_t
+        {
+            OK = 0,
+            ZERO_TOTAL_CHUNKS = 1,
+            ZERO_CHUNK_SIZE = 2,
+            ZERO_WINDOW_SIZE = 3,
+            ZERO_ACK_TIMEOUT = 4,
+            ZERO_MAX_RETRIES = 5,
+            WINDOW_TOO_LARGE = 6 // windowSize > MAX_WINDOW_SIZE
+        };
+        bool valid = false;
+        Reason reason = Reason::ZERO_TOTAL_CHUNKS;
+
+        static BeginSenderResult ok()
+        {
+            return {true, Reason::OK};
+        }
+        static BeginSenderResult invalid(Reason r)
+        {
+            return {false, r};
+        }
+    };
+
+    struct [[nodiscard]] BeginAckResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_AWAITING_BEGIN_ACK = 2
+        };
+        Decision decision = Decision::NOT_AWAITING_BEGIN_ACK;
+
+        static BeginAckResult ok()
+        {
+            return {Decision::OK};
+        }
+        static BeginAckResult wrongXferId()
+        {
+            return {Decision::WRONG_XFER_ID};
+        }
+        static BeginAckResult notAwaiting()
+        {
+            return {Decision::NOT_AWAITING_BEGIN_ACK};
+        }
+    };
+
+    // Result of BulkSender::nextChunkToSend. On SEND, `seq` is the seq
+    // to emit on the wire and the in-flight table now owns a slot for
+    // it. Other Decisions leave the sender state unchanged.
+    //
+    // Const-fields + private constructor mirror ChunkResult's
+    // discipline so a returned result cannot be mutated into an
+    // invalid combination (e.g. WINDOW_FULL with a real seq).
+    struct [[nodiscard]] SendResult
+    {
+        enum class Decision : uint8_t
+        {
+            SEND = 0,         // emit `seq` on the wire
+            WINDOW_FULL = 1,  // in-flight count == windowSize; ACK something first
+            ALL_SENT = 2,     // nextSeqToSend_ == totalChunks_; nothing left to send
+            NOT_STREAMING = 3 // status != STREAMING
+        };
+
+        const Decision decision;
+        const uint32_t seq;
+
+        static SendResult send(uint32_t s)
+        {
+            return SendResult(Decision::SEND, s);
+        }
+        static SendResult windowFull()
+        {
+            return SendResult(Decision::WINDOW_FULL, 0);
+        }
+        static SendResult allSent()
+        {
+            return SendResult(Decision::ALL_SENT, 0);
+        }
+        static SendResult notStreaming()
+        {
+            return SendResult(Decision::NOT_STREAMING, 0);
+        }
+
+    private:
+        SendResult(Decision d, uint32_t s) : decision(d), seq(s) {}
+    };
+
+    // Result of BulkSender::onDataAck. On OK, `newlyConfirmedCount` is
+    // the confirmed-watermark delta — the count of seqs newly within
+    // the confirmed range as of this ACK (cumulativeSeq + 1 minus the
+    // prior watermark). Useful as a proxy for "did room open up that
+    // wasn't there before?" for flow control, but NOT equal to the
+    // number of in-flight slots evicted: after a NAK clears inFlight_,
+    // a delayed pre-NAK ACK can arrive and report a positive watermark
+    // delta even though zero (or fewer than reported) in-flight slots
+    // were evicted in this call.
+    struct [[nodiscard]] AckResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_STREAMING = 2,
+            STALE = 3,       // cumulativeSeq <= highestConfirmedSeq_ (already covered)
+            OUT_OF_RANGE = 4 // cumulativeSeq is outside the valid range. Two cases,
+                             // both defensive against peer-controlled wire input:
+                             //   - cumulativeSeq >= totalChunks_: the seq doesn't
+                             //     exist in this transfer.
+                             //   - cumulativeSeq >= highWaterSentSeq_: the seq is
+                             //     in the transfer but we've never launched it.
+                             // See onDataAck's bounds-check rationale for the
+                             // failure mode each branch prevents.
+        };
+
+        const Decision decision;
+        const uint32_t newlyConfirmedCount;
+
+        static AckResult ok(uint32_t n)
+        {
+            return AckResult(Decision::OK, n);
+        }
+        static AckResult wrongXferId()
+        {
+            return AckResult(Decision::WRONG_XFER_ID, 0);
+        }
+        static AckResult notStreaming()
+        {
+            return AckResult(Decision::NOT_STREAMING, 0);
+        }
+        static AckResult stale()
+        {
+            return AckResult(Decision::STALE, 0);
+        }
+        static AckResult outOfRange()
+        {
+            return AckResult(Decision::OUT_OF_RANGE, 0);
+        }
+
+    private:
+        AckResult(Decision d, uint32_t n) : decision(d), newlyConfirmedCount(n) {}
+    };
+
+    // Result of BulkSender::onDataNak. On OK, `nextSeqToResend` is the
+    // seq that the next `nextChunkToSend` call will emit (mirrors the
+    // wire-level `nextExpectedSeq` field from OTA_DATA_NAK).
+    struct [[nodiscard]] NakResult
+    {
+        enum class Decision : uint8_t
+        {
+            OK = 0,
+            WRONG_XFER_ID = 1,
+            NOT_STREAMING = 2,
+            OUT_OF_RANGE = 3 // nextExpectedSeq is outside the valid range. Two
+                             // cases, both defensive against peer-controlled wire
+                             // input:
+                             //   - nextExpectedSeq >= totalChunks_: the seq is
+                             //     beyond the transfer.
+                             //   - nextExpectedSeq > nextSeqToSend_: the seq is
+                             //     ahead of where we've launched (NAK fast-forward
+                             //     past current send cursor; receiver cannot
+                             //     legitimately know about an unsent seq's gap).
+                             // See onDataNak's bounds-check rationale for the
+                             // asymmetry with onDataAck (NAK uses the current
+                             // cursor, not the high-water mark).
+        };
+
+        const Decision decision;
+        const uint32_t nextSeqToResend;
+
+        static NakResult ok(uint32_t s)
+        {
+            return NakResult(Decision::OK, s);
+        }
+        static NakResult wrongXferId()
+        {
+            return NakResult(Decision::WRONG_XFER_ID, 0);
+        }
+        static NakResult notStreaming()
+        {
+            return NakResult(Decision::NOT_STREAMING, 0);
+        }
+        static NakResult outOfRange()
+        {
+            return NakResult(Decision::OUT_OF_RANGE, 0);
+        }
+
+    private:
+        NakResult(Decision d, uint32_t s) : decision(d), nextSeqToResend(s) {}
+    };
+
+    // Result of BulkSender::tick. `retransmitSeqs[0..count-1]` are the
+    // seqs whose ackTimeout fired and need re-emission on the wire.
+    // `abandon` is set when any seq's retryCount would exceed
+    // maxRetries — at that point the sender transitions to ABANDONED
+    // and stops issuing further retransmit lists.
+    //
+    // Bounded by MAX_WINDOW_SIZE so this struct stays heap-free. A
+    // single tick can produce at most `windowSize` retransmissions
+    // (the in-flight table is the upper bound).
+    //
+    // Unlike the other result types, TickResult is structurally an
+    // output buffer (caller reads count then iterates retransmitSeqs).
+    // The const-fields + private-ctor pattern doesn't fit — count is
+    // written by tick() as it fills the array, then returned by value.
+    struct [[nodiscard]] TickResult
+    {
+        std::array<uint32_t, MAX_WINDOW_SIZE> retransmitSeqs;
+        uint8_t count = 0;
+        bool abandon = false;
+    };
+
+    // Result of BulkSender::onEndAck. Terminal transitions only —
+    // after DONE_OK or ABANDONED the sender stays in that state until
+    // reset(). WRONG_XFER_ID and NOT_STREAMING leave state unchanged.
+    struct [[nodiscard]] EndAckResult
+    {
+        enum class Decision : uint8_t
+        {
+            DONE_OK = 0,
+            ABANDONED = 1,
+            WRONG_XFER_ID = 2,
+            NOT_STREAMING = 3,
+            PREMATURE = 4 // onEndAck called before the implicit AWAITING_END_ACK
+                          // predicate is satisfied (all chunks sent AND all
+                          // confirmed). Caller error or buggy peer.
+        };
+
+        const Decision decision;
+
+        static EndAckResult doneOk()
+        {
+            return EndAckResult(Decision::DONE_OK);
+        }
+        static EndAckResult abandoned()
+        {
+            return EndAckResult(Decision::ABANDONED);
+        }
+        static EndAckResult wrongXferId()
+        {
+            return EndAckResult(Decision::WRONG_XFER_ID);
+        }
+        static EndAckResult notStreaming()
+        {
+            return EndAckResult(Decision::NOT_STREAMING);
+        }
+        static EndAckResult premature()
+        {
+            return EndAckResult(Decision::PREMATURE);
+        }
+
+    private:
+        explicit EndAckResult(Decision d) : decision(d) {}
+    };
+
+    // Sliding-window sender state machine for the firmware OTA path.
+    // Used by the master-side OtaForwarder (M3) to push chunks to a
+    // padawan and react to ACK/NAK responses. PURE — no I/O, no
+    // FreeRTOS, no ESP-IDF. The MIXED caller does the actual byte
+    // emission; this class tracks "what to send next" and "is the
+    // transfer healthy".
+    //
+    // State machine:
+    //   IDLE
+    //     → AWAITING_BEGIN_ACK (via begin())
+    //     → STREAMING (via onBeginAck OK)
+    //         ⮨ self (per-chunk send/ack/nak/tick cycle)
+    //         → DONE_OK (via onEndAck OK)
+    //         → ABANDONED (via onEndAck != OK, OR tick(abandon=true))
+    //
+    // AWAITING_END_ACK is intentionally NOT a distinct state — it's
+    // implicit ("STREAMING with all seqs confirmed and in-flight
+    // table empty"). The MIXED caller checks SendResult::ALL_SENT
+    // to know when it's time to send OTA_END.
+    class BulkSender
+    {
+    public:
+        enum class Status : uint8_t
+        {
+            IDLE = 0,
+            AWAITING_BEGIN_ACK = 1,
+            STREAMING = 2,
+            DONE_OK = 3,
+            ABANDONED = 4
+        };
+
+        [[nodiscard]] BeginSenderResult begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize,
+                                              uint8_t windowSize, uint32_t ackTimeoutMs, uint8_t maxRetries);
+        [[nodiscard]] BeginAckResult onBeginAck(uint8_t xferId);
+        // Precondition: `nowMs` must be monotonically non-decreasing across
+        // successive calls. M3's MIXED caller drives this from
+        // esp_timer_get_time()/1000. Non-monotonic clocks would corrupt the
+        // tick-driven timeout detection in M2.T4.
+        [[nodiscard]] SendResult nextChunkToSend(uint64_t nowMs);
+        [[nodiscard]] AckResult onDataAck(uint8_t xferId, uint32_t cumulativeSeq);
+        [[nodiscard]] NakResult onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason reason);
+        [[nodiscard]] TickResult tick(uint64_t nowMs);
+        [[nodiscard]] EndAckResult onEndAck(uint8_t xferId, OtaEndStatus status);
+        void reset();
+        Status status() const
+        {
+            return status_;
+        }
+
+    private:
+        uint8_t xferId_ = 0;
+        uint32_t totalChunks_ = 0;
+        uint16_t chunkSize_ = 0;
+        uint8_t windowSize_ = 0;
+        uint32_t ackTimeoutMs_ = 0;
+        uint8_t maxRetries_ = 0;
+
+        uint32_t nextSeqToSend_ = 0;
+        uint32_t highWaterSentSeq_ = 0; // max nextSeqToSend_ ever reached; never rewinds on NAK
+        uint32_t highestConfirmedSeq_ = 0;
+        bool anyConfirmed_ = false; // disambiguates "seq 0 confirmed" from "nothing confirmed yet"
+
+        std::array<InFlightEntry, MAX_WINDOW_SIZE> inFlight_{};
+
+        Status status_ = Status::IDLE;
     };
 } // namespace AstrOsBulkTransport

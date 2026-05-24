@@ -655,6 +655,66 @@ Existing 309+ native tests must continue to pass. M2 adds ~6–8 new
    in their scope before writing code; otherwise a one-line patch can ship
    between M2 and M3 as scaffolding.
 
+8. **M3 must emit `tick()` retransmits before pulling new chunks** (raised by M2
+   PR-toolkit third-pass silent-failure review, 2026-05-23). `BulkSender::tick`
+   appends timed-out seqs to `TickResult::retransmitSeqs[]` but does NOT update
+   `nextSeqToSend_`. If M3's OtaForwarder loop calls `nextChunkToSend()` without
+   first emitting bytes for each entry in `retransmitSeqs[]`, those retransmits
+   silently never go on the wire. M3 must structure the loop as: tick → emit
+   retransmits → drain via nextChunkToSend.
+
+9. **M3 must consult `status()` to disambiguate `tick(count=0, abandon=false)`**
+   (raised by M2 PR-toolkit third-pass silent-failure review). `tick()` returns
+   the same shape for "STREAMING, no timeouts fired" and "non-STREAMING (DONE_OK
+   / ABANDONED / IDLE)". M3 must read `status()` separately to detect terminal
+   states; treating tick alone as the state oracle would leave a buggy forwarder
+   ticking forever on a finished or abandoned transfer.
+
+10. **NAK below the previously-ACKed watermark — protocol contract decision**
+    (raised by M2 PR-toolkit third-pass silent-failure review). A NAK with
+    `nextExpectedSeq=0` after `cumulativeSeq=0` was ACKed today rewinds and
+    re-emits seq 0, which the receiver will then NAK as STALE — burning wire
+    traffic until the timeout-driven abandonment kicks in. M3 should decide:
+    (a) reject such NAKs at the wire layer as protocol violations, OR (b) add
+    a `NakResult::Decision::REWIND_BELOW_WATERMARK` enumerator and force M3 to
+    abort the transfer explicitly.
+
+11. **`newlyConfirmedCount` semantics blend explicit + implicit confirmations**
+    (raised by M2 PR-toolkit third-pass silent-failure review). After a NAK
+    advances `highestConfirmedSeq_` via `impliedCumulative`, a later ACK's
+    `newlyConfirmedCount` includes the implicitly-confirmed seqs in `prev`. M3
+    should treat this field as "slots freed in the sender's in-flight table",
+    not as "wire-level OTA_DATA_ACK frames received from the padawan."
+
+12. **M3 abandonment path must check `TickResult::abandon` independent of
+    `count`** (raised by M2 PR-toolkit third-pass silent-failure review). The
+    abandon path sets `count=0` and exits before processing remaining in-flight
+    slots — any seqs already pushed to `retransmitSeqs[]` in earlier loop
+    iterations are intentionally discarded. M3's tick consumer must check
+    `abandon` first, then iterate retransmitSeqs only if `!abandon`. Treating
+    `count > 0 || abandon` as the "something happened" signal would correctly
+    fire on both paths, but treating `abandon` as orthogonal to count would
+    miss the M3 contract.
+
+13. **M3 wire-layer must log `OUT_OF_RANGE` distinctly from other rejections**
+    (raised by M2 PR-toolkit fourth-pass silent-failure review, 2026-05-24).
+    `BulkSender::onDataAck`/`onDataNak` reject ahead-of-sender peer input with
+    `Decision::OUT_OF_RANGE`. M3 cannot pre-validate against `highWaterSentSeq_`
+    because it's a private field — but M3's wire-layer log MUST distinguish
+    OUT_OF_RANGE from WRONG_XFER_ID / NOT_STREAMING when emitting forensic
+    detail. Otherwise a "peer ACK ahead of sender" attack would log identically
+    to a benign wrong-xferId mistake.
+
+14. **M3 progress counter must distinguish retransmits from fresh sends**
+    (raised by M2 PR-toolkit fourth-pass silent-failure review). After a NAK
+    rewinds nextSeqToSend_, subsequent `nextChunkToSend()` calls increment
+    nextSeqToSend_ but do NOT bump highWaterSentSeq_ (the `>` guard stops the
+    bump until nextSeqToSend_ regains and exceeds the old peak). M3 progress
+    counters (for FW_PROGRESS emission in M5) must not assume "successful
+    SendResult::send ⇒ new wire bytes for a new seq" — half of those may be
+    retransmits. Track "bytes confirmed by receiver" via highestConfirmedSeq_
+    rather than "bytes pushed to peer" via cumulative SEND count.
+
 ## Related documents
 
 - `.docs/plans/20260514-1941-firmware-ota-esp-master-serial-receive-design.md`

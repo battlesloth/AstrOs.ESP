@@ -275,4 +275,437 @@ namespace AstrOsBulkTransport
         }
         return false; // unknown reason — conservative: preserve state
     }
+
+    // BulkSender::Status integer values are API-stable and consumed by
+    // switch statements in M3's OtaForwarder. Pin them so a future
+    // reorder breaks the build, not the dispatch.
+    static_assert(static_cast<uint8_t>(BulkSender::Status::IDLE) == 0);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::AWAITING_BEGIN_ACK) == 1);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::DONE_OK) == 3);
+    static_assert(static_cast<uint8_t>(BulkSender::Status::ABANDONED) == 4);
+
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::OK) == 0);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_TOTAL_CHUNKS) == 1);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_CHUNK_SIZE) == 2);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_WINDOW_SIZE) == 3);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_ACK_TIMEOUT) == 4);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::ZERO_MAX_RETRIES) == 5);
+    static_assert(static_cast<uint8_t>(BeginSenderResult::Reason::WINDOW_TOO_LARGE) == 6);
+
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(BeginAckResult::Decision::NOT_AWAITING_BEGIN_ACK) == 2);
+
+    static_assert(static_cast<uint8_t>(SendResult::Decision::SEND) == 0);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::WINDOW_FULL) == 1);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::ALL_SENT) == 2);
+    static_assert(static_cast<uint8_t>(SendResult::Decision::NOT_STREAMING) == 3);
+
+    // SendResult immutability: every public field must be const so a
+    // factory-produced result can't be mutated into an invalid combo
+    // (WINDOW_FULL with a meaningful seq, etc.). Mirrors ChunkResult's
+    // discipline.
+    static_assert(std::is_const_v<decltype(SendResult::decision)>);
+    static_assert(std::is_const_v<decltype(SendResult::seq)>);
+    static_assert(!std::is_copy_assignable_v<SendResult>);
+    static_assert(std::is_copy_constructible_v<SendResult>);
+
+    static_assert(static_cast<uint8_t>(AckResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::NOT_STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::STALE) == 3);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::OUT_OF_RANGE) == 4);
+
+    static_assert(static_cast<uint8_t>(NakResult::Decision::OK) == 0);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::WRONG_XFER_ID) == 1);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::NOT_STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::OUT_OF_RANGE) == 3);
+
+    static_assert(std::is_const_v<decltype(AckResult::decision)>);
+    static_assert(std::is_const_v<decltype(AckResult::newlyConfirmedCount)>);
+    static_assert(!std::is_copy_assignable_v<AckResult>);
+
+    static_assert(std::is_const_v<decltype(NakResult::decision)>);
+    static_assert(std::is_const_v<decltype(NakResult::nextSeqToResend)>);
+    static_assert(!std::is_copy_assignable_v<NakResult>);
+
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::DONE_OK) == 0);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::ABANDONED) == 1);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::WRONG_XFER_ID) == 2);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::NOT_STREAMING) == 3);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::PREMATURE) == 4);
+
+    static_assert(std::is_const_v<decltype(EndAckResult::decision)>);
+    static_assert(!std::is_copy_assignable_v<EndAckResult>);
+
+    BeginSenderResult BulkSender::begin(uint8_t xferId, uint32_t totalChunks, uint16_t chunkSize, uint8_t windowSize,
+                                        uint32_t ackTimeoutMs, uint8_t maxRetries)
+    {
+        // Reject protocol-illegal parameters in the order the contract
+        // freezes them. Each rejection leaves the sender in IDLE so a
+        // subsequent corrected begin() works cleanly. Order matters: a
+        // future reorder of these guards would change which Reason a
+        // caller sees for multi-fault input.
+        if (totalChunks == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_TOTAL_CHUNKS);
+        }
+        if (chunkSize == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_CHUNK_SIZE);
+        }
+        if (windowSize == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_WINDOW_SIZE);
+        }
+        if (windowSize > MAX_WINDOW_SIZE)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::WINDOW_TOO_LARGE);
+        }
+        if (ackTimeoutMs == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_ACK_TIMEOUT);
+        }
+        if (maxRetries == 0)
+        {
+            reset();
+            return BeginSenderResult::invalid(BeginSenderResult::Reason::ZERO_MAX_RETRIES);
+        }
+
+        xferId_ = xferId;
+        totalChunks_ = totalChunks;
+        chunkSize_ = chunkSize;
+        windowSize_ = windowSize;
+        ackTimeoutMs_ = ackTimeoutMs;
+        maxRetries_ = maxRetries;
+        nextSeqToSend_ = 0;
+        highWaterSentSeq_ = 0;
+        highestConfirmedSeq_ = 0;
+        anyConfirmed_ = false;
+        inFlight_.fill(InFlightEntry{});
+        status_ = Status::AWAITING_BEGIN_ACK;
+        return BeginSenderResult::ok();
+    }
+
+    BeginAckResult BulkSender::onBeginAck(uint8_t xferId)
+    {
+        if (status_ != Status::AWAITING_BEGIN_ACK)
+        {
+            return BeginAckResult::notAwaiting();
+        }
+        if (xferId != xferId_)
+        {
+            return BeginAckResult::wrongXferId();
+        }
+        status_ = Status::STREAMING;
+        return BeginAckResult::ok();
+    }
+
+    SendResult BulkSender::nextChunkToSend(uint64_t nowMs)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return SendResult::notStreaming();
+        }
+
+        // ALL_SENT check first: if every chunk has been launched into
+        // the in-flight table (or already evicted by ACK), there's
+        // nothing left to claim. The MIXED caller treats ALL_SENT
+        // (plus an empty in-flight table) as the signal to send OTA_END.
+        if (nextSeqToSend_ >= totalChunks_)
+        {
+            return SendResult::allSent();
+        }
+
+        // Count occupied slots. WINDOW_FULL fires when we've already
+        // launched `windowSize_` chunks that haven't been acked yet.
+        // O(MAX_WINDOW_SIZE) linear scan; trivial at 16 entries.
+        uint8_t occupied = 0;
+        for (const auto &e : inFlight_)
+        {
+            if (e.occupied)
+            {
+                occupied++;
+            }
+        }
+        if (occupied >= windowSize_)
+        {
+            return SendResult::windowFull();
+        }
+
+        // Claim the first unoccupied slot. The slot index is internal;
+        // callers identify chunks by seq, not slot.
+        for (auto &e : inFlight_)
+        {
+            if (!e.occupied)
+            {
+                e.seq = nextSeqToSend_;
+                e.sendTimestampMs = nowMs;
+                e.retryCount = 0;
+                e.occupied = true;
+                const uint32_t emittedSeq = nextSeqToSend_;
+                nextSeqToSend_++;
+                if (nextSeqToSend_ > highWaterSentSeq_)
+                {
+                    highWaterSentSeq_ = nextSeqToSend_;
+                }
+                return SendResult::send(emittedSeq);
+            }
+        }
+
+        // Unreachable: if `occupied < windowSize_ <= MAX_WINDOW_SIZE`,
+        // at least one slot is free. The early-return above already
+        // returned WINDOW_FULL in the full case.
+        assert(false && "BulkSender::nextChunkToSend: in-flight table full despite occupied < windowSize_");
+        std::abort();
+    }
+
+    AckResult BulkSender::onDataAck(uint8_t xferId, uint32_t cumulativeSeq)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return AckResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return AckResult::wrongXferId();
+        }
+        // Bounds check: cumulativeSeq must reference a seq we've actually sent.
+        // Defends the PURE state machine against peer-controlled wire input;
+        // the M3 wire parser can also gate this, but we don't want to rely on
+        // it. Two bounds:
+        //   - cumulativeSeq >= totalChunks_: the seq doesn't exist in this
+        //     transfer at all. Without this guard, UINT32_MAX would wrap the
+        //     newlyConfirmedCount arithmetic below (cumulativeSeq + 1 - prev)
+        //     to zero; any cumulativeSeq in [totalChunks_, UINT32_MAX-1] would
+        //     corrupt highestConfirmedSeq_ (causing later valid-range ACKs to
+        //     be falsely STALE).
+        //   - cumulativeSeq >= highWaterSentSeq_: the seq exists in the
+        //     transfer but we haven't launched it yet (highWaterSentSeq_ is
+        //     the max nextSeqToSend_ ever reached; it never rewinds on NAK).
+        //     The receiver cannot legitimately ACK what we haven't sent.
+        //     Without this guard, a peer ACK ahead of the sender (e.g.
+        //     cumulativeSeq=15 when highWaterSentSeq_=8) would evict all real
+        //     in-flight slots, advance the watermark past unsent seqs, and
+        //     stall the transfer (later legitimate ACKs for seqs 0..7 would
+        //     be falsely STALE; tick wouldn't time out evicted slots;
+        //     nextChunkToSend would happily emit seqs the receiver thinks
+        //     it's already received).
+        if (cumulativeSeq >= totalChunks_ || cumulativeSeq >= highWaterSentSeq_)
+        {
+            return AckResult::outOfRange();
+        }
+        // Stale check: cumulativeSeq must strictly advance from the
+        // previous high-water mark. The `anyConfirmed_` flag
+        // disambiguates "no ACK yet seen" (any cumulativeSeq is fresh)
+        // from "seq 0 already confirmed" (only cumulativeSeq > 0 is
+        // fresh).
+        if (anyConfirmed_ && cumulativeSeq <= highestConfirmedSeq_)
+        {
+            return AckResult::stale();
+        }
+
+        const uint32_t prev = anyConfirmed_ ? highestConfirmedSeq_ + 1 : 0;
+        highestConfirmedSeq_ = cumulativeSeq;
+        anyConfirmed_ = true;
+
+        // Evict all in-flight slots whose seq <= cumulativeSeq.
+        for (auto &e : inFlight_)
+        {
+            if (e.occupied && e.seq <= cumulativeSeq)
+            {
+                e = InFlightEntry{};
+            }
+        }
+
+        const uint32_t newlyConfirmed = cumulativeSeq + 1 - prev;
+        return AckResult::ok(newlyConfirmed);
+    }
+
+    NakResult BulkSender::onDataNak(uint8_t xferId, uint32_t nextExpectedSeq, NakReason /*reason*/)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return NakResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return NakResult::wrongXferId();
+        }
+        // Bounds check: nextExpectedSeq must reference a seq we've launched
+        // (or one-past — the degenerate no-op case). Defends against
+        // peer-controlled wire input. Two bounds:
+        //   - nextExpectedSeq >= totalChunks_: the seq doesn't exist in this
+        //     transfer. Without this guard, a peer NAK with nextExpectedSeq
+        //     >= totalChunks_ would advance nextSeqToSend_ past totalChunks_,
+        //     causing the sender to silently skip real chunks via the
+        //     ALL_SENT path on the next nextChunkToSend.
+        //   - nextExpectedSeq > nextSeqToSend_: the seq is within the
+        //     transfer but ahead of where we've launched. NAK semantics are
+        //     "rewind to here" — fast-forwarding is a wire-protocol
+        //     violation that would skip chunks we haven't even sent. Equality
+        //     (nextExpectedSeq == nextSeqToSend_) is the degenerate no-op
+        //     where the receiver asks for what we'd send next anyway —
+        //     accepted to be permissive on the boundary.
+        // Note on asymmetry with onDataAck: NAK uses the *current* nextSeqToSend_
+        // (which rewinds), not highWaterSentSeq_. NAK semantics are "rewind to
+        // here, resume from here" — the receiver may legitimately reference any
+        // seq up to where we'll send next, but never beyond it. A stale NAK from
+        // before a rewind referencing a seq > current nextSeqToSend_ is no longer
+        // applicable (the receiver's view of the wire was overtaken by our
+        // rewind + retransmit). Rejecting it is correct.
+        if (nextExpectedSeq >= totalChunks_ || nextExpectedSeq > nextSeqToSend_)
+        {
+            return NakResult::outOfRange();
+        }
+
+        // NAK semantics: nextExpectedSeq carries cumulative-ACK information —
+        // the receiver implicitly confirms seqs 0..nextExpectedSeq-1. Advance
+        // highestConfirmedSeq_ so a subsequent OTA_DATA_ACK at or below the
+        // implied cumulative seq is correctly rejected as STALE rather than
+        // being treated as new progress (which would corrupt the
+        // newlyConfirmedCount arithmetic). The protection against tick
+        // charging retries against already-accepted seqs comes from the
+        // unconditional inFlight_.fill() reset below — not from this
+        // watermark advance.
+        //
+        // nextExpectedSeq == 0 is the "receiver got nothing" case — no
+        // implicit confirmation; leave the watermark untouched.
+        if (nextExpectedSeq > 0)
+        {
+            const uint32_t impliedCumulative = nextExpectedSeq - 1;
+            if (!anyConfirmed_ || impliedCumulative > highestConfirmedSeq_)
+            {
+                highestConfirmedSeq_ = impliedCumulative;
+                anyConfirmed_ = true;
+            }
+        }
+
+        // Rewind: future sends start from nextExpectedSeq. Evict ALL in-flight
+        // slots — those below nextExpectedSeq are now implicitly confirmed
+        // (handled above) and those at or above need retransmission via
+        // subsequent nextChunkToSend calls. The MIXED layer doesn't need to
+        // know which slot belongs to which seq.
+        //
+        // Reason is currently unused by the state machine (the wire layer
+        // logs it in M3); it's in the signature so future reason-aware
+        // retry policies don't break the API.
+        nextSeqToSend_ = nextExpectedSeq;
+        inFlight_.fill(InFlightEntry{});
+        return NakResult::ok(nextExpectedSeq);
+    }
+
+    TickResult BulkSender::tick(uint64_t nowMs)
+    {
+        TickResult result{};
+        if (status_ != Status::STREAMING)
+        {
+            return result;
+        }
+
+        for (auto &e : inFlight_)
+        {
+            if (!e.occupied)
+            {
+                continue;
+            }
+            // Timeout fired iff (nowMs - sendTimestampMs) >= ackTimeoutMs_.
+            // Use subtraction in uint64_t so wrap-around isn't a concern at
+            // typical millisecond scales; if a future caller passes nowMs <
+            // sendTimestampMs (clock went backwards), the underflow wraps
+            // to a huge value and the timeout looks "fired" — acceptable
+            // failure mode (retransmits a slot that wasn't actually timed
+            // out). The MIXED caller is responsible for monotonic time.
+            if (nowMs - e.sendTimestampMs < ackTimeoutMs_)
+            {
+                continue;
+            }
+
+            // Retry count check: if incrementing would exceed maxRetries_,
+            // abandon the whole transfer immediately. The wire-level
+            // contract says "abort this padawan, move to next" — at the
+            // PURE layer we just transition to ABANDONED.
+            if (e.retryCount + 1 > maxRetries_)
+            {
+                status_ = Status::ABANDONED;
+                result.abandon = true;
+                result.count = 0;
+                return result;
+            }
+
+            e.retryCount++;
+            e.sendTimestampMs = nowMs;
+            result.retransmitSeqs[result.count] = e.seq;
+            result.count++;
+        }
+        return result;
+    }
+
+    EndAckResult BulkSender::onEndAck(uint8_t xferId, OtaEndStatus status)
+    {
+        if (status_ != Status::STREAMING)
+        {
+            return EndAckResult::notStreaming();
+        }
+        if (xferId != xferId_)
+        {
+            return EndAckResult::wrongXferId();
+        }
+        // Implicit AWAITING_END_ACK predicate: all chunks must be sent AND all
+        // confirmed before onEndAck is valid. The class doc says AWAITING_END_ACK
+        // "is implicit (STREAMING with all seqs confirmed and in-flight table
+        // empty)" — this guard enforces that implicit state. A misbehaving caller
+        // (sender side) or peer (receiver sending OTA_END_ACK too early) gets
+        // PREMATURE instead of a false DONE_OK on an incomplete transfer.
+        const bool allSent = (nextSeqToSend_ == totalChunks_);
+        const bool allConfirmed = (anyConfirmed_ && highestConfirmedSeq_ + 1 == totalChunks_);
+        if (!allSent || !allConfirmed)
+        {
+            return EndAckResult::premature();
+        }
+
+        // OK is the only success status; HASH_MISMATCH and WRITE_ERROR both
+        // abandon. The MIXED layer logs the specific status for diagnostics;
+        // the state machine only cares about success-vs-abandon. Switch (not
+        // if-chain) so a future extension of OtaEndStatus produces a -Wswitch
+        // diagnostic at this site rather than silently routing the new
+        // enumerator to ABANDONED.
+        switch (status)
+        {
+        case OtaEndStatus::OK:
+            status_ = Status::DONE_OK;
+            return EndAckResult::doneOk();
+        case OtaEndStatus::HASH_MISMATCH:
+        case OtaEndStatus::WRITE_ERROR:
+            status_ = Status::ABANDONED;
+            return EndAckResult::abandoned();
+        }
+        // Fallback: any future enumerator that lands in OtaEndStatus without
+        // an explicit case above is treated as abandon (safe default) but the
+        // -Wswitch diagnostic above will have already flagged the gap.
+        status_ = Status::ABANDONED;
+        return EndAckResult::abandoned();
+    }
+
+    void BulkSender::reset()
+    {
+        xferId_ = 0;
+        totalChunks_ = 0;
+        chunkSize_ = 0;
+        windowSize_ = 0;
+        ackTimeoutMs_ = 0;
+        maxRetries_ = 0;
+        nextSeqToSend_ = 0;
+        highWaterSentSeq_ = 0;
+        highestConfirmedSeq_ = 0;
+        anyConfirmed_ = false;
+        inFlight_.fill(InFlightEntry{});
+        status_ = Status::IDLE;
+    }
 } // namespace AstrOsBulkTransport
