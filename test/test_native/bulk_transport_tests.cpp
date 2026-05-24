@@ -1264,11 +1264,14 @@ TEST(BulkTransport, BulkSenderOnDataAckRejectsOutOfRangeCumulativeSeq)
 
 TEST(BulkTransport, BulkSenderOnDataAckRejectsAheadOfSenderCumulativeSeq)
 {
-    // Defensive: cumulativeSeq must be < nextSeqToSend_ (we can't legitimately
-    // receive an ACK for a chunk we haven't even sent). A peer ACK at a seq
-    // within the transfer range but ahead of where we've launched would
-    // corrupt the watermark and evict all real in-flight slots, stalling
-    // the transfer. PURE layer rejects with OUT_OF_RANGE.
+    // Defensive: cumulativeSeq must be < highWaterSentSeq_ (we can't legitimately
+    // receive an ACK for a chunk we haven't ever launched). Using the all-time
+    // high-water mark — not the current nextSeqToSend_ — keeps the bound tight
+    // across NAK-driven rewinds (see BulkSenderOnDataAckAcceptsInFlightAckInPostRewindGap
+    // for the rewind case the high-water mechanism was designed for). A peer ACK at
+    // a seq within the transfer range but ahead of where we've ever launched would
+    // corrupt the watermark and evict all real in-flight slots, stalling the
+    // transfer. PURE layer rejects with OUT_OF_RANGE.
     AstrOsBulkTransport::BulkSender s;
     ASSERT_TRUE(s.begin(7, /*totalChunks=*/100, 128, 8, 400, 3).valid);
     ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
@@ -1367,6 +1370,66 @@ TEST(BulkTransport, BulkSenderOnDataNakRejectsAheadOfSenderNextExpectedSeq)
     }
     auto rRewind = s3.onDataNak(7, /*nextExpectedSeq=*/3, AstrOsBulkTransport::NakReason::CRC);
     EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::OK, rRewind.decision);
+}
+
+TEST(BulkTransport, BulkSenderOnDataAckAcceptsInFlightAckInPostRewindGap)
+{
+    // This is the test the highWaterSentSeq_ mechanism exists for.
+    //
+    // Scenario:
+    //   1. Sender launches seqs 0..7 (nextSeqToSend_=8, highWaterSentSeq_=8).
+    //   2. Receiver NAKs at nextExpectedSeq=0 (e.g. session-wide reset request).
+    //      After processing: nextSeqToSend_=0, highWaterSentSeq_ STAYS 8.
+    //   3. Sender re-emits seqs 0..3 (nextSeqToSend_=4, highWaterSentSeq_ still 8).
+    //   4. A stale in-flight ACK from BEFORE the rewind arrives, claiming
+    //      cumulativeSeq=5 (seq 5 was sent in step 1, before being wiped from
+    //      the in-flight table by the step-2 NAK).
+    //   5. Expected: the ACK is ACCEPTED because 5 < highWaterSentSeq_=8.
+    //      If the bounds check used nextSeqToSend_=4 instead of high-water,
+    //      this would falsely return OUT_OF_RANGE.
+    //
+    // A future refactor that "simplifies" the ACK bound from
+    // `cumulativeSeq >= highWaterSentSeq_` back to `cumulativeSeq >= nextSeqToSend_`
+    // would break this test — that's the regression this guards against.
+    AstrOsBulkTransport::BulkSender s;
+    ASSERT_TRUE(s.begin(7, /*totalChunks=*/100, 128, 8, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
+
+    // Step 1: launch seqs 0..7.
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, s.nextChunkToSend(1000).decision);
+    }
+
+    // Step 2: NAK rewind to 0. nextSeqToSend_ drops to 0; highWaterSentSeq_
+    // stays at 8.
+    ASSERT_EQ(AstrOsBulkTransport::NakResult::Decision::OK,
+              s.onDataNak(7, /*nextExpectedSeq=*/0, AstrOsBulkTransport::NakReason::CRC).decision);
+
+    // Step 3: re-emit seqs 0..3. nextSeqToSend_ becomes 4; highWaterSentSeq_
+    // stays at 8 (monotonically non-decreasing).
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, s.nextChunkToSend(2000).decision);
+    }
+
+    // Step 4 + 5: stale in-flight ACK for cumulativeSeq=5 (was launched
+    // pre-NAK in step 1). 5 < highWaterSentSeq_=8, so the high-water bound
+    // accepts. The ACK is not stale either (anyConfirmed_=false initially
+    // because the NAK with nextExpectedSeq=0 did NOT advance the confirmed
+    // watermark — see BulkSenderOnDataNakWithZeroNextExpectedDoesNotAdvanceConfirmed).
+    auto r = s.onDataAck(7, /*cumulativeSeq=*/5);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, r.decision);
+
+    // Boundary sanity: cumulativeSeq=7 (highWaterSentSeq_-1) should also be
+    // OK. cumulativeSeq=8 (== highWaterSentSeq_) would be OUT_OF_RANGE on
+    // a fresh sender, but here the prior ACK at 5 advanced highestConfirmedSeq_,
+    // so 8 still trips the high-water bound (8 >= 8).
+    auto r2 = s.onDataAck(7, /*cumulativeSeq=*/7);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, r2.decision);
+
+    auto r3 = s.onDataAck(7, /*cumulativeSeq=*/8);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OUT_OF_RANGE, r3.decision);
 }
 
 TEST(BulkTransport, BulkSenderOnEndAckRejectsPrematureCall)

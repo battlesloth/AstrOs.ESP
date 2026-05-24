@@ -553,6 +553,13 @@ namespace AstrOsBulkTransport
         //     (nextExpectedSeq == nextSeqToSend_) is the degenerate no-op
         //     where the receiver asks for what we'd send next anyway —
         //     accepted to be permissive on the boundary.
+        // Note on asymmetry with onDataAck: NAK uses the *current* nextSeqToSend_
+        // (which rewinds), not highWaterSentSeq_. NAK semantics are "rewind to
+        // here, resume from here" — the receiver may legitimately reference any
+        // seq up to where we'll send next, but never beyond it. A stale NAK from
+        // before a rewind referencing a seq > current nextSeqToSend_ is no longer
+        // applicable (the receiver's view of the wire was overtaken by our
+        // rewind + retransmit). Rejecting it is correct.
         if (nextExpectedSeq >= totalChunks_ || nextExpectedSeq > nextSeqToSend_)
         {
             return NakResult::outOfRange();
