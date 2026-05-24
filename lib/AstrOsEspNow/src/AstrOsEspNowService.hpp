@@ -89,6 +89,16 @@ public:
     void sendBasicCommand(AstrOsPacketType type, std::string peer, std::string msgId, std::string msg);
     void sendBasicAckNak(std::string msgId, AstrOsPacketType type, std::string msg);
 
+    // Binary-frame TX for OTA. Builds the wire frame via
+    // messageService.generateOtaPacket(type, payload, len), unicasts to
+    // `mac` via esp_now_send. Returns ESP_OK on successful enqueue;
+    // ESP_ERR_INVALID_ARG if the builder rejected (wrong type / oversize);
+    // whatever esp_now_send returned otherwise.
+    //
+    // Memory ownership: matches the existing send-helper pattern (see
+    // verification in the implementation).
+    esp_err_t sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len);
+
     std::string getMac();
     std::string getName();
     std::string getFingerprint();

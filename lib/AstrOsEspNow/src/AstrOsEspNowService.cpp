@@ -843,6 +843,36 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
     free(destMac);
 }
 
+esp_err_t AstrOsEspNow::sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len)
+{
+    auto frames = this->messageService.generateOtaPacket(type, payload, len);
+    if (frames.empty())
+    {
+        ESP_LOGE(TAG, "sendOtaFrame: generateOtaPacket rejected type=%d len=%zu", (int)type, len);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (frames.size() != 1)
+    {
+        // generateOtaPacket is documented to return 0 or 1 entries (OTA
+        // frames always fit one ESP-NOW transmission). Defensive only.
+        ESP_LOGE(TAG, "sendOtaFrame: unexpected frame count %zu", frames.size());
+        for (auto &f : frames)
+        {
+            free(f.data);
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    astros_espnow_data_t frame = frames[0];
+    esp_err_t err = esp_now_send(mac, frame.data, frame.size);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "sendOtaFrame: esp_now_send returned %s for type=%d", esp_err_to_name(err), (int)type);
+    }
+    free(frame.data); // free regardless of err — esp_now copies into its own buffer
+    return err;
+}
+
 /// @brief checks whether the given MAC (canonical "AA:BB:..." string) is in the peer list.
 /// @param peerMac
 /// @return
