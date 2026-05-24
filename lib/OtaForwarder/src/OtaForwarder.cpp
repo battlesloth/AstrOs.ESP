@@ -392,8 +392,16 @@ void OtaForwarder::handleTick()
         uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
         std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
 
-        AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
-                                   sizeof(hdr) + expectedLen);
+        esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
+                                                   sizeof(hdr) + expectedLen);
+        if (err != ESP_OK)
+        {
+            // Mirror streamDrain's send-error log. Don't bail — the next
+            // tick will retransmit any unACKed seqs anyway; this keeps
+            // the bench log surfacing transient ESP-NOW failures so
+            // abandon-counter trips are diagnosable.
+            ESP_LOGW(TAG, "OTA_DATA retransmit seq=%u sendOtaFrame returned %s", seq, esp_err_to_name(err));
+        }
     }
 
     // After retransmits, drain new chunks until WINDOW_FULL / ALL_SENT.
