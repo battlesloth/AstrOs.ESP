@@ -27,6 +27,13 @@ extern "C"
     //
     // srcMac (ACK/NAK kinds) is a 6-byte inline buffer. Used for forensic
     // logging and to cross-check against the current padawan's MAC.
+    //
+    // Producers MUST zero-initialize the struct before populating it
+    // (e.g., `queue_ota_forwarder_msg_t m = {};` or `memset(&m, 0, sizeof(m))`)
+    // because freeOtaForwarderMsg unconditionally free()s transferId — even
+    // for kinds that don't own it. Zero-init guarantees that's free(NULL),
+    // which is safe; a stack-allocated struct with only `kind` + a union arm
+    // set would otherwise read uninitialized memory into free().
 
     typedef enum
     {
