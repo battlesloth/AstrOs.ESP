@@ -385,6 +385,7 @@ namespace AstrOsBulkTransport
         ackTimeoutMs_ = ackTimeoutMs;
         maxRetries_ = maxRetries;
         nextSeqToSend_ = 0;
+        highWaterSentSeq_ = 0;
         highestConfirmedSeq_ = 0;
         anyConfirmed_ = false;
         inFlight_.fill(InFlightEntry{});
@@ -450,6 +451,10 @@ namespace AstrOsBulkTransport
                 e.occupied = true;
                 const uint32_t emittedSeq = nextSeqToSend_;
                 nextSeqToSend_++;
+                if (nextSeqToSend_ > highWaterSentSeq_)
+                {
+                    highWaterSentSeq_ = nextSeqToSend_;
+                }
                 return SendResult::send(emittedSeq);
             }
         }
@@ -471,21 +476,28 @@ namespace AstrOsBulkTransport
         {
             return AckResult::wrongXferId();
         }
-        // Bounds check: cumulativeSeq must reference a real seq in this transfer.
+        // Bounds check: cumulativeSeq must reference a seq we've actually sent.
         // Defends the PURE state machine against peer-controlled wire input;
-        // the M3 wire parser can also gate this, but we don't want to rely on it.
-        //
-        // Without this guard:
-        //   - cumulativeSeq = UINT32_MAX: the newlyConfirmedCount arithmetic
-        //     below (cumulativeSeq + 1 - prev) wraps unsigned, returning a
-        //     falsely-zero count to the MIXED layer.
-        //   - cumulativeSeq in [totalChunks_, UINT32_MAX-1]: highestConfirmedSeq_
-        //     overshoots the transfer range. The PREMATURE guard in onEndAck
-        //     would still catch a subsequent OK transition (allConfirmed check
-        //     would fail since highestConfirmedSeq_ + 1 != totalChunks_), but
-        //     the watermark is left corrupted for any later valid-range ACK to
-        //     be falsely rejected as STALE.
-        if (cumulativeSeq >= totalChunks_)
+        // the M3 wire parser can also gate this, but we don't want to rely on
+        // it. Two bounds:
+        //   - cumulativeSeq >= totalChunks_: the seq doesn't exist in this
+        //     transfer at all. Without this guard, UINT32_MAX would wrap the
+        //     newlyConfirmedCount arithmetic below (cumulativeSeq + 1 - prev)
+        //     to zero; any cumulativeSeq in [totalChunks_, UINT32_MAX-1] would
+        //     corrupt highestConfirmedSeq_ (causing later valid-range ACKs to
+        //     be falsely STALE).
+        //   - cumulativeSeq >= highWaterSentSeq_: the seq exists in the
+        //     transfer but we haven't launched it yet (highWaterSentSeq_ is
+        //     the max nextSeqToSend_ ever reached; it never rewinds on NAK).
+        //     The receiver cannot legitimately ACK what we haven't sent.
+        //     Without this guard, a peer ACK ahead of the sender (e.g.
+        //     cumulativeSeq=15 when highWaterSentSeq_=8) would evict all real
+        //     in-flight slots, advance the watermark past unsent seqs, and
+        //     stall the transfer (later legitimate ACKs for seqs 0..7 would
+        //     be falsely STALE; tick wouldn't time out evicted slots;
+        //     nextChunkToSend would happily emit seqs the receiver thinks
+        //     it's already received).
+        if (cumulativeSeq >= totalChunks_ || cumulativeSeq >= highWaterSentSeq_)
         {
             return AckResult::outOfRange();
         }
@@ -526,11 +538,22 @@ namespace AstrOsBulkTransport
         {
             return NakResult::wrongXferId();
         }
-        // Bounds check: nextExpectedSeq must reference a seq in this transfer.
-        // Defends against peer-controlled wire input that would advance
-        // nextSeqToSend_ past totalChunks_, causing the sender to silently
-        // skip real chunks via the ALL_SENT path on the next nextChunkToSend.
-        if (nextExpectedSeq >= totalChunks_)
+        // Bounds check: nextExpectedSeq must reference a seq we've launched
+        // (or one-past — the degenerate no-op case). Defends against
+        // peer-controlled wire input. Two bounds:
+        //   - nextExpectedSeq >= totalChunks_: the seq doesn't exist in this
+        //     transfer. Without this guard, a peer NAK with nextExpectedSeq
+        //     >= totalChunks_ would advance nextSeqToSend_ past totalChunks_,
+        //     causing the sender to silently skip real chunks via the
+        //     ALL_SENT path on the next nextChunkToSend.
+        //   - nextExpectedSeq > nextSeqToSend_: the seq is within the
+        //     transfer but ahead of where we've launched. NAK semantics are
+        //     "rewind to here" — fast-forwarding is a wire-protocol
+        //     violation that would skip chunks we haven't even sent. Equality
+        //     (nextExpectedSeq == nextSeqToSend_) is the degenerate no-op
+        //     where the receiver asks for what we'd send next anyway —
+        //     accepted to be permissive on the boundary.
+        if (nextExpectedSeq >= totalChunks_ || nextExpectedSeq > nextSeqToSend_)
         {
             return NakResult::outOfRange();
         }
@@ -672,6 +695,7 @@ namespace AstrOsBulkTransport
         ackTimeoutMs_ = 0;
         maxRetries_ = 0;
         nextSeqToSend_ = 0;
+        highWaterSentSeq_ = 0;
         highestConfirmedSeq_ = 0;
         anyConfirmed_ = false;
         inFlight_.fill(InFlightEntry{});

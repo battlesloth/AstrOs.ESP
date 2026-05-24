@@ -620,6 +620,7 @@ namespace AstrOsBulkTransport
         uint8_t maxRetries_ = 0;
 
         uint32_t nextSeqToSend_ = 0;
+        uint32_t highWaterSentSeq_ = 0; // max nextSeqToSend_ ever reached; never rewinds on NAK
         uint32_t highestConfirmedSeq_ = 0;
         bool anyConfirmed_ = false; // disambiguates "seq 0 confirmed" from "nothing confirmed yet"
 
