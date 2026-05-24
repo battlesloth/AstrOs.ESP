@@ -49,6 +49,15 @@ private:
 
     AstrOsEspNowMessageService messageService;
 
+    QueueHandle_t otaForwarderQueue_ = nullptr;
+
+    // Routes an OTA ACK/NAK packet (master-side receive) into
+    // otaForwarderQueue_. Parses via M1's parseOta* free functions to
+    // distinguish wire-malformed (rec.valid == false) from
+    // wire-valid-but-queue-full failures. Returns true on success;
+    // false logs and drops.
+    bool routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet);
+
     void getMasterMac(uint8_t *macAddress);
     void updateMasterMac(uint8_t *macAddress);
 
@@ -100,6 +109,11 @@ public:
     // The internal frame buffer is freed unconditionally after esp_now_send
     // returns (Pattern A immediate-free, matching the other send-helpers).
     esp_err_t sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len);
+
+    // OTA ACK/NAK arrivals on the master are routed into this queue.
+    // Called from main.cpp during init; before this is set, OTA arrivals
+    // on master fall through to ESP_LOGW + drop (same path as padawan).
+    void setOtaForwarderQueue(QueueHandle_t q);
 
     std::string getMac();
     std::string getName();

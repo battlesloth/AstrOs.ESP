@@ -307,6 +307,7 @@ void init(void)
     // otaReceiverTask drains.
     AstrOs_OtaReceiver.Init(otaQueue);
     AstrOs_OtaForwarder.Init(otaForwarderQueue);
+    AstrOs_EspNow.setOtaForwarderQueue(otaForwarderQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));

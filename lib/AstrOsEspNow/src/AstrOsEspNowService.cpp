@@ -3,6 +3,8 @@
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
+#include <OtaForwarderQueueMessage.h>
+#include <cstring>
 
 #include <algorithm>
 #include <array>
@@ -390,11 +392,138 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
         return this->handlePollAck(packet);
+    case AstrOsPacketType::OTA_BEGIN_ACK:
+    case AstrOsPacketType::OTA_BEGIN_NAK:
+    case AstrOsPacketType::OTA_DATA_ACK:
+    case AstrOsPacketType::OTA_DATA_NAK:
+    case AstrOsPacketType::OTA_END_ACK:
+        return this->routeOtaAckNakToForwarder(src, packet);
+    case AstrOsPacketType::OTA_BEGIN:
+    case AstrOsPacketType::OTA_DATA:
+    case AstrOsPacketType::OTA_END:
+        // Master receives these only by mistake (wrong role per the
+        // protocol contract); padawan receives them legitimately but the
+        // M4 OtaWriter queue isn't wired yet. Drop with a warning so
+        // misrouted-master cases are distinguishable from missing-M4.
+        ESP_LOGW(TAG, "OTA master→padawan packet type=%d received on %s; dropping (M4 not wired)",
+                 (int)packet.packetType, this->isMasterNode ? "master" : "padawan");
+        return true;
     default:
         ESP_LOGE(TAG, "Dispatcher returned UnsupportedType for packet type %d but no residual handler exists",
                  (int)packet.packetType);
         return false;
     }
+}
+
+void AstrOsEspNow::setOtaForwarderQueue(QueueHandle_t q)
+{
+    this->otaForwarderQueue_ = q;
+}
+
+bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet)
+{
+    if (!this->isMasterNode)
+    {
+        ESP_LOGW(TAG, "OTA padawan→master packet type=%d received on padawan; dropping", (int)packet.packetType);
+        return true;
+    }
+    if (this->otaForwarderQueue_ == nullptr)
+    {
+        ESP_LOGW(TAG, "OTA ACK/NAK type=%d received before otaForwarderQueue_ set; dropping", (int)packet.packetType);
+        return true;
+    }
+
+    queue_ota_forwarder_msg_t m{};
+
+    switch (packet.packetType)
+    {
+    case AstrOsPacketType::OTA_BEGIN_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBeginAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_BEGIN_ACK;
+        std::memcpy(m.begin_ack.srcMac, src, 6);
+        m.begin_ack.xferId = rec.xferId;
+        break;
+    }
+    case AstrOsPacketType::OTA_BEGIN_NAK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBeginNak(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN_NAK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_BEGIN_NAK;
+        std::memcpy(m.begin_nak.srcMac, src, 6);
+        m.begin_nak.xferId = rec.xferId;
+        m.begin_nak.reason = static_cast<uint8_t>(rec.reason);
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaDataAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_DATA_ACK;
+        std::memcpy(m.data_ack.srcMac, src, 6);
+        m.data_ack.xferId = rec.xferId;
+        m.data_ack.highestContiguousSeq = rec.highestContiguousSeq;
+        m.data_ack.nextExpectedSeq = rec.nextExpectedSeq;
+        m.data_ack.windowRemaining = rec.windowRemaining;
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA_NAK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaDataNak(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA_NAK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_DATA_NAK;
+        std::memcpy(m.data_nak.srcMac, src, 6);
+        m.data_nak.xferId = rec.xferId;
+        m.data_nak.highestContiguousSeq = rec.highestContiguousSeq;
+        m.data_nak.nextExpectedSeq = rec.nextExpectedSeq;
+        m.data_nak.windowRemaining = rec.windowRemaining;
+        m.data_nak.reason = static_cast<uint8_t>(rec.reason);
+        break;
+    }
+    case AstrOsPacketType::OTA_END_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaEndAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_END_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_END_ACK;
+        std::memcpy(m.end_ack.srcMac, src, 6);
+        m.end_ack.xferId = rec.xferId;
+        m.end_ack.status = static_cast<uint8_t>(rec.status);
+        std::memcpy(m.end_ack.sha256Computed, rec.sha256Computed, 32);
+        break;
+    }
+    default:
+        ESP_LOGE(TAG, "routeOtaAckNakToForwarder: unexpected packet type %d", (int)packet.packetType);
+        return false;
+    }
+
+    if (xQueueSend(this->otaForwarderQueue_, &m, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "otaForwarderQueue full; dropping OTA ACK/NAK type=%d", (int)packet.packetType);
+        freeOtaForwarderMsg(&m);
+        return false;
+    }
+    return true;
 }
 
 /*******************************************
