@@ -520,7 +520,11 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
     {
         ESP_LOGE(TAG, "otaForwarderQueue full; dropping OTA ACK/NAK type=%d", (int)packet.packetType);
         freeOtaForwarderMsg(&m);
-        return false;
+        // Return true (handled, dropped intentionally) so handleMessage's
+        // residual switch doesn't log "no residual handler exists" on top
+        // of the queue-full ESP_LOGE. The dropped ACK/NAK will be
+        // reconstructed by the next padawan retransmit or tick.
+        return true;
     }
     return true;
 }

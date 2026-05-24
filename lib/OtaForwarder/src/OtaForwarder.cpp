@@ -111,17 +111,62 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
     freeOtaForwarderMsg(&msg);
 }
 
-// Task 7b fills in the data/end-side bodies. Begin-side flow is implemented below.
+namespace
+{
+    // Splits an RS (0x1E) separated controller-id list. Empty fields are
+    // dropped. Tolerates a nullptr input.
+    std::vector<std::string> splitOrderList(const char *raw)
+    {
+        std::vector<std::string> out;
+        if (raw == nullptr)
+        {
+            return out;
+        }
+        std::string s = raw;
+        size_t start = 0;
+        while (start < s.size())
+        {
+            size_t end = s.find('\x1E', start);
+            std::string id = (end == std::string::npos) ? s.substr(start) : s.substr(start, end - start);
+            if (!id.empty())
+            {
+                out.push_back(id);
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return out;
+    }
+} // namespace
+
 void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
 {
     if (phase_ != Phase::IDLE)
     {
         ESP_LOGW(TAG, "handleDeployBegin while not IDLE (phase=%d); rejecting", (int)phase_);
-        // Reply all-FAILED so the JobLock releases on the server side.
+        // JobLock expects one result per controller-id in the order list;
+        // synthesizing a single "unknown" row would leave the server state
+        // inconsistent for a multi-target deploy. Parse the order list so
+        // each target gets a matching FAILED("forwarder_busy") row.
+        auto rejectedIds = splitOrderList(msg.deploy.orderList);
         std::vector<astros_fw_deploy_result_t> failures;
-        // Don't have an order list parsed yet; best we can do is one
-        // synthetic FAILED so the server sees something terminal.
-        failures.push_back({"unknown", "FAILED", "", "forwarder_busy"});
+        failures.reserve(rejectedIds.empty() ? 1 : rejectedIds.size());
+        if (rejectedIds.empty())
+        {
+            // No order list parsed (malformed or null) — fall back to a single
+            // synthetic row so the server still sees something terminal.
+            failures.push_back({"unknown", "FAILED", "", "forwarder_busy"});
+        }
+        else
+        {
+            for (const auto &id : rejectedIds)
+            {
+                failures.push_back({id, "FAILED", "", "forwarder_busy"});
+            }
+        }
         std::string msgId = msg.deploy.msgId ? msg.deploy.msgId : "";
         std::string xferId = msg.transferId ? msg.transferId : "";
         AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, xferId, failures);
@@ -131,27 +176,7 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
     deployMsgId_ = msg.deploy.msgId ? msg.deploy.msgId : "";
     deployTransferId_ = msg.transferId ? msg.transferId : "";
 
-    // Parse the RS-separated order list into a vector.
-    orderList_.clear();
-    if (msg.deploy.orderList != nullptr)
-    {
-        std::string raw = msg.deploy.orderList;
-        size_t start = 0;
-        while (start < raw.size())
-        {
-            size_t end = raw.find('\x1E', start);
-            std::string id = (end == std::string::npos) ? raw.substr(start) : raw.substr(start, end - start);
-            if (!id.empty())
-            {
-                orderList_.push_back(id);
-            }
-            if (end == std::string::npos)
-            {
-                break;
-            }
-            start = end + 1;
-        }
-    }
+    orderList_ = splitOrderList(msg.deploy.orderList);
 
     if (orderList_.empty())
     {
@@ -754,7 +779,14 @@ void OtaForwarder::beginAckTimerCb(void *arg)
     m.kind = OTA_FWD_BEGIN_NAK;
     m.begin_nak.xferId = 0xFF;
     m.begin_nak.reason = 0xFF;
-    xQueueSend(self->otaForwarderQueue_, &m, 0);
+    // A dropped tick is benign (idempotent), but a dropped deadline-bearing
+    // sentinel leaves the forwarder hung in AWAITING_BEGIN_ACK forever. Log
+    // loudly so a stuck transfer is diagnosable from bench logs even though
+    // the underlying queue-backlog cause is upstream.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "beginAckTimerCb: otaForwarderQueue full; sentinel dropped — forwarder may hang");
+    }
 }
 
 void OtaForwarder::endAckTimerCb(void *arg)
@@ -769,7 +801,12 @@ void OtaForwarder::endAckTimerCb(void *arg)
     m.kind = OTA_FWD_END_ACK;
     m.end_ack.xferId = 0xFF;
     m.end_ack.status = 0xFF;
-    xQueueSend(self->otaForwarderQueue_, &m, 0);
+    // See beginAckTimerCb: dropped deadline sentinels leave the forwarder
+    // hung. Log on drop so the hang is diagnosable.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "endAckTimerCb: otaForwarderQueue full; sentinel dropped — forwarder may hang");
+    }
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

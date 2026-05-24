@@ -282,7 +282,11 @@ void init(void)
         abort();
     }
 
-    otaForwarderQueue = xQueueCreate(16, sizeof(queue_ota_forwarder_msg_t));
+    // Sized to absorb the SHA-compute window: startNextPadawan hashes the
+    // whole firmware (~1-3 s on a 1.5 MB file), during which tick (50 ms
+    // cadence) + ACK/NAK arrivals can back up. 64 slots give ~3 s of tick
+    // headroom and prevent the deadline-sentinel queue-full hang.
+    otaForwarderQueue = xQueueCreate(64, sizeof(queue_ota_forwarder_msg_t));
     if (otaForwarderQueue == NULL)
     {
         ESP_LOGE(TAG, "Failed to create otaForwarderQueue — aborting init");
