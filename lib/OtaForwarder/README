@@ -1,0 +1,16 @@
+# OtaForwarder (MIXED)
+
+Master-only OTA forwarder for the mesh-forward feature (PR set 1 of the
+firmware OTA decomposition). Consumes:
+
+- `lib_native/AstrOsBulkTransport::BulkSender` (PURE state machine, M2)
+- `lib_native/AstrOsMessaging` wire-format builders/parsers (M1)
+- `lib/OtaReceiver::getLastFirmwarePath()` to locate the staged firmware
+- `lib/AstrOsEspNow::sendOtaFrame()` for binary-frame TX
+
+Runs on a dedicated FreeRTOS task pinned to core 1. Master only — gated
+on `isMasterNode` at task spawn in `src/main.cpp`.
+
+See `.docs/plans/20260524-0912-firmware-ota-mesh-forward-m3-ota-forwarder.md`
+for the M3 plan; `.docs/plans/20260523-1023-firmware-ota-mesh-forward-design.md`
+for the cross-milestone design.

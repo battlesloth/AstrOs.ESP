@@ -1,0 +1,5 @@
+{
+    "name": "OtaForwarder",
+    "version": "0.0.1",
+    "description": "Master-side OTA forwarder: drives ESP-NOW chunk transfer to padawans"
+}

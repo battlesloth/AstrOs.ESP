@@ -27,6 +27,7 @@
 #include <GpioModule.hpp>
 #include <I2cMaster.hpp>
 #include <I2cModule.hpp>
+#include <OtaForwarder.hpp>
 #include <OtaQueueMessage.h>
 #include <OtaReceiver.hpp>
 #include <SerialModule.hpp>
@@ -78,6 +79,7 @@ static QueueHandle_t i2cQueue;
 static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
 static QueueHandle_t otaQueue;
+static QueueHandle_t otaForwarderQueue;
 
 /**********************************
  * UART
@@ -182,6 +184,7 @@ void i2cQueueTask(void *arg);
 void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 void otaReceiverTask(void *arg);
+void otaForwarderTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -223,6 +226,16 @@ void app_main()
     {
         ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
         abort();
+    }
+
+    if (isMasterNode.load())
+    {
+        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 4096, (void *)otaForwarderQueue, 6, NULL,
+                                    1) != pdPASS)
+        {
+            ESP_LOGE(TAG, "Failed to create otaForwarderTask — aborting init");
+            return;
+        }
     }
 
     // core 0
@@ -269,6 +282,13 @@ void init(void)
         abort();
     }
 
+    otaForwarderQueue = xQueueCreate(16, sizeof(queue_ota_forwarder_msg_t));
+    if (otaForwarderQueue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create otaForwarderQueue — aborting init");
+        return;
+    }
+
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
     {
@@ -286,6 +306,7 @@ void init(void)
     // The receiver's watchdog posts abort messages into the same queue
     // otaReceiverTask drains.
     AstrOs_OtaReceiver.Init(otaQueue);
+    AstrOs_OtaForwarder.Init(otaForwarderQueue);
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
@@ -432,7 +453,7 @@ static void pollingTimerCallback(void *arg)
     // during OTA — bench measurements show the contention with otaReceiverTask
     // and astrosRxTask stalls inbound FW_CHUNK for 1-3 s per 2-s poll cycle,
     // halving wire throughput. Heartbeat log + display timeout stay unconditional.
-    const bool otaActive = AstrOs_OtaReceiver.isActive();
+    const bool otaActive = AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isActive();
 
     // only send register requests during discovery mode
     if (master && !discovery && !otaActive)
@@ -1466,6 +1487,26 @@ void otaReceiverTask(void *arg)
             }
 
             AstrOs_OtaReceiver.process(msg);
+        }
+    }
+}
+
+void otaForwarderTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_forwarder_msg_t msg;
+
+    while (true)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY) == pdTRUE)
+        {
+            AstrOs_OtaForwarder.process(msg);
+        }
+
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        if (hwm < 500)
+        {
+            ESP_LOGW(TAG, "OTA Forwarder Stack HWM: %u", (unsigned int)hwm);
         }
     }
 }
