@@ -416,9 +416,14 @@ namespace AstrOsBulkTransport
     };
 
     // Result of BulkSender::onDataAck. On OK, `newlyConfirmedCount` is
-    // the number of in-flight slots freed by this cumulative ACK —
-    // useful when the caller wants to know "did room open up that
-    // wasn't there before?" without diffing internal state.
+    // the confirmed-watermark delta — the count of seqs newly within
+    // the confirmed range as of this ACK (cumulativeSeq + 1 minus the
+    // prior watermark). Useful as a proxy for "did room open up that
+    // wasn't there before?" for flow control, but NOT equal to the
+    // number of in-flight slots evicted: after a NAK clears inFlight_,
+    // a delayed pre-NAK ACK can arrive and report a positive watermark
+    // delta even though zero (or fewer than reported) in-flight slots
+    // were evicted in this call.
     struct [[nodiscard]] AckResult
     {
         enum class Decision : uint8_t
@@ -427,9 +432,14 @@ namespace AstrOsBulkTransport
             WRONG_XFER_ID = 1,
             NOT_STREAMING = 2,
             STALE = 3,       // cumulativeSeq <= highestConfirmedSeq_ (already covered)
-            OUT_OF_RANGE = 4 // cumulativeSeq >= totalChunks_ (defensive against
-                             // peer-controlled wire input; the seq doesn't exist
-                             // in this transfer, so the ACK is wire-protocol-malformed)
+            OUT_OF_RANGE = 4 // cumulativeSeq is outside the valid range. Two cases,
+                             // both defensive against peer-controlled wire input:
+                             //   - cumulativeSeq >= totalChunks_: the seq doesn't
+                             //     exist in this transfer.
+                             //   - cumulativeSeq >= highWaterSentSeq_: the seq is
+                             //     in the transfer but we've never launched it.
+                             // See onDataAck's bounds-check rationale for the
+                             // failure mode each branch prevents.
         };
 
         const Decision decision;
@@ -470,8 +480,18 @@ namespace AstrOsBulkTransport
             OK = 0,
             WRONG_XFER_ID = 1,
             NOT_STREAMING = 2,
-            OUT_OF_RANGE = 3 // nextExpectedSeq >= totalChunks_ (defensive; receiver
-                             // asking for a seq beyond the transfer is malformed)
+            OUT_OF_RANGE = 3 // nextExpectedSeq is outside the valid range. Two
+                             // cases, both defensive against peer-controlled wire
+                             // input:
+                             //   - nextExpectedSeq >= totalChunks_: the seq is
+                             //     beyond the transfer.
+                             //   - nextExpectedSeq > nextSeqToSend_: the seq is
+                             //     ahead of where we've launched (NAK fast-forward
+                             //     past current send cursor; receiver cannot
+                             //     legitimately know about an unsent seq's gap).
+                             // See onDataNak's bounds-check rationale for the
+                             // asymmetry with onDataAck (NAK uses the current
+                             // cursor, not the high-water mark).
         };
 
         const Decision decision;
