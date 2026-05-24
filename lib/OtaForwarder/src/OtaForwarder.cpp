@@ -11,10 +11,34 @@ namespace
 OtaForwarder AstrOs_OtaForwarder;
 
 OtaForwarder::OtaForwarder() = default;
-OtaForwarder::~OtaForwarder() = default;
+
+OtaForwarder::~OtaForwarder()
+{
+    // Singleton is process-lifetime, so this typically doesn't run. Guards
+    // against the timer-leak hazard if a test fixture ever instantiates a
+    // non-singleton OtaForwarder; mirrors the April 2026 code review's
+    // concern about latent leaks in similar singletons.
+    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_})
+    {
+        if (*t)
+        {
+            esp_timer_stop(*t);
+            esp_timer_delete(*t);
+            *t = nullptr;
+        }
+    }
+}
 
 void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
 {
+    // Idempotent: Init is called exactly once during boot today, but a guard
+    // prevents the timer-handle leak that would otherwise occur on a
+    // hypothetical double-Init.
+    if (tickTimer_ != nullptr)
+    {
+        return;
+    }
+
     otaForwarderQueue_ = otaForwarderQueue;
 
     // Create timers eagerly; start/stop them per transfer.

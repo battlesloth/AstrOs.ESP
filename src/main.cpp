@@ -286,7 +286,7 @@ void init(void)
     if (otaForwarderQueue == NULL)
     {
         ESP_LOGE(TAG, "Failed to create otaForwarderQueue — aborting init");
-        return;
+        abort();
     }
 
     maestroModulesMutex = xSemaphoreCreateMutex();
