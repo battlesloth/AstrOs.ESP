@@ -597,7 +597,9 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
         {
-            failures.push_back({id, "FAILED", "", "io_error"});
+            // Back-pressure, not I/O — match OtaForwarder's "forwarder_busy"
+            // sibling so an operator scanning logs doesn't hunt SD/flash.
+            failures.push_back({id, "FAILED", "", "forwarder_queue_full"});
         }
         this->sendFwDeployDone(msgId, rec.transferId, failures);
     }

@@ -498,6 +498,20 @@ void OtaForwarder::startNextPadawan()
     firmwareTotalSize_ = static_cast<uint32_t>(st.st_size);
     firmwareTotalChunks_ = (firmwareTotalSize_ + kChunkSize - 1) / kChunkSize;
 
+    // Zero-byte firmware would surface as the generic "begin_rejected"
+    // from BulkSender::begin(totalChunks=0); catch it here so the
+    // operator sees the actual cause.
+    if (firmwareTotalChunks_ == 0)
+    {
+        ESP_LOGE(TAG, "Firmware file is empty (size=0); abandoning padawan");
+        std::fclose(firmwareFile_);
+        firmwareFile_ = nullptr;
+        results_.push_back({currentControllerId_, "FAILED", "", "firmware_empty"});
+        nextOrderIdx_++;
+        startNextPadawan();
+        return;
+    }
+
     // Compute SHA-256 of the file (forensic-grade defensive check; the
     // padawan also verifies). One-shot at file open; ships in the
     // OTA_BEGIN frame's sha256Expected field. 512 B buffer keeps stack
@@ -509,6 +523,20 @@ void OtaForwarder::startNextPadawan()
     while (size_t r = std::fread(buf, 1, sizeof(buf), firmwareFile_))
     {
         AstrOsSha256_update(&shaCtx, buf, r);
+    }
+    // fread returning 0 ambiguates EOF vs error; check ferror so a short
+    // SD read doesn't ship a SHA computed over a truncated file (which
+    // the padawan would report as HASH_MISMATCH for what is really a
+    // master-side I/O fault).
+    if (std::ferror(firmwareFile_))
+    {
+        ESP_LOGE(TAG, "fread error during SHA pass; abandoning padawan");
+        std::fclose(firmwareFile_);
+        firmwareFile_ = nullptr;
+        results_.push_back({currentControllerId_, "FAILED", "", "firmware_read_failed"});
+        nextOrderIdx_++;
+        startNextPadawan();
+        return;
     }
     AstrOsSha256_final(&shaCtx, firmwareSha256_);
 
@@ -622,8 +650,19 @@ void OtaForwarder::emitOtaBeginFrame()
                                                reinterpret_cast<const uint8_t *>(&payload), sizeof(payload));
     if (err != ESP_OK)
     {
-        ESP_LOGW(TAG, "OTA_BEGIN sendOtaFrame returned %s; the BEGIN_ACK timeout will catch this",
-                 esp_err_to_name(err));
+        ESP_LOGW(TAG, "OTA_BEGIN sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
+        // Don't wait the full 2 s — the padawan never saw the frame, so
+        // the deadline-bearing path is best resolved now. Reuses the
+        // existing timer-callback sentinel so transition stays on
+        // otaForwarderTask via process().
+        queue_ota_forwarder_msg_t m{};
+        m.kind = OTA_FWD_BEGIN_NAK;
+        m.begin_nak.xferId = 0xFF;
+        m.begin_nak.reason = 0xFF;
+        if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "emitOtaBeginFrame: queue full posting timeout sentinel — fall back to timer");
+        }
     }
 }
 void OtaForwarder::emitOtaEndFrame()
@@ -637,7 +676,17 @@ void OtaForwarder::emitOtaEndFrame()
                                                reinterpret_cast<const uint8_t *>(&payload), sizeof(payload));
     if (err != ESP_OK)
     {
-        ESP_LOGW(TAG, "OTA_END sendOtaFrame returned %s; endAckTimer will catch the timeout", esp_err_to_name(err));
+        ESP_LOGW(TAG, "OTA_END sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
+        // Same fail-fast pattern as emitOtaBeginFrame; the padawan never
+        // saw the frame so the 5 s wait is wasted.
+        queue_ota_forwarder_msg_t m{};
+        m.kind = OTA_FWD_END_ACK;
+        m.end_ack.xferId = 0xFF;
+        m.end_ack.status = 0xFF;
+        if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "emitOtaEndFrame: queue full posting timeout sentinel — fall back to timer");
+        }
     }
 }
 void OtaForwarder::streamDrain(uint64_t nowMs)
