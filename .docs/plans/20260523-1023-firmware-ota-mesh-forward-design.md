@@ -696,6 +696,25 @@ Existing 309+ native tests must continue to pass. M2 adds ~6–8 new
     fire on both paths, but treating `abandon` as orthogonal to count would
     miss the M3 contract.
 
+13. **M3 wire-layer must log `OUT_OF_RANGE` distinctly from other rejections**
+    (raised by M2 PR-toolkit fourth-pass silent-failure review, 2026-05-24).
+    `BulkSender::onDataAck`/`onDataNak` reject ahead-of-sender peer input with
+    `Decision::OUT_OF_RANGE`. M3 cannot pre-validate against `highWaterSentSeq_`
+    because it's a private field — but M3's wire-layer log MUST distinguish
+    OUT_OF_RANGE from WRONG_XFER_ID / NOT_STREAMING when emitting forensic
+    detail. Otherwise a "peer ACK ahead of sender" attack would log identically
+    to a benign wrong-xferId mistake.
+
+14. **M3 progress counter must distinguish retransmits from fresh sends**
+    (raised by M2 PR-toolkit fourth-pass silent-failure review). After a NAK
+    rewinds nextSeqToSend_, subsequent `nextChunkToSend()` calls increment
+    nextSeqToSend_ but do NOT bump highWaterSentSeq_ (the `>` guard stops the
+    bump until nextSeqToSend_ regains and exceeds the old peak). M3 progress
+    counters (for FW_PROGRESS emission in M5) must not assume "successful
+    SendResult::send ⇒ new wire bytes for a new seq" — half of those may be
+    retransmits. Track "bytes confirmed by receiver" via highestConfirmedSeq_
+    rather than "bytes pushed to peer" via cumulative SEND count.
+
 ## Related documents
 
 - `.docs/plans/20260514-1941-firmware-ota-esp-master-serial-receive-design.md`
