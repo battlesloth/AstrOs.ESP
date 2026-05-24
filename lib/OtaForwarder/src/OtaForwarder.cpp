@@ -150,9 +150,14 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
 
     if (orderList_.empty())
     {
-        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
-        std::vector<astros_fw_deploy_result_t> empty;
-        AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, empty);
+        // Mirror the busy-reject fallback: an empty order list with no
+        // targets would otherwise ship a 0-row FW_DEPLOY_DONE which the
+        // server's JobLock could interpret as silent success. One
+        // synthetic FAILED row gives the operator something terminal.
+        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN orderList empty — emitting synthetic FAILED row");
+        std::vector<astros_fw_deploy_result_t> failures;
+        failures.push_back({"unknown", "FAILED", "", "empty_order_list"});
+        AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, failures);
         return;
     }
 
@@ -181,8 +186,8 @@ void OtaForwarder::handleBeginAck(queue_ota_forwarder_msg_t &msg)
     }
     beginAckTimerStop();
     phase_ = Phase::STREAMING;
-    // Streaming drains will happen on the next tick (Task 7b's handleTick
-    // body covers this). For now, kick once to start the flow.
+    // Kick a tick immediately so the first send window starts draining
+    // before the 50 ms tick cadence catches up.
     handleTick();
 }
 void OtaForwarder::handleBeginNak(queue_ota_forwarder_msg_t &msg)
@@ -405,10 +410,10 @@ void OtaForwarder::handleTick()
 
 void OtaForwarder::startNextPadawan()
 {
-    // Skip the "master" entry (PR set 2 will self-flash); record as FAILED.
+    // Skip the "master" entry — self-flash isn't wired yet; record FAILED.
     while (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "master")
     {
-        results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "not_implemented_in_pr_set_1"});
+        results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "master_self_flash_pending"});
         nextOrderIdx_++;
     }
 
@@ -585,15 +590,29 @@ void OtaForwarder::completeCurrentPadawan()
 void OtaForwarder::emitDeployDoneAndReset()
 {
     ESP_LOGI(TAG, "FW_DEPLOY_DONE: %zu targets, transferId=%s", results_.size(), deployTransferId_.c_str());
-    // Convert OtaForwarderPadawanResult rows to astros_fw_deploy_result_t.
-    // The two types mirror each other field-for-field; the conversion is
-    // mechanical, kept here so the forwarder's internal type can evolve
-    // independently of the serial-message struct.
+    // Mechanical PadawanResult -> astros_fw_deploy_result_t conversion at
+    // the wire boundary; the two types deliberately mirror each other so
+    // the forwarder's internal type can evolve independently.
     std::vector<astros_fw_deploy_result_t> wire;
     wire.reserve(results_.size());
     for (const auto &r : results_)
     {
-        const char *statusStr = (r.status == PadawanStatus::OK) ? "OK" : "FAILED";
+        const char *statusStr;
+        switch (r.status)
+        {
+        case PadawanStatus::OK:
+            statusStr = "OK";
+            break;
+        case PadawanStatus::FAILED:
+            statusStr = "FAILED";
+            break;
+        default:
+            // If a new enum value lands and emitDeployDoneAndReset isn't
+            // updated, fail loudly rather than silently mapping to FAILED.
+            ESP_LOGE(TAG, "Unmapped PadawanStatus=%d; defaulting to FAILED", (int)r.status);
+            statusStr = "FAILED";
+            break;
+        }
         wire.push_back({r.controllerId, statusStr, r.finalVersion, r.errorOrEmpty});
     }
     AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, wire);
@@ -605,6 +624,33 @@ void OtaForwarder::emitDeployDoneAndReset()
     results_.clear();
     phase_ = Phase::IDLE;
     active_.store(false);
+}
+
+bool OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site)
+{
+    queue_ota_forwarder_msg_t m{};
+    m.kind = kind;
+    // Sentinel bytes are wire-impossible (xferId is 1..ESPNOW_PEER_LIMIT=10).
+    switch (kind)
+    {
+    case OTA_FWD_BEGIN_NAK:
+        m.begin_nak.xferId = 0xFF;
+        m.begin_nak.reason = 0xFF;
+        break;
+    case OTA_FWD_END_ACK:
+        m.end_ack.xferId = 0xFF;
+        m.end_ack.status = 0xFF;
+        break;
+    default:
+        ESP_LOGE(TAG, "postTimeoutSentinel: unsupported kind %d from %s", (int)kind, site);
+        return false;
+    }
+    if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "%s: otaForwarderQueue full; sentinel dropped — forwarder may hang", site);
+        return false;
+    }
+    return true;
 }
 
 void OtaForwarder::emitOtaBeginFrame()
@@ -622,18 +668,8 @@ void OtaForwarder::emitOtaBeginFrame()
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "OTA_BEGIN sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
-        // Don't wait the full 2 s — the padawan never saw the frame, so
-        // the deadline-bearing path is best resolved now. Reuses the
-        // existing timer-callback sentinel so transition stays on
-        // otaForwarderTask via process().
-        queue_ota_forwarder_msg_t m{};
-        m.kind = OTA_FWD_BEGIN_NAK;
-        m.begin_nak.xferId = 0xFF;
-        m.begin_nak.reason = 0xFF;
-        if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
-        {
-            ESP_LOGE(TAG, "emitOtaBeginFrame: queue full posting timeout sentinel — fall back to timer");
-        }
+        // Padawan never saw the frame — fail fast instead of waiting 2 s.
+        postTimeoutSentinel(OTA_FWD_BEGIN_NAK, "emitOtaBeginFrame");
     }
 }
 void OtaForwarder::emitOtaEndFrame()
@@ -648,16 +684,8 @@ void OtaForwarder::emitOtaEndFrame()
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "OTA_END sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
-        // Same fail-fast pattern as emitOtaBeginFrame; the padawan never
-        // saw the frame so the 5 s wait is wasted.
-        queue_ota_forwarder_msg_t m{};
-        m.kind = OTA_FWD_END_ACK;
-        m.end_ack.xferId = 0xFF;
-        m.end_ack.status = 0xFF;
-        if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
-        {
-            ESP_LOGE(TAG, "emitOtaEndFrame: queue full posting timeout sentinel — fall back to timer");
-        }
+        // Padawan never saw the frame — fail fast instead of waiting 5 s.
+        postTimeoutSentinel(OTA_FWD_END_ACK, "emitOtaEndFrame");
     }
 }
 void OtaForwarder::streamDrain(uint64_t nowMs)
@@ -791,22 +819,7 @@ void OtaForwarder::beginAckTimerCb(void *arg)
     {
         return;
     }
-    // Post a synthetic NAK-equivalent so all state transitions happen on
-    // otaForwarderTask. Sentinel xferId=0xFF + reason=0xFF distinguishes
-    // the timeout from a real wire NAK; handleBeginNak detects it and
-    // routes to abortCurrentPadawan("begin_ack_timeout").
-    queue_ota_forwarder_msg_t m{};
-    m.kind = OTA_FWD_BEGIN_NAK;
-    m.begin_nak.xferId = 0xFF;
-    m.begin_nak.reason = 0xFF;
-    // A dropped tick is benign (idempotent), but a dropped deadline-bearing
-    // sentinel leaves the forwarder hung in AWAITING_BEGIN_ACK forever. Log
-    // loudly so a stuck transfer is diagnosable from bench logs even though
-    // the underlying queue-backlog cause is upstream.
-    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
-    {
-        ESP_LOGE(TAG, "beginAckTimerCb: otaForwarderQueue full; sentinel dropped — forwarder may hang");
-    }
+    self->postTimeoutSentinel(OTA_FWD_BEGIN_NAK, "beginAckTimerCb");
 }
 
 void OtaForwarder::endAckTimerCb(void *arg)
@@ -816,17 +829,7 @@ void OtaForwarder::endAckTimerCb(void *arg)
     {
         return;
     }
-    // Synthetic OTA_FWD_END_ACK with sentinel xferId=0xFF + status=0xFF.
-    queue_ota_forwarder_msg_t m{};
-    m.kind = OTA_FWD_END_ACK;
-    m.end_ack.xferId = 0xFF;
-    m.end_ack.status = 0xFF;
-    // See beginAckTimerCb: dropped deadline sentinels leave the forwarder
-    // hung. Log on drop so the hang is diagnosable.
-    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
-    {
-        ESP_LOGE(TAG, "endAckTimerCb: otaForwarderQueue full; sentinel dropped — forwarder may hang");
-    }
+    self->postTimeoutSentinel(OTA_FWD_END_ACK, "endAckTimerCb");
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

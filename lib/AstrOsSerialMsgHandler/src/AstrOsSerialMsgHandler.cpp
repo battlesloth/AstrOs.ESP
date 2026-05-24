@@ -584,7 +584,7 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
         {
-            failures.push_back({id, "FAILED", "", "io_error"});
+            failures.push_back({id, "FAILED", "", "alloc_failed"});
         }
         this->sendFwDeployDone(msgId, rec.transferId, failures);
         return;

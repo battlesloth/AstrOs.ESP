@@ -195,15 +195,10 @@ public:
         out[2 * len] = '\0';
     }
 
-    /// @brief Parse an RS (0x1E) separated controller-id list into a vector
-    ///        of non-empty IDs. Empty fields (leading, trailing, or
-    ///        consecutive separators) are dropped — every entry returned is
-    ///        a non-empty controller-id. Tolerates a nullptr `raw`.
-    ///
-    /// Distinct from splitString because order-list semantics require empty
-    /// fields to be dropped (an empty controller-id would be invalid as a
-    /// deploy target); splitString preserves middle empties.
-    static std::vector<std::string> parseOrderList(const char *raw)
+    /// @brief Parse an RS (0x1E) separated controller-id list. Empty fields
+    ///        are dropped (unlike splitString which preserves middles).
+    ///        Tolerates a nullptr.
+    [[nodiscard]] static std::vector<std::string> parseOrderList(const char *raw)
     {
         std::vector<std::string> out;
         if (raw == nullptr)

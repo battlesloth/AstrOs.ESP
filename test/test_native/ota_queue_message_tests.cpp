@@ -97,7 +97,8 @@ TEST(OtaQueueMessage, FreeOtaMsgBeginArmNullsAllOwnedPointers)
     m.kind = OTA_MSG_BEGIN;
     m.transferId = dupCStr("7");
     m.begin.msgId = dupCStr("mid-b");
-    m.begin.targetList = dupCStr("controllerA\x1econtrollerB");
+    m.begin.targetList = dupCStr("controllerA\x1E"
+                                 "controllerB"); // string-literal concat avoids hex-escape greediness
 
     freeOtaMsg(&m);
 

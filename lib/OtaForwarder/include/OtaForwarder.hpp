@@ -59,17 +59,14 @@ private:
         DONE = 5              // order list exhausted; FW_DEPLOY_DONE emitted
     };
 
-    // Two terminal outcomes per padawan transfer. Stringified at the
-    // wire boundary in emitDeployDoneAndReset; the wire form remains
-    // "OK"/"FAILED" to match astros_fw_deploy_result_t.
+    // Stringified to OK/FAILED at the wire boundary. If you add a value
+    // here, update emitDeployDoneAndReset's switch.
     enum class PadawanStatus : uint8_t
     {
         OK,
         FAILED,
     };
 
-    // One row in results_; mirrors astros_fw_deploy_result_t's shape but
-    // keeps status as the type-checked enum until the wire-stringify step.
     struct PadawanResult
     {
         std::string controllerId;
@@ -97,6 +94,13 @@ private:
     void emitOtaBeginFrame();
     void emitOtaEndFrame();
     void streamDrain(uint64_t nowMs); // for each SEND from BulkSender::nextChunkToSend, read+emit OTA_DATA
+
+    // Posts a synthetic timeout sentinel (xferId=0xFF, reason/status=0xFF)
+    // of the given kind into otaForwarderQueue_. Used by both the timer
+    // callbacks (deadline fired) and the emit-frame helpers (fail-fast on
+    // send failure). `site` is a short tag for the queue-full ESP_LOGE so
+    // bench logs identify which caller dropped its sentinel.
+    bool postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site);
 
     // Tick timer (50 ms cadence — fast enough to keep latency under the
     // 400 ms ack timeout while keeping CPU overhead negligible). Started

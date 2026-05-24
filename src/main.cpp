@@ -282,10 +282,9 @@ void init(void)
         abort();
     }
 
-    // Sized to absorb the SHA-compute window: startNextPadawan hashes the
-    // whole firmware (~1-3 s on a 1.5 MB file), during which tick (50 ms
-    // cadence) + ACK/NAK arrivals can back up. 64 slots give ~3 s of tick
-    // headroom and prevent the deadline-sentinel queue-full hang.
+    // Sized for the SHA-compute window: a ~1.5 MB firmware hashes in ~3 s
+    // during which ~60 ticks (50 ms cadence) back up. 64 slots absorb it
+    // without dropping the deadline-bearing sentinels.
     otaForwarderQueue = xQueueCreate(64, sizeof(queue_ota_forwarder_msg_t));
     if (otaForwarderQueue == NULL)
     {
