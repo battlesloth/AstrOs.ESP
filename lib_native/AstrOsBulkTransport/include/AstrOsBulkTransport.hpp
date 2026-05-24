@@ -426,7 +426,10 @@ namespace AstrOsBulkTransport
             OK = 0,
             WRONG_XFER_ID = 1,
             NOT_STREAMING = 2,
-            STALE = 3 // cumulativeSeq <= highestConfirmedSeq_ (already covered)
+            STALE = 3,       // cumulativeSeq <= highestConfirmedSeq_ (already covered)
+            OUT_OF_RANGE = 4 // cumulativeSeq >= totalChunks_ (defensive against
+                             // peer-controlled wire input; the seq doesn't exist
+                             // in this transfer, so the ACK is wire-protocol-malformed)
         };
 
         const Decision decision;
@@ -448,6 +451,10 @@ namespace AstrOsBulkTransport
         {
             return AckResult(Decision::STALE, 0);
         }
+        static AckResult outOfRange()
+        {
+            return AckResult(Decision::OUT_OF_RANGE, 0);
+        }
 
     private:
         AckResult(Decision d, uint32_t n) : decision(d), newlyConfirmedCount(n) {}
@@ -462,7 +469,9 @@ namespace AstrOsBulkTransport
         {
             OK = 0,
             WRONG_XFER_ID = 1,
-            NOT_STREAMING = 2
+            NOT_STREAMING = 2,
+            OUT_OF_RANGE = 3 // nextExpectedSeq >= totalChunks_ (defensive; receiver
+                             // asking for a seq beyond the transfer is malformed)
         };
 
         const Decision decision;
@@ -479,6 +488,10 @@ namespace AstrOsBulkTransport
         static NakResult notStreaming()
         {
             return NakResult(Decision::NOT_STREAMING, 0);
+        }
+        static NakResult outOfRange()
+        {
+            return NakResult(Decision::OUT_OF_RANGE, 0);
         }
 
     private:
@@ -516,7 +529,10 @@ namespace AstrOsBulkTransport
             DONE_OK = 0,
             ABANDONED = 1,
             WRONG_XFER_ID = 2,
-            NOT_STREAMING = 3
+            NOT_STREAMING = 3,
+            PREMATURE = 4 // onEndAck called before the implicit AWAITING_END_ACK
+                          // predicate is satisfied (all chunks sent AND all
+                          // confirmed). Caller error or buggy peer.
         };
 
         const Decision decision;
@@ -536,6 +552,10 @@ namespace AstrOsBulkTransport
         static EndAckResult notStreaming()
         {
             return EndAckResult(Decision::NOT_STREAMING);
+        }
+        static EndAckResult premature()
+        {
+            return EndAckResult(Decision::PREMATURE);
         }
 
     private:

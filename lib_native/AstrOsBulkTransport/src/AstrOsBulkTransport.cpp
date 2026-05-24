@@ -315,10 +315,12 @@ namespace AstrOsBulkTransport
     static_assert(static_cast<uint8_t>(AckResult::Decision::WRONG_XFER_ID) == 1);
     static_assert(static_cast<uint8_t>(AckResult::Decision::NOT_STREAMING) == 2);
     static_assert(static_cast<uint8_t>(AckResult::Decision::STALE) == 3);
+    static_assert(static_cast<uint8_t>(AckResult::Decision::OUT_OF_RANGE) == 4);
 
     static_assert(static_cast<uint8_t>(NakResult::Decision::OK) == 0);
     static_assert(static_cast<uint8_t>(NakResult::Decision::WRONG_XFER_ID) == 1);
     static_assert(static_cast<uint8_t>(NakResult::Decision::NOT_STREAMING) == 2);
+    static_assert(static_cast<uint8_t>(NakResult::Decision::OUT_OF_RANGE) == 3);
 
     static_assert(std::is_const_v<decltype(AckResult::decision)>);
     static_assert(std::is_const_v<decltype(AckResult::newlyConfirmedCount)>);
@@ -332,6 +334,7 @@ namespace AstrOsBulkTransport
     static_assert(static_cast<uint8_t>(EndAckResult::Decision::ABANDONED) == 1);
     static_assert(static_cast<uint8_t>(EndAckResult::Decision::WRONG_XFER_ID) == 2);
     static_assert(static_cast<uint8_t>(EndAckResult::Decision::NOT_STREAMING) == 3);
+    static_assert(static_cast<uint8_t>(EndAckResult::Decision::PREMATURE) == 4);
 
     static_assert(std::is_const_v<decltype(EndAckResult::decision)>);
     static_assert(!std::is_copy_assignable_v<EndAckResult>);
@@ -468,6 +471,16 @@ namespace AstrOsBulkTransport
         {
             return AckResult::wrongXferId();
         }
+        // Bounds check: cumulativeSeq must reference a real seq in this transfer.
+        // Defends the PURE state machine against peer-controlled wire input. The
+        // M3 wire parser can also gate this, but we don't want to rely on it.
+        // UINT32_MAX would underflow the newlyConfirmedCount arithmetic below;
+        // cumulativeSeq >= totalChunks_ would let highestConfirmedSeq_ overshoot,
+        // causing false DONE_OK on a subsequent onEndAck(OK).
+        if (cumulativeSeq >= totalChunks_)
+        {
+            return AckResult::outOfRange();
+        }
         // Stale check: cumulativeSeq must strictly advance from the
         // previous high-water mark. The `anyConfirmed_` flag
         // disambiguates "no ACK yet seen" (any cumulativeSeq is fresh)
@@ -504,6 +517,14 @@ namespace AstrOsBulkTransport
         if (xferId != xferId_)
         {
             return NakResult::wrongXferId();
+        }
+        // Bounds check: nextExpectedSeq must reference a seq in this transfer.
+        // Defends against peer-controlled wire input that would advance
+        // nextSeqToSend_ past totalChunks_, causing the sender to silently
+        // skip real chunks via the ALL_SENT path on the next nextChunkToSend.
+        if (nextExpectedSeq >= totalChunks_)
+        {
+            return NakResult::outOfRange();
         }
 
         // NAK semantics: nextExpectedSeq carries cumulative-ACK information —
@@ -597,6 +618,18 @@ namespace AstrOsBulkTransport
         if (xferId != xferId_)
         {
             return EndAckResult::wrongXferId();
+        }
+        // Implicit AWAITING_END_ACK predicate: all chunks must be sent AND all
+        // confirmed before onEndAck is valid. The class doc says AWAITING_END_ACK
+        // "is implicit (STREAMING with all seqs confirmed and in-flight table
+        // empty)" — this guard enforces that implicit state. A misbehaving caller
+        // (sender side) or peer (receiver sending OTA_END_ACK too early) gets
+        // PREMATURE instead of a false DONE_OK on an incomplete transfer.
+        const bool allSent = (nextSeqToSend_ == totalChunks_);
+        const bool allConfirmed = (anyConfirmed_ && highestConfirmedSeq_ + 1 == totalChunks_);
+        if (!allSent || !allConfirmed)
+        {
+            return EndAckResult::premature();
         }
 
         // OK is the only success status; HASH_MISMATCH and WRITE_ERROR both
