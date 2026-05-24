@@ -4,7 +4,6 @@
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
 #include <OtaForwarderQueueMessage.h>
-#include <cstring>
 
 #include <algorithm>
 #include <array>
@@ -446,7 +445,7 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             return false;
         }
         m.kind = OTA_FWD_BEGIN_ACK;
-        std::memcpy(m.begin_ack.srcMac, src, 6);
+        memcpy(m.begin_ack.srcMac, src, ESP_NOW_ETH_ALEN);
         m.begin_ack.xferId = rec.xferId;
         break;
     }
@@ -459,7 +458,7 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             return false;
         }
         m.kind = OTA_FWD_BEGIN_NAK;
-        std::memcpy(m.begin_nak.srcMac, src, 6);
+        memcpy(m.begin_nak.srcMac, src, ESP_NOW_ETH_ALEN);
         m.begin_nak.xferId = rec.xferId;
         m.begin_nak.reason = static_cast<uint8_t>(rec.reason);
         break;
@@ -473,7 +472,7 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             return false;
         }
         m.kind = OTA_FWD_DATA_ACK;
-        std::memcpy(m.data_ack.srcMac, src, 6);
+        memcpy(m.data_ack.srcMac, src, ESP_NOW_ETH_ALEN);
         m.data_ack.xferId = rec.xferId;
         m.data_ack.highestContiguousSeq = rec.highestContiguousSeq;
         m.data_ack.nextExpectedSeq = rec.nextExpectedSeq;
@@ -489,7 +488,7 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             return false;
         }
         m.kind = OTA_FWD_DATA_NAK;
-        std::memcpy(m.data_nak.srcMac, src, 6);
+        memcpy(m.data_nak.srcMac, src, ESP_NOW_ETH_ALEN);
         m.data_nak.xferId = rec.xferId;
         m.data_nak.highestContiguousSeq = rec.highestContiguousSeq;
         m.data_nak.nextExpectedSeq = rec.nextExpectedSeq;
@@ -506,10 +505,10 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             return false;
         }
         m.kind = OTA_FWD_END_ACK;
-        std::memcpy(m.end_ack.srcMac, src, 6);
+        memcpy(m.end_ack.srcMac, src, ESP_NOW_ETH_ALEN);
         m.end_ack.xferId = rec.xferId;
         m.end_ack.status = static_cast<uint8_t>(rec.status);
-        std::memcpy(m.end_ack.sha256Computed, rec.sha256Computed, 32);
+        memcpy(m.end_ack.sha256Computed, rec.sha256Computed, 32);
         break;
     }
     default:
