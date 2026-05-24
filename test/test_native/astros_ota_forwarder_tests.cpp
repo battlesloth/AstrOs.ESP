@@ -101,7 +101,9 @@ TEST(OtaForwarderMsg, FreeDeployBeginReleasesAllOwnedPointers)
     m.kind = OTA_FWD_DEPLOY_BEGIN;
     m.transferId = strdup("xfer-7");
     m.deploy.msgId = strdup("msg-3");
-    m.deploy.orderList = strdup("body\x1Ecore\x1Edome");
+    m.deploy.orderList = strdup("body\x1E"
+                                "core\x1E"
+                                "dome"); // string-literal concat avoids hex-escape greediness
 
     ASSERT_NE(nullptr, m.transferId);
     ASSERT_NE(nullptr, m.deploy.msgId);

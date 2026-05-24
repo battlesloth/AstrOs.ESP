@@ -4,6 +4,7 @@
 #include <AstrOsMessaging.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsSha256.h>
+#include <AstrOsStringUtils.hpp>
 #include <OtaReceiver.hpp>
 #include <esp_log.h>
 
@@ -111,37 +112,6 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
     freeOtaForwarderMsg(&msg);
 }
 
-namespace
-{
-    // Splits an RS (0x1E) separated controller-id list. Empty fields are
-    // dropped. Tolerates a nullptr input.
-    std::vector<std::string> splitOrderList(const char *raw)
-    {
-        std::vector<std::string> out;
-        if (raw == nullptr)
-        {
-            return out;
-        }
-        std::string s = raw;
-        size_t start = 0;
-        while (start < s.size())
-        {
-            size_t end = s.find('\x1E', start);
-            std::string id = (end == std::string::npos) ? s.substr(start) : s.substr(start, end - start);
-            if (!id.empty())
-            {
-                out.push_back(id);
-            }
-            if (end == std::string::npos)
-            {
-                break;
-            }
-            start = end + 1;
-        }
-        return out;
-    }
-} // namespace
-
 void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
 {
     if (phase_ != Phase::IDLE)
@@ -151,7 +121,7 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
         // synthesizing a single "unknown" row would leave the server state
         // inconsistent for a multi-target deploy. Parse the order list so
         // each target gets a matching FAILED("forwarder_busy") row.
-        auto rejectedIds = splitOrderList(msg.deploy.orderList);
+        auto rejectedIds = AstrOsStringUtils::parseOrderList(msg.deploy.orderList);
         std::vector<astros_fw_deploy_result_t> failures;
         failures.reserve(rejectedIds.empty() ? 1 : rejectedIds.size());
         if (rejectedIds.empty())
@@ -176,7 +146,7 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
     deployMsgId_ = msg.deploy.msgId ? msg.deploy.msgId : "";
     deployTransferId_ = msg.transferId ? msg.transferId : "";
 
-    orderList_ = splitOrderList(msg.deploy.orderList);
+    orderList_ = AstrOsStringUtils::parseOrderList(msg.deploy.orderList);
 
     if (orderList_.empty())
     {
@@ -438,7 +408,7 @@ void OtaForwarder::startNextPadawan()
     // Skip the "master" entry (PR set 2 will self-flash); record as FAILED.
     while (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "master")
     {
-        results_.push_back({orderList_[nextOrderIdx_], "FAILED", "", "not_implemented_in_pr_set_1"});
+        results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "not_implemented_in_pr_set_1"});
         nextOrderIdx_++;
     }
 
@@ -453,7 +423,7 @@ void OtaForwarder::startNextPadawan()
     if (!resolveControllerMac(currentControllerId_, currentPadawanMac_))
     {
         ESP_LOGW(TAG, "Controller %s not registered as a peer; recording FAILED", currentControllerId_.c_str());
-        results_.push_back({currentControllerId_, "FAILED", "", "unknown_peer"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "unknown_peer"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -466,7 +436,7 @@ void OtaForwarder::startNextPadawan()
         // Apply no_firmware to the remaining targets.
         while (nextOrderIdx_ < orderList_.size())
         {
-            results_.push_back({orderList_[nextOrderIdx_], "FAILED", "", "no_firmware"});
+            results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "no_firmware"});
             nextOrderIdx_++;
         }
         emitDeployDoneAndReset();
@@ -478,7 +448,7 @@ void OtaForwarder::startNextPadawan()
     if (firmwareFile_ == nullptr)
     {
         ESP_LOGE(TAG, "fopen(%s) failed", firmwarePath.c_str());
-        results_.push_back({currentControllerId_, "FAILED", "", "firmware_open_failed"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_open_failed"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -490,7 +460,7 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGE(TAG, "stat(%s) failed", firmwarePath.c_str());
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, "FAILED", "", "firmware_stat_failed"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_stat_failed"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -506,7 +476,7 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGE(TAG, "Firmware file is empty (size=0); abandoning padawan");
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, "FAILED", "", "firmware_empty"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_empty"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -533,7 +503,7 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGE(TAG, "fread error during SHA pass; abandoning padawan");
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, "FAILED", "", "firmware_read_failed"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_read_failed"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -548,7 +518,7 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGE(TAG, "fseek(0) failed after SHA pass");
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, "FAILED", "", "firmware_seek_failed"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_seek_failed"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -564,7 +534,7 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGE(TAG, "BulkSender::begin rejected reason=%d", (int)br.reason);
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, "FAILED", "", "begin_rejected"});
+        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "begin_rejected"});
         nextOrderIdx_++;
         startNextPadawan();
         return;
@@ -589,7 +559,7 @@ void OtaForwarder::abortCurrentPadawan(const std::string &reason)
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
     }
-    results_.push_back({currentControllerId_, "FAILED", "", reason});
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
     currentControllerId_.clear();
     phase_ = Phase::BETWEEN_PADAWANS;
     nextOrderIdx_++;
@@ -606,7 +576,7 @@ void OtaForwarder::completeCurrentPadawan()
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
     }
-    results_.push_back({currentControllerId_, "OK", "", ""});
+    results_.push_back({currentControllerId_, PadawanStatus::OK, "", ""});
     currentControllerId_.clear();
     phase_ = Phase::BETWEEN_PADAWANS;
     nextOrderIdx_++;
@@ -623,7 +593,8 @@ void OtaForwarder::emitDeployDoneAndReset()
     wire.reserve(results_.size());
     for (const auto &r : results_)
     {
-        wire.push_back({r.controllerId, r.status, r.finalVersion, r.errorOrEmpty});
+        const char *statusStr = (r.status == PadawanStatus::OK) ? "OK" : "FAILED";
+        wire.push_back({r.controllerId, statusStr, r.finalVersion, r.errorOrEmpty});
     }
     AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, wire);
 

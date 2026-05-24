@@ -23,16 +23,6 @@
 // only does xQueueSend(OTA_FWD_TICK) — state mutation runs on
 // otaForwarderTask, preserving the single-task-state invariant.
 
-// One row in the per-padawan results vector. Mirrors astros_fw_deploy_result_t
-// in the serial messaging service.
-struct OtaForwarderPadawanResult
-{
-    std::string controllerId;
-    std::string status;       // "OK" or "FAILED"
-    std::string finalVersion; // empty until version-confirmation lands (PR set 2)
-    std::string errorOrEmpty; // failure reason ("begin_ack_timeout", etc.)
-};
-
 class OtaForwarder
 {
 public:
@@ -67,6 +57,25 @@ private:
         AWAITING_END_ACK = 3,
         BETWEEN_PADAWANS = 4, // result recorded; pulling next from order list
         DONE = 5              // order list exhausted; FW_DEPLOY_DONE emitted
+    };
+
+    // Two terminal outcomes per padawan transfer. Stringified at the
+    // wire boundary in emitDeployDoneAndReset; the wire form remains
+    // "OK"/"FAILED" to match astros_fw_deploy_result_t.
+    enum class PadawanStatus : uint8_t
+    {
+        OK,
+        FAILED,
+    };
+
+    // One row in results_; mirrors astros_fw_deploy_result_t's shape but
+    // keeps status as the type-checked enum until the wire-stringify step.
+    struct PadawanResult
+    {
+        std::string controllerId;
+        PadawanStatus status;
+        std::string finalVersion; // empty until version-confirmation lands
+        std::string errorOrEmpty; // failure reason ("begin_ack_timeout", etc.)
     };
 
     // Per-handler entry points. All run on otaForwarderTask.
@@ -146,7 +155,7 @@ private:
     std::string deployTransferId_;
     std::vector<std::string> orderList_;
     size_t nextOrderIdx_ = 0;
-    std::vector<OtaForwarderPadawanResult> results_;
+    std::vector<PadawanResult> results_;
 
     // Per-padawan state (lives across one padawan's transfer; reset on
     // advance).
