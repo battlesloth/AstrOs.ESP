@@ -8,6 +8,7 @@
 #include <esp_log.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <sys/stat.h>
 
@@ -213,22 +214,190 @@ void OtaForwarder::handleBeginNak(queue_ota_forwarder_msg_t &msg)
 }
 void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleDataAck: stubbed (Task 7b)");
-    (void)msg;
+    if (phase_ != Phase::STREAMING && phase_ != Phase::AWAITING_END_ACK)
+    {
+        ESP_LOGW(TAG, "Spurious OTA_DATA_ACK while phase=%d (xferId=%u); dropping", (int)phase_, msg.data_ack.xferId);
+        return;
+    }
+    auto r = bulk_.onDataAck(msg.data_ack.xferId, msg.data_ack.highestContiguousSeq);
+    switch (r.decision)
+    {
+    case AstrOsBulkTransport::AckResult::Decision::OK:
+        break;
+    case AstrOsBulkTransport::AckResult::Decision::STALE:
+        ESP_LOGD(TAG, "Stale ACK cumulativeSeq=%u — ignoring", msg.data_ack.highestContiguousSeq);
+        return;
+    case AstrOsBulkTransport::AckResult::Decision::OUT_OF_RANGE:
+        // forward-concern #13: log distinctly so a peer-ahead-of-sender
+        // mistake is recognizable in production logs.
+        ESP_LOGW(TAG,
+                 "OTA_DATA_ACK OUT_OF_RANGE from %s xferId=%u cumulativeSeq=%u (peer ahead of "
+                 "sender) — ignoring",
+                 currentControllerId_.c_str(), msg.data_ack.xferId, msg.data_ack.highestContiguousSeq);
+        return;
+    default:
+        ESP_LOGW(TAG, "OTA_DATA_ACK rejected decision=%d cumulativeSeq=%u — ignoring", (int)r.decision,
+                 msg.data_ack.highestContiguousSeq);
+        return;
+    }
+
+    // forward-concern #11: newlyConfirmedCount is a watermark delta, not
+    // a slot count. Use highestContiguousSeq for "have we received
+    // everything?" rather than counting slot evictions.
+    if (msg.data_ack.highestContiguousSeq + 1 >= firmwareTotalChunks_ && phase_ == Phase::STREAMING)
+    {
+        // All chunks confirmed — time to send OTA_END.
+        emitOtaEndFrame();
+        phase_ = Phase::AWAITING_END_ACK;
+        endAckTimerStart();
+        return;
+    }
+
+    // Otherwise, the freed in-flight slots let us send more.
+    streamDrain(static_cast<uint64_t>(esp_timer_get_time() / 1000));
 }
 void OtaForwarder::handleDataNak(queue_ota_forwarder_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleDataNak: stubbed (Task 7b)");
-    (void)msg;
+    if (phase_ != Phase::STREAMING)
+    {
+        ESP_LOGW(TAG, "Spurious OTA_DATA_NAK while phase=%d (xferId=%u); dropping", (int)phase_, msg.data_nak.xferId);
+        return;
+    }
+    auto r = bulk_.onDataNak(msg.data_nak.xferId, msg.data_nak.nextExpectedSeq,
+                             static_cast<AstrOsBulkTransport::NakReason>(msg.data_nak.reason));
+    switch (r.decision)
+    {
+    case AstrOsBulkTransport::NakResult::Decision::OK:
+        break;
+    case AstrOsBulkTransport::NakResult::Decision::OUT_OF_RANGE:
+        ESP_LOGW(TAG,
+                 "OTA_DATA_NAK OUT_OF_RANGE from %s xferId=%u nextExpectedSeq=%u (peer NAK ahead "
+                 "of sender) — ignoring",
+                 currentControllerId_.c_str(), msg.data_nak.xferId, msg.data_nak.nextExpectedSeq);
+        return;
+    default:
+        ESP_LOGW(TAG, "OTA_DATA_NAK rejected decision=%d — ignoring", (int)r.decision);
+        return;
+    }
+    // The NAK rewinds nextSeqToSend_; the next tick or streamDrain will
+    // re-emit from there.
+    streamDrain(static_cast<uint64_t>(esp_timer_get_time() / 1000));
 }
 void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleEndAck: stubbed (Task 7b)");
-    (void)msg;
+    if (phase_ != Phase::AWAITING_END_ACK)
+    {
+        ESP_LOGW(TAG, "Spurious OTA_END_ACK while phase=%d (xferId=%u status=%u); dropping", (int)phase_,
+                 msg.end_ack.xferId, msg.end_ack.status);
+        return;
+    }
+    endAckTimerStop();
+    tickTimerStop();
+
+    // Sentinel xferId=0xFF + status=0xFF means END_ACK timeout fired.
+    if (msg.end_ack.xferId == 0xFF && msg.end_ack.status == 0xFF)
+    {
+        ESP_LOGW(TAG, "OTA_END_ACK timeout for %s after 5s; abandoning", currentControllerId_.c_str());
+        abortCurrentPadawan("end_ack_timeout");
+        return;
+    }
+
+    auto endResult = bulk_.onEndAck(msg.end_ack.xferId, static_cast<OtaEndStatus>(msg.end_ack.status));
+    switch (endResult.decision)
+    {
+    case AstrOsBulkTransport::EndAckResult::Decision::DONE_OK:
+        ESP_LOGI(TAG, "Transfer to %s OK", currentControllerId_.c_str());
+        completeCurrentPadawan();
+        return;
+    case AstrOsBulkTransport::EndAckResult::Decision::ABANDONED:
+        ESP_LOGW(TAG, "Transfer to %s ABANDONED (status=%u)", currentControllerId_.c_str(), msg.end_ack.status);
+        {
+            std::string reason = (msg.end_ack.status == static_cast<uint8_t>(OtaEndStatus::HASH_MISMATCH))
+                                     ? "hash_mismatch"
+                                     : "write_error";
+            abortCurrentPadawan(reason);
+        }
+        return;
+    case AstrOsBulkTransport::EndAckResult::Decision::PREMATURE:
+        ESP_LOGW(TAG, "OTA_END_ACK PREMATURE (sender state machine internal); abandoning");
+        abortCurrentPadawan("premature_end_ack");
+        return;
+    default:
+        ESP_LOGW(TAG, "OTA_END_ACK rejected decision=%d — abandoning", (int)endResult.decision);
+        abortCurrentPadawan("end_ack_rejected");
+        return;
+    }
 }
 void OtaForwarder::handleTick()
 {
-    // Stub for Task 7b; deliberately silent on the hot path.
+    // forward-concern #9: tick(count=0, abandon=false) is indistinguishable
+    // from "not streaming" — read status() separately.
+    auto status = bulk_.status();
+    if (status != AstrOsBulkTransport::BulkSender::Status::STREAMING &&
+        status != AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK)
+    {
+        // BulkSender isn't in a state where tick has work; this commonly
+        // means we're between transfers or in a terminal state. Skip.
+        return;
+    }
+    if (phase_ != Phase::STREAMING)
+    {
+        // We're in AWAITING_BEGIN_ACK or AWAITING_END_ACK; tick has no
+        // role here (begin/end timeouts are separate timers).
+        return;
+    }
+
+    uint64_t nowMs = static_cast<uint64_t>(esp_timer_get_time() / 1000);
+    auto tr = bulk_.tick(nowMs);
+
+    // forward-concern #12: check abandon BEFORE iterating retransmitSeqs.
+    if (tr.abandon)
+    {
+        ESP_LOGW(TAG, "BulkSender abandoned (retry count exceeded) for %s; recording FAILED",
+                 currentControllerId_.c_str());
+        abortCurrentPadawan("data_retry_exceeded");
+        return;
+    }
+
+    // forward-concern #8: emit retransmits BEFORE pulling new chunks. The
+    // retransmit list and the streamDrain loop both call sendOtaFrame —
+    // ordering matters because a future "send before tick" loop would
+    // silently skip the retransmits (BulkSender doesn't rewind
+    // nextSeqToSend_ when a tick triggers retransmit).
+    for (uint8_t i = 0; i < tr.count; i++)
+    {
+        const uint32_t seq = tr.retransmitSeqs[i];
+        const uint32_t offset = seq * kChunkSize;
+        uint32_t expectedLen = kChunkSize;
+        if (offset + kChunkSize > firmwareTotalSize_)
+        {
+            expectedLen = firmwareTotalSize_ - offset;
+        }
+
+        uint8_t payloadBuf[sizeof(OtaDataHeader) + kChunkSize];
+        OtaDataHeader hdr{};
+        hdr.xferId = currentXferId_;
+        hdr.seq = seq;
+        hdr.payloadLen = static_cast<uint16_t>(expectedLen);
+
+        std::memcpy(payloadBuf, &hdr, sizeof(hdr));
+        if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0 ||
+            std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_) != expectedLen)
+        {
+            ESP_LOGE(TAG, "Failed to re-read seq=%u for retransmit", seq);
+            abortCurrentPadawan("file_read_short");
+            return;
+        }
+
+        uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
+        std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
+
+        AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
+                                   sizeof(hdr) + expectedLen);
+    }
+
+    // After retransmits, drain new chunks until WINDOW_FULL / ALL_SENT.
+    streamDrain(nowMs);
 }
 
 void OtaForwarder::startNextPadawan()
@@ -367,7 +536,20 @@ void OtaForwarder::abortCurrentPadawan(const std::string &reason)
 }
 void OtaForwarder::completeCurrentPadawan()
 {
-    ESP_LOGW(TAG, "completeCurrentPadawan: stubbed (Task 7b)");
+    beginAckTimerStop();
+    endAckTimerStop();
+    tickTimerStop();
+    bulk_.reset();
+    if (firmwareFile_)
+    {
+        std::fclose(firmwareFile_);
+        firmwareFile_ = nullptr;
+    }
+    results_.push_back({currentControllerId_, "OK", "", ""});
+    currentControllerId_.clear();
+    phase_ = Phase::BETWEEN_PADAWANS;
+    nextOrderIdx_++;
+    startNextPadawan();
 }
 void OtaForwarder::emitDeployDoneAndReset()
 {
@@ -413,11 +595,84 @@ void OtaForwarder::emitOtaBeginFrame()
 }
 void OtaForwarder::emitOtaEndFrame()
 {
-    ESP_LOGW(TAG, "emitOtaEndFrame: stubbed (Task 7b)");
+    OtaEndPayload payload{};
+    payload.xferId = currentXferId_;
+    payload.totalChunksSent = firmwareTotalChunks_;
+    std::memcpy(payload.sha256Final, firmwareSha256_, 32);
+
+    esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_END,
+                                               reinterpret_cast<const uint8_t *>(&payload), sizeof(payload));
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "OTA_END sendOtaFrame returned %s; endAckTimer will catch the timeout", esp_err_to_name(err));
+    }
 }
 void OtaForwarder::streamDrain(uint64_t nowMs)
 {
-    (void)nowMs;
+    for (;;)
+    {
+        auto sr = bulk_.nextChunkToSend(nowMs);
+        if (sr.decision == AstrOsBulkTransport::SendResult::Decision::SEND)
+        {
+            // Read the chunk from disk. Chunks are chunkSize except
+            // possibly the last one.
+            const uint32_t seq = sr.seq;
+            const uint32_t offset = seq * kChunkSize;
+            uint32_t expectedLen = kChunkSize;
+            if (offset + kChunkSize > firmwareTotalSize_)
+            {
+                expectedLen = firmwareTotalSize_ - offset;
+            }
+
+            uint8_t payloadBuf[sizeof(OtaDataHeader) + kChunkSize];
+            OtaDataHeader hdr{};
+            hdr.xferId = currentXferId_;
+            hdr.seq = seq;
+            hdr.payloadLen = static_cast<uint16_t>(expectedLen);
+            // CRC computed after the bytes are loaded below.
+
+            std::memcpy(payloadBuf, &hdr, sizeof(hdr));
+            if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0)
+            {
+                ESP_LOGE(TAG, "fseek(%u) failed mid-transfer; abandoning", offset);
+                abortCurrentPadawan("file_seek_failed");
+                return;
+            }
+            size_t read = std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_);
+            if (read != expectedLen)
+            {
+                ESP_LOGE(TAG, "fread(%u) returned %zu mid-transfer; abandoning", expectedLen, read);
+                abortCurrentPadawan("file_read_short");
+                return;
+            }
+
+            // CRC-16/CCITT-FALSE over the header (post-xferId) + payload —
+            // matching BulkReceiver's verification. Compute over the same
+            // span the receiver hashes.
+            uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
+            // Patch the CRC into the header bytes that are now in payloadBuf.
+            std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
+
+            esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
+                                                       sizeof(hdr) + expectedLen);
+            if (err != ESP_OK)
+            {
+                ESP_LOGW(TAG, "OTA_DATA seq=%u sendOtaFrame returned %s; tick will retry", seq, esp_err_to_name(err));
+                // Don't abort here — tick-based retransmit will catch it.
+                return;
+            }
+            continue;
+        }
+
+        // ALL_SENT: OTA_END fires from handleDataAck when the confirmed
+        // watermark reaches totalChunks, not from here. WINDOW_FULL /
+        // NOT_STREAMING: stop draining for now.
+        if (sr.decision == AstrOsBulkTransport::SendResult::Decision::ALL_SENT)
+        {
+            return;
+        }
+        return; // WINDOW_FULL or NOT_STREAMING
+    }
 }
 
 void OtaForwarder::tickTimerStart()
@@ -496,8 +751,17 @@ void OtaForwarder::beginAckTimerCb(void *arg)
 
 void OtaForwarder::endAckTimerCb(void *arg)
 {
-    (void)arg;
-    // See beginAckTimerCb note. Task 7b implements.
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+    {
+        return;
+    }
+    // Synthetic OTA_FWD_END_ACK with sentinel xferId=0xFF + status=0xFF.
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_END_ACK;
+    m.end_ack.xferId = 0xFF;
+    m.end_ack.status = 0xFF;
+    xQueueSend(self->otaForwarderQueue_, &m, 0);
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const
