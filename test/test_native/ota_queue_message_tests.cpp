@@ -64,17 +64,6 @@ TEST(OtaQueueMessage, EndArmRoundTrip)
     EXPECT_EQ(300u, m.end.totalChunks);
 }
 
-TEST(OtaQueueMessage, DeployArmRoundTrip)
-{
-    queue_ota_msg_t m;
-    std::memset(&m, 0, sizeof(m));
-    m.kind = OTA_MSG_DEPLOY_BEGIN;
-    m.deploy.msgId = nullptr;
-    m.deploy.orderList = nullptr;
-
-    EXPECT_EQ(OTA_MSG_DEPLOY_BEGIN, m.kind);
-}
-
 // OTA_MSG_WATCHDOG_FIRE is a signal carrier — no union arm, transferId is nullptr by contract.
 // Pins both invariants so a future producer that forgets the rule fails a test before it ships.
 TEST(OtaQueueMessage, WatchdogFireArmHasNoOwnedPointers)
@@ -88,7 +77,7 @@ TEST(OtaQueueMessage, WatchdogFireArmHasNoOwnedPointers)
 }
 
 // freeOtaMsg is the single source of truth for the per-kind ownership contract.
-// The 5 tests below pin each arm — a future regression that drops a free() would
+// The tests below pin each arm — a future regression that drops a free() would
 // also drop the matching null-assignment, so the post-call nullptr check is a
 // faithful proxy for the free behavior. malloc() of real memory means free()
 // doesn't UB.
@@ -145,22 +134,6 @@ TEST(OtaQueueMessage, FreeOtaMsgEndArmNullsAllOwnedPointers)
     EXPECT_EQ(nullptr, m.end.msgId);
 }
 
-TEST(OtaQueueMessage, FreeOtaMsgDeployArmNullsAllOwnedPointers)
-{
-    queue_ota_msg_t m;
-    std::memset(&m, 0, sizeof(m));
-    m.kind = OTA_MSG_DEPLOY_BEGIN;
-    m.transferId = dupCStr("7");
-    m.deploy.msgId = dupCStr("mid-d");
-    m.deploy.orderList = dupCStr("controllerA\x1econtrollerB");
-
-    freeOtaMsg(&m);
-
-    EXPECT_EQ(nullptr, m.transferId);
-    EXPECT_EQ(nullptr, m.deploy.msgId);
-    EXPECT_EQ(nullptr, m.deploy.orderList);
-}
-
 // WATCHDOG_FIRE has no owned pointers, but defensive free(transferId) lets a future
 // producer accidentally setting it not leak. Pin the no-crash behavior.
 TEST(OtaQueueMessage, FreeOtaMsgWatchdogFireArmIsNoCrashWithDefensiveFree)
@@ -186,7 +159,6 @@ TEST(OtaQueueMessage, UnionArmsShareStartingAddress)
     const void *beginAddr = static_cast<const void *>(&m.begin);
     EXPECT_EQ(beginAddr, static_cast<const void *>(&m.chunk));
     EXPECT_EQ(beginAddr, static_cast<const void *>(&m.end));
-    EXPECT_EQ(beginAddr, static_cast<const void *>(&m.deploy));
 }
 
 // Pins the producer's strncpy(buf, src, SHA256_HEX_LEN) + buf[SHA256_HEX_LEN]='\0' idiom.

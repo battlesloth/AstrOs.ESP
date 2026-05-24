@@ -102,7 +102,6 @@ private:
     void handleBegin(queue_ota_msg_t &msg);
     void handleChunk(queue_ota_msg_t &msg);
     void handleEnd(queue_ota_msg_t &msg);
-    void handleDeployBegin(queue_ota_msg_t &msg);
     void handleWatchdogFire();
 
     // esp_timer's one-shot has no native "restart" — these centralize the

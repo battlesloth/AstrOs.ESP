@@ -154,9 +154,6 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
     case OTA_MSG_END:
         handleEnd(msg);
         break;
-    case OTA_MSG_DEPLOY_BEGIN:
-        handleDeployBegin(msg);
-        break;
     case OTA_MSG_WATCHDOG_FIRE:
         handleWatchdogFire();
         break;
@@ -590,43 +587,6 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
         // promises to discard, alongside the watchdog path.
         resetCryptoAndFile(/*keepStaging=*/false);
     }
-}
-
-void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
-{
-    std::string transferIdIn = msg.transferId ? msg.transferId : "";
-    std::string msgId = msg.deploy.msgId ? msg.deploy.msgId : "";
-    std::string orderListStr = msg.deploy.orderList ? msg.deploy.orderList : "";
-
-    if (orderListStr.empty())
-    {
-        // sendFwDeployDone would drop empty results — skip to avoid double-log.
-        ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
-        return;
-    }
-
-    std::vector<astros_fw_deploy_result_t> results;
-    size_t start = 0;
-    while (start < orderListStr.size())
-    {
-        size_t end = orderListStr.find('\x1E', start);
-        std::string id =
-            (end == std::string::npos) ? orderListStr.substr(start) : orderListStr.substr(start, end - start);
-        if (!id.empty())
-        {
-            results.push_back({id, "FAILED", "", "not_implemented"});
-        }
-        if (end == std::string::npos)
-        {
-            break;
-        }
-        start = end + 1;
-    }
-
-    ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s target-count=%zu — all-FAILED not_implemented", transferIdIn.c_str(),
-             results.size());
-
-    AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
 }
 
 std::optional<std::string> OtaReceiver::getLastFirmwarePath() const

@@ -302,7 +302,7 @@ void init(void)
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue);
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue, otaForwarderQueue);
     // The receiver's watchdog posts abort messages into the same queue
     // otaReceiverTask drains.
     AstrOs_OtaReceiver.Init(otaQueue);
