@@ -95,8 +95,10 @@ public:
     // ESP_ERR_INVALID_ARG if the builder rejected (wrong type / oversize);
     // whatever esp_now_send returned otherwise.
     //
-    // Memory ownership: matches the existing send-helper pattern (see
-    // verification in the implementation).
+    // Memory ownership: `payload` is copied into the wire frame inside
+    // generateOtaPacket; caller retains ownership of the input buffer.
+    // The internal frame buffer is freed unconditionally after esp_now_send
+    // returns (Pattern A immediate-free, matching the other send-helpers).
     esp_err_t sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len);
 
     std::string getMac();
