@@ -298,18 +298,35 @@ void OtaForwarder::startNextPadawan()
 
     // Compute SHA-256 of the file (forensic-grade defensive check; the
     // padawan also verifies). One-shot at file open; ships in the
-    // OTA_BEGIN frame's sha256Expected field.
+    // OTA_BEGIN frame's sha256Expected field. 512 B buffer keeps stack
+    // pressure low on the 4096 B task stack — SHA-256 throughput is
+    // dominated by the 64 B per-block transform, not the I/O buffer.
     AstrOsSha256Ctx shaCtx;
     AstrOsSha256_init(&shaCtx);
-    uint8_t buf[1024];
+    uint8_t buf[512];
     while (size_t r = std::fread(buf, 1, sizeof(buf), firmwareFile_))
     {
         AstrOsSha256_update(&shaCtx, buf, r);
     }
     AstrOsSha256_final(&shaCtx, firmwareSha256_);
-    std::rewind(firmwareFile_);
 
-    currentXferId_ = static_cast<uint8_t>(nextOrderIdx_ + 1); // monotonic per-padawan xferId
+    // fseek(SEEK_SET) over rewind(): rewind silently swallows errors. A
+    // bad seek here would burn the full chunk budget shipping wrong
+    // bytes before the padawan's SHA mismatch catches it — fail fast.
+    if (std::fseek(firmwareFile_, 0, SEEK_SET) != 0)
+    {
+        ESP_LOGE(TAG, "fseek(0) failed after SHA pass");
+        std::fclose(firmwareFile_);
+        firmwareFile_ = nullptr;
+        results_.push_back({currentControllerId_, "FAILED", "", "firmware_seek_failed"});
+        nextOrderIdx_++;
+        startNextPadawan();
+        return;
+    }
+
+    // Bounded by ESPNOW_PEER_LIMIT=10 today; the uint8_t cast would roll
+    // over to 0 (the "no xfer in progress" sentinel) at idx 255.
+    currentXferId_ = static_cast<uint8_t>(nextOrderIdx_ + 1);
 
     auto br = bulk_.begin(currentXferId_, firmwareTotalChunks_, kChunkSize, kWindowSize, kAckTimeoutMs, kMaxRetries);
     if (!br.valid)

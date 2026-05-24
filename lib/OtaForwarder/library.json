@@ -6,9 +6,9 @@
     "AstrOsBulkTransport": "*",
     "AstrOsEspNow": "*",
     "AstrOsEspNowPeers": "*",
-    "AstrOsSerialMsgHandler": "*",
     "AstrOsMessaging": "*",
     "AstrOsQueueMessages": "*",
+    "AstrOsSerialMsgHandler": "*",
     "AstrOsUtility": "*",
     "OtaReceiver": "*"
   },
