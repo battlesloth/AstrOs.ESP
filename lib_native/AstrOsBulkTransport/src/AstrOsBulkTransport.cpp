@@ -472,11 +472,19 @@ namespace AstrOsBulkTransport
             return AckResult::wrongXferId();
         }
         // Bounds check: cumulativeSeq must reference a real seq in this transfer.
-        // Defends the PURE state machine against peer-controlled wire input. The
-        // M3 wire parser can also gate this, but we don't want to rely on it.
-        // UINT32_MAX would underflow the newlyConfirmedCount arithmetic below;
-        // cumulativeSeq >= totalChunks_ would let highestConfirmedSeq_ overshoot,
-        // causing false DONE_OK on a subsequent onEndAck(OK).
+        // Defends the PURE state machine against peer-controlled wire input;
+        // the M3 wire parser can also gate this, but we don't want to rely on it.
+        //
+        // Without this guard:
+        //   - cumulativeSeq = UINT32_MAX: the newlyConfirmedCount arithmetic
+        //     below (cumulativeSeq + 1 - prev) wraps unsigned, returning a
+        //     falsely-zero count to the MIXED layer.
+        //   - cumulativeSeq in [totalChunks_, UINT32_MAX-1]: highestConfirmedSeq_
+        //     overshoots the transfer range. The PREMATURE guard in onEndAck
+        //     would still catch a subsequent OK transition (allConfirmed check
+        //     would fail since highestConfirmedSeq_ + 1 != totalChunks_), but
+        //     the watermark is left corrupted for any later valid-range ACK to
+        //     be falsely rejected as STALE.
         if (cumulativeSeq >= totalChunks_)
         {
             return AckResult::outOfRange();

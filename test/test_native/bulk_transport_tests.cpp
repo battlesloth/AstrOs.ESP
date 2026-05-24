@@ -1230,9 +1230,12 @@ TEST(BulkTransport, BulkSenderOnEndAckRejectsBeforeStreaming)
 TEST(BulkTransport, BulkSenderOnDataAckRejectsOutOfRangeCumulativeSeq)
 {
     // Defensive: cumulativeSeq >= totalChunks_ is a peer-controlled wire
-    // input that would corrupt the watermark and risk a false DONE_OK on
-    // a subsequent onEndAck. PURE layer rejects rather than relying on
-    // the M3 wire parser to validate first.
+    // input that would corrupt the highestConfirmedSeq_ watermark (causing
+    // later valid-range ACKs to be falsely rejected as STALE) and, for
+    // UINT32_MAX specifically, would wrap the newlyConfirmedCount return
+    // value to zero. The PREMATURE guard in onEndAck catches the
+    // false-DONE_OK outcome separately; this guard prevents the watermark
+    // corruption that would precede it.
     AstrOsBulkTransport::BulkSender s;
     ASSERT_TRUE(s.begin(7, /*totalChunks=*/10, 128, 8, 400, 3).valid);
     ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s.onBeginAck(7).decision);
@@ -1244,6 +1247,19 @@ TEST(BulkTransport, BulkSenderOnDataAckRejectsOutOfRangeCumulativeSeq)
     // UINT32_MAX is the wire-format upper bound; trips the same guard.
     auto r2 = s.onDataAck(7, UINT32_MAX);
     EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OUT_OF_RANGE, r2.decision);
+
+    // Boundary: cumulativeSeq=9 (totalChunks_-1) is the last legal value
+    // and must be accepted. Pins inclusive-vs-exclusive of the upper bound.
+    // windowSize=16 (MAX_WINDOW_SIZE) so all 10 chunks fit without WINDOW_FULL.
+    AstrOsBulkTransport::BulkSender s2;
+    ASSERT_TRUE(s2.begin(7, /*totalChunks=*/10, 128, /*windowSize=*/16, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s2.onBeginAck(7).decision);
+    for (uint32_t i = 0; i < 10; i++)
+    {
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, s2.nextChunkToSend(1000).decision);
+    }
+    auto okR = s2.onDataAck(7, /*cumulativeSeq=*/9);
+    EXPECT_EQ(AstrOsBulkTransport::AckResult::Decision::OK, okR.decision);
 }
 
 TEST(BulkTransport, BulkSenderOnDataNakRejectsOutOfRangeNextExpectedSeq)
@@ -1260,6 +1276,19 @@ TEST(BulkTransport, BulkSenderOnDataNakRejectsOutOfRangeNextExpectedSeq)
 
     auto r2 = s.onDataNak(7, UINT32_MAX, AstrOsBulkTransport::NakReason::CRC);
     EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::OUT_OF_RANGE, r2.decision);
+
+    // Boundary: nextExpectedSeq=9 (totalChunks_-1) is the last legal value
+    // (receiver asking for the last seq to be resent) and must be accepted.
+    // windowSize=16 (MAX_WINDOW_SIZE) so all 10 chunks fit without WINDOW_FULL.
+    AstrOsBulkTransport::BulkSender s2;
+    ASSERT_TRUE(s2.begin(7, /*totalChunks=*/10, 128, /*windowSize=*/16, 400, 3).valid);
+    ASSERT_EQ(AstrOsBulkTransport::BeginAckResult::Decision::OK, s2.onBeginAck(7).decision);
+    for (uint32_t i = 0; i < 10; i++)
+    {
+        ASSERT_EQ(AstrOsBulkTransport::SendResult::Decision::SEND, s2.nextChunkToSend(1000).decision);
+    }
+    auto okR = s2.onDataNak(7, /*nextExpectedSeq=*/9, AstrOsBulkTransport::NakReason::CRC);
+    EXPECT_EQ(AstrOsBulkTransport::NakResult::Decision::OK, okR.decision);
 }
 
 TEST(BulkTransport, BulkSenderOnEndAckRejectsPrematureCall)
