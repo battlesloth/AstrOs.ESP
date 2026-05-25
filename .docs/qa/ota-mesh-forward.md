@@ -100,9 +100,10 @@ Validates that a stuck transfer self-aborts within 10 s.
 
 After test case 1, add a temporary `ESP_LOGI(TAG, "ota_writer hwm=%d", uxTaskGetStackHighWaterMark(NULL));` at the bottom of `handleEnd`'s success branch. Re-flash padawan, re-run test case 1, record the value:
 
-- Recorded value: _____ bytes remaining (target: ≥ 500 B)
-- If < 500 B: bump `otaWriterTask` stack from 4096 to 6144 in main.cpp, re-test
-- Remove the temporary log before committing T9
+- Recorded value: _____ bytes remaining (target: ≥ 1 KB; expected ~3.5 KB with the 8 KB stack and 4 KB readback buffer)
+- If < 1 KB: bump `otaWriterTask` stack further in main.cpp (currently 8192 after the T7 followup), re-test
+- If comfortably > 2 KB: consider tuning back down toward 6144 to free RAM
+- Remove the temporary log before merging
 
 ## M5 (placeholder)
 

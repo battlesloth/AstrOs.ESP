@@ -435,10 +435,10 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     //    esp_ota_end's finalize.
     //
     //    4 KB read buffer matches the flash sector size (resolves design
-    //    open-Q #6). Stack-allocated — fits comfortably within the 4 KB
-    //    otaWriterTask stack alongside the AstrOsSha256Ctx (~120 B). If
-    //    the per-task stack check warns at 500 B remaining during the
-    //    M4 bench, escalate via Step 4's bench validation.
+    //    open-Q #6). Stack-allocated — fits within the 8 KB otaWriterTask
+    //    stack (bumped from 4 KB in T7 followup precisely because this
+    //    buffer + AstrOsSha256Ctx + call frames overflow a 4 KB stack).
+    //    Bench HWM measurement may tune the stack down later.
     AstrOsSha256Ctx rbCtx;
     AstrOsSha256_init(&rbCtx);
 
