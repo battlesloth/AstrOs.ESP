@@ -357,7 +357,140 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
 
 void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleEnd: stubbed (Task 7) — xferId=%u chunks=%u", msg.end.xferId, msg.end.totalChunksSent);
+    const uint8_t *mac = msg.end.srcMac;
+    const uint8_t xferId = msg.end.xferId;
+
+    if (!active_)
+    {
+        ESP_LOGW(TAG, "handleEnd: xferId=%u arrived while inactive — replying WRITE_ERROR", xferId);
+        // No reasonable SHA to echo; send all-zero buffer.
+        uint8_t zero[32] = {0};
+        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero);
+        return;
+    }
+
+    // BulkReceiver::onEnd validates totalChunksSent matches the BEGIN's
+    // totalChunks. Mismatch indicates a protocol-level desync that we
+    // can't recover from (the master sent fewer chunks than it claimed).
+    auto er = bulk_.onEnd(xferId, msg.end.totalChunksSent);
+    bool teardownRequested = AstrOsBulkTransport::shouldTeardownOnEndResult(er);
+    if (er.status != AstrOsBulkTransport::EndResult::Status::OK)
+    {
+        ESP_LOGW(TAG, "handleEnd: BulkReceiver::onEnd rejected: reason=%d", (int)er.reason);
+        uint8_t zero[32] = {0};
+        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero);
+        if (teardownRequested)
+        {
+            resetOtaHandleAndSha();
+            watchdogStop();
+        }
+        return;
+    }
+
+    // 1. Finalize streaming SHA.
+    uint8_t streamedDigest[32];
+    if (shaActive_)
+    {
+        AstrOsSha256_final(&shaCtx_, streamedDigest);
+        shaActive_ = false;
+    }
+    else
+    {
+        ESP_LOGE(TAG, "handleEnd: shaActive_=false at finalize — emitting all-zero digest as HASH_MISMATCH");
+        memset(streamedDigest, 0, sizeof(streamedDigest));
+    }
+
+    if (memcmp(streamedDigest, expectedSha256_, 32) != 0)
+    {
+        ESP_LOGE(TAG, "handleEnd: streaming SHA mismatch — replying HASH_MISMATCH (chunks=%u, totalSize=%u)",
+                 (unsigned)msg.end.totalChunksSent, (unsigned)currentTotalSize_);
+        sendEndAck(mac, xferId, OtaEndStatus::HASH_MISMATCH, streamedDigest);
+        resetOtaHandleAndSha();
+        watchdogStop();
+        return;
+    }
+
+    // 2. esp_ota_end finalizes the OTA write. With secure boot disabled
+    //    (our project's configuration), this validates the image header's
+    //    magic byte + size against the partition. It does NOT change the
+    //    boot table — that's PR set 2.
+    esp_err_t eErr = esp_ota_end(otaHandle_);
+    if (eErr != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleEnd: esp_ota_end failed: %s — replying WRITE_ERROR", esp_err_to_name(eErr));
+        // esp_ota_end has already released the handle internally even on
+        // failure (per IDF docs); zero the handle so resetOtaHandleAndSha
+        // doesn't try to re-abort it.
+        otaHandle_ = 0;
+        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest);
+        resetOtaHandleAndSha();
+        watchdogStop();
+        return;
+    }
+    otaHandle_ = 0;
+
+    // 3. Read-back-and-rehash. esp_partition_read pulls bytes back from
+    //    flash and we re-stream them through AstrOsSha256. Mismatch means
+    //    the flash silently corrupted bytes between esp_ota_write and
+    //    esp_ota_end's finalize.
+    //
+    //    4 KB read buffer matches the flash sector size (resolves design
+    //    open-Q #6). Stack-allocated — fits comfortably within the 4 KB
+    //    otaWriterTask stack alongside the AstrOsSha256Ctx (~120 B). If
+    //    the per-task stack check warns at 500 B remaining during the
+    //    M4 bench, escalate via Step 4's bench validation.
+    AstrOsSha256Ctx rbCtx;
+    AstrOsSha256_init(&rbCtx);
+
+    constexpr size_t kReadBufSize = 4096;
+    uint8_t buf[kReadBufSize];
+    bool readbackOk = true;
+    for (size_t off = 0; off < currentTotalSize_; off += kReadBufSize)
+    {
+        size_t chunk = (currentTotalSize_ - off < kReadBufSize) ? (currentTotalSize_ - off) : kReadBufSize;
+        esp_err_t rErr = esp_partition_read(inactivePartition_, off, buf, chunk);
+        if (rErr != ESP_OK)
+        {
+            ESP_LOGE(TAG, "handleEnd: esp_partition_read at off=%zu len=%zu failed: %s", off, chunk,
+                     esp_err_to_name(rErr));
+            readbackOk = false;
+            break;
+        }
+        AstrOsSha256_update(&rbCtx, buf, chunk);
+    }
+
+    uint8_t readbackDigest[32];
+    AstrOsSha256_final(&rbCtx, readbackDigest);
+
+    if (!readbackOk)
+    {
+        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest);
+        resetOtaHandleAndSha();
+        watchdogStop();
+        return;
+    }
+
+    if (memcmp(readbackDigest, streamedDigest, 32) != 0)
+    {
+        ESP_LOGE(TAG,
+                 "handleEnd: READ-BACK hash mismatch — flash write silently corrupted bytes; replying WRITE_ERROR");
+        // Send the readback digest (not streamed) so master forensics can
+        // see what's actually on flash vs what we expected.
+        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, readbackDigest);
+        resetOtaHandleAndSha();
+        watchdogStop();
+        return;
+    }
+
+    // All three checks passed.
+    ESP_LOGI(TAG,
+             "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s' (NB: boot partition unchanged; PR "
+             "set 2 will flip)",
+             xferId, (unsigned)currentTotalSize_, inactivePartition_->label);
+    sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest);
+
+    resetOtaHandleAndSha();
+    watchdogStop();
 }
 
 void OtaWriter::handleWatchdogFire()
