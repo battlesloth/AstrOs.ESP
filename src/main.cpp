@@ -243,11 +243,9 @@ void app_main()
 
     if (!isMasterNode.load())
     {
-        // 8 KB stack (not 4 KB matching the receiver/forwarder family):
-        // OtaWriter::handleEnd declares a 4 KB read-back buffer on the stack
-        // alongside SHA-256 ctx + call frames. T7 code review flagged that
-        // 4 KB + ~1 KB frames + FreeRTOS context exceeds a 4 KB stack.
-        // Bench validation can tune this down if HWM shows comfortable margin.
+        // 8 KB stack (larger than the OTA receiver/forwarder family):
+        // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
+        // SHA-256 ctx and call frames; that does not fit in 4 KB.
         if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
             pdPASS)
         {

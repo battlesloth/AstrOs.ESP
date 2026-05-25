@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -27,10 +26,9 @@ extern "C"
     //   OTA_WR_END            none (all inline fixed-size fields)
     //   OTA_WR_WATCHDOG_FIRE  none
     //
-    // srcMac (BEGIN/DATA/END) is a 6-byte inline buffer used for forensic
-    // logging only — the protocol assumes a single master peer, so DATA/END
-    // already constrain themselves to the in-flight transfer's xferId.
-    // Keeping srcMac inline avoids a malloc on the chunk hot path.
+    // srcMac (BEGIN/DATA/END) is the source MAC of the inbound packet;
+    // the consumer uses it as the reply target for ACK/NAK. Inline (not
+    // malloc'd) to avoid heap traffic on the chunk hot path.
     //
     // Producers MUST zero-initialize the struct before populating it
     // (e.g., `queue_ota_writer_msg_t m = {};`) so freeOtaWriterMsg's

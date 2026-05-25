@@ -127,8 +127,8 @@ public:
     void setOtaForwarderQueue(QueueHandle_t q);
 
     // Padawan-only. Setter for the otaWriterQueue used by the OTA arm of
-    // the residual switch. nullptr leaves the dispatcher in the M3 "stub"
-    // state (logs + drops). Master sets nullptr or skips the call entirely.
+    // the residual switch. If left nullptr, OTA arrivals are logged and
+    // dropped. Master nodes skip this call.
     void setOtaWriterQueue(QueueHandle_t q);
 
     std::string getMac();

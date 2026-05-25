@@ -93,15 +93,10 @@ private:
     // each carry an inline if-block.
     void logSendResult(const char *site, esp_err_t err);
 
-    // Active gate (read by pollingTimer's task).
     std::atomic<bool> active_{false};
-
-    // Queue handle held so timer callback can post WATCHDOG_FIRE into the
-    // same queue otaWriterTask drains.
     QueueHandle_t otaWriterQueue_ = nullptr;
 
-    // Idle watchdog (10 s — mirrors OtaReceiver; resolves design-doc
-    // open question #4).
+    // 10 s idle threshold — mirrors OtaReceiver.
     esp_timer_handle_t watchdog_ = nullptr;
     static constexpr uint64_t kWatchdogIdleUs = 10ULL * 1000ULL * 1000ULL;
 

@@ -565,7 +565,7 @@ bool AstrOsEspNow::routeOtaToWriter(const uint8_t *src, const astros_packet_t &p
         m.begin.totalSize = rec.totalSize;
         m.begin.chunkSize = rec.chunkSize;
         m.begin.totalChunks = rec.totalChunks;
-        memcpy(m.begin.sha256Expected, rec.sha256Expected, 32);
+        memcpy(m.begin.sha256Expected, rec.sha256Expected, sizeof(m.begin.sha256Expected));
         m.begin.flags = rec.flags;
         break;
     }
@@ -611,7 +611,7 @@ bool AstrOsEspNow::routeOtaToWriter(const uint8_t *src, const astros_packet_t &p
         memcpy(m.end.srcMac, src, ESP_NOW_ETH_ALEN);
         m.end.xferId = rec.xferId;
         m.end.totalChunksSent = rec.totalChunksSent;
-        memcpy(m.end.sha256Final, rec.sha256Final, 32);
+        memcpy(m.end.sha256Final, rec.sha256Final, sizeof(m.end.sha256Final));
         break;
     }
     default:

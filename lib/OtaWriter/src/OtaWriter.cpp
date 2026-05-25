@@ -13,8 +13,6 @@ OtaWriter::OtaWriter() {}
 
 OtaWriter::~OtaWriter()
 {
-    // The singleton is process-lifetime in firmware; this dtor exists for
-    // native-link symmetry (when/if a future host build links OtaWriter).
     // esp_timer_stop on an idle timer is harmless.
     if (watchdog_ != nullptr)
     {
@@ -160,13 +158,9 @@ void OtaWriter::process(queue_ota_writer_msg_t &msg)
         ESP_LOGE(TAG, "process: unknown msg.kind=%d", (int)msg.kind);
         break;
     }
-    // Convention (mirrors OtaReceiver::process / OtaForwarder::process):
-    // process() owns the free contract. Callers (otaWriterTask) must NOT
-    // free externally — doing so would double-free.
+    // process() owns the free contract; caller must not free externally.
     freeOtaWriterMsg(&msg);
 }
-
-// ─── Stubbed handlers — Tasks 5/6/7/8 fill in the bodies ────────────────
 
 void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
 {
@@ -181,13 +175,10 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // BulkReceiver wants a uint8_t xferId; rec.xferId is already a uint8_t
-    // from the wire, no parse needed.
-
-    // Inactive partition lookup. esp_ota_get_next_update_partition(NULL)
-    // returns the slot that's NOT currently the boot partition. On a fresh
-    // factory image where ota_data hasn't been written yet, ESP-IDF picks
-    // ota_0; once we've ever booted from ota_0, this returns ota_1.
+    // esp_ota_get_next_update_partition(NULL) returns the slot that's NOT
+    // currently the boot partition. On a fresh factory image (ota_data
+    // unwritten) ESP-IDF picks ota_0; after first boot from ota_0 this
+    // returns ota_1.
     inactivePartition_ = esp_ota_get_next_update_partition(NULL);
     if (inactivePartition_ == nullptr)
     {
@@ -208,15 +199,10 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // esp_ota_begin allocates internal state + reserves the partition for
-    // writing. OTA_SIZE_UNKNOWN tells it to erase only the sectors we
-    // actually write (lazy per-sector erase inside esp_ota_write). Passing
-    // the exact totalSize would let ESP-IDF erase the whole reserved span
-    // up front — that's a one-shot erase of ~2 MB (8MB board) or ~6.4 MB
-    // (16MB board), which can exceed the BEGIN_ACK timeout window. Lazy
-    // per-sector erase keeps the M4 happy-path latency budget intact;
-    // bench data via the M4 checkpoint validates this assumption
-    // (resolves design open-Q #5).
+    // OTA_SIZE_UNKNOWN tells esp_ota_begin to erase sectors lazily inside
+    // esp_ota_write. Passing the exact totalSize would erase the entire
+    // reserved span up front — a ~2 MB (8MB board) / ~6.4 MB (16MB board)
+    // one-shot erase that can exceed the BEGIN_ACK timeout window.
     esp_err_t bErr = esp_ota_begin(inactivePartition_, OTA_SIZE_UNKNOWN, &otaHandle_);
     if (bErr != ESP_OK)
     {
@@ -228,8 +214,8 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // BulkReceiver windowSize matches the master's BulkSender window (8) —
-    // see lib/OtaForwarder/include/OtaForwarder.hpp:156's kWindowSize.
+    // Must equal the master's BulkSender kWindowSize. Mismatched windows
+    // desync ack accounting.
     constexpr uint8_t kWindowSize = 8;
     auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kWindowSize);
     if (!br.valid)
@@ -248,11 +234,10 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
     AstrOsSha256_init(&shaCtx_);
     shaActive_ = true;
 
-    // Latch per-transfer state.
     currentXferId_ = xferId;
-    memcpy(currentMasterMac_, mac, 6);
+    memcpy(currentMasterMac_, mac, sizeof(currentMasterMac_));
     currentTotalSize_ = msg.begin.totalSize;
-    memcpy(expectedSha256_, msg.begin.sha256Expected, 32);
+    memcpy(expectedSha256_, msg.begin.sha256Expected, sizeof(expectedSha256_));
     active_ = true;
 
     ESP_LOGI(
@@ -325,8 +310,6 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // ACK path: BulkReceiver accepted the chunk. Write to flash, update
-    // streaming SHA, reply ACK.
     esp_err_t wErr = esp_ota_write(otaHandle_, cr.payload, cr.payloadLen);
     if (wErr != ESP_OK)
     {
@@ -348,10 +331,9 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
     }
     else
     {
-        // Shouldn't happen — handleBegin sets shaActive_ on the same path
-        // that opens the OTA handle. If we hit this branch the SHA stream
-        // is desynchronized; the END-side compare will catch it as a
-        // HASH_MISMATCH, but log loudly.
+        // Should be unreachable: handleBegin sets shaActive_ on the same
+        // path that opens otaHandle_. Reaching here means the END compare
+        // will trip HASH_MISMATCH.
         ESP_LOGE(TAG, "handleData: shaActive_=false on accepted chunk — END will report HASH_MISMATCH");
     }
 
@@ -410,7 +392,7 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
         memset(streamedDigest, 0, sizeof(streamedDigest));
     }
 
-    if (memcmp(streamedDigest, expectedSha256_, 32) != 0)
+    if (memcmp(streamedDigest, expectedSha256_, sizeof(streamedDigest)) != 0)
     {
         ESP_LOGE(TAG, "handleEnd: streaming SHA mismatch — replying HASH_MISMATCH (chunks=%u, totalSize=%u)",
                  (unsigned)msg.end.totalChunksSent, (unsigned)currentTotalSize_);
@@ -420,10 +402,10 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // 2. esp_ota_end finalizes the OTA write. With secure boot disabled
-    //    (our project's configuration), this validates the image header's
-    //    magic byte + size against the partition. It does NOT change the
-    //    boot table — that's PR set 2.
+    // esp_ota_end validates the image header (magic byte + size). With
+    // secure boot disabled (our config) that's the only check. Does NOT
+    // activate the new partition — a follow-up step owns the boot-table
+    // flip.
     esp_err_t eErr = esp_ota_end(otaHandle_);
     if (eErr != ESP_OK)
     {
@@ -439,16 +421,10 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     }
     otaHandle_ = 0;
 
-    // 3. Read-back-and-rehash. esp_partition_read pulls bytes back from
-    //    flash and we re-stream them through AstrOsSha256. Mismatch means
-    //    the flash silently corrupted bytes between esp_ota_write and
-    //    esp_ota_end's finalize.
-    //
-    //    4 KB read buffer matches the flash sector size (resolves design
-    //    open-Q #6). Stack-allocated — fits within the 8 KB otaWriterTask
-    //    stack (bumped from 4 KB in T7 followup precisely because this
-    //    buffer + AstrOsSha256Ctx + call frames overflow a 4 KB stack).
-    //    Bench HWM measurement may tune the stack down later.
+    // Read-back-and-rehash: catches silent flash corruption that landed
+    // between esp_ota_write and esp_ota_end's finalize. 4 KB buffer
+    // matches the flash sector size. Stack-allocated; sized against
+    // otaWriterTask's stack (8 KB). Re-verify HWM if the stack is shrunk.
     AstrOsSha256Ctx rbCtx;
     AstrOsSha256_init(&rbCtx);
 
@@ -480,7 +456,7 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    if (memcmp(readbackDigest, streamedDigest, 32) != 0)
+    if (memcmp(readbackDigest, streamedDigest, sizeof(readbackDigest)) != 0)
     {
         ESP_LOGE(TAG,
                  "handleEnd: READ-BACK hash mismatch — flash write silently corrupted bytes; replying WRITE_ERROR");
@@ -492,8 +468,6 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // All three checks passed. esp_ota_end finalized the write but did NOT
-    // activate the new partition — a follow-up step owns the boot-table flip.
     ESP_LOGI(TAG, "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s'", xferId,
              (unsigned)currentTotalSize_, inactivePartition_->label);
     logSendResult("handleEnd OK END_ACK", sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest));
@@ -520,8 +494,6 @@ void OtaWriter::handleWatchdogFire()
     // happens to be using the same xferId from a different master incarnation.
     resetOtaHandleAndSha();
 }
-
-// ─── Wire-emission helpers — Tasks 5/6/7 use these ──────────────────────
 
 esp_err_t OtaWriter::sendBeginAck(const uint8_t mac[6], uint8_t xferId)
 {
@@ -571,7 +543,7 @@ esp_err_t OtaWriter::sendEndAck(const uint8_t mac[6], uint8_t xferId, OtaEndStat
     OtaEndAckPayload p{};
     p.xferId = xferId;
     p.status = static_cast<uint8_t>(status);
-    memcpy(p.sha256Computed, sha256Computed, 32);
+    memcpy(p.sha256Computed, sha256Computed, sizeof(p.sha256Computed));
     return AstrOs_EspNow.sendOtaFrame(mac, AstrOsPacketType::OTA_END_ACK, reinterpret_cast<const uint8_t *>(&p),
                                       sizeof(p));
 }
