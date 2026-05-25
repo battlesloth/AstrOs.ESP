@@ -96,11 +96,12 @@ private:
     void streamDrain(uint64_t nowMs); // for each SEND from BulkSender::nextChunkToSend, read+emit OTA_DATA
 
     // Posts a synthetic timeout sentinel (xferId=0xFF, reason/status=0xFF)
-    // of the given kind into otaForwarderQueue_. Used by both the timer
+    // of the given kind into otaForwarderQueue_. Used by the timer
     // callbacks (deadline fired) and the emit-frame helpers (fail-fast on
-    // send failure). `site` is a short tag for the queue-full ESP_LOGE so
-    // bench logs identify which caller dropped its sentinel.
-    bool postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site);
+    // send failure). `site` tags the queue-full ESP_LOGE so bench logs
+    // identify which caller dropped its sentinel. Safe on a null queue
+    // handle (logs + returns).
+    void postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site);
 
     // Tick timer (50 ms cadence — fast enough to keep latency under the
     // 400 ms ack timeout while keeping CPU overhead negligible). Started

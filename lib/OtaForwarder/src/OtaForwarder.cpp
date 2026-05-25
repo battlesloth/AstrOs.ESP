@@ -228,8 +228,7 @@ void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
         ESP_LOGD(TAG, "Stale ACK cumulativeSeq=%u — ignoring", msg.data_ack.highestContiguousSeq);
         return;
     case AstrOsBulkTransport::AckResult::Decision::OUT_OF_RANGE:
-        // forward-concern #13: log distinctly so a peer-ahead-of-sender
-        // mistake is recognizable in production logs.
+        // Log distinctly so a peer-ahead-of-sender mistake is recognizable.
         ESP_LOGW(TAG,
                  "OTA_DATA_ACK OUT_OF_RANGE from %s xferId=%u cumulativeSeq=%u (peer ahead of "
                  "sender) — ignoring",
@@ -241,9 +240,8 @@ void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
         return;
     }
 
-    // forward-concern #11: newlyConfirmedCount is a watermark delta, not
-    // a slot count. Use highestContiguousSeq for "have we received
-    // everything?" rather than counting slot evictions.
+    // Use highestContiguousSeq (watermark) for "have we received everything?"
+    // rather than newlyConfirmedCount (which blends explicit + implicit ACKs).
     if (msg.data_ack.highestContiguousSeq + 1 >= firmwareTotalChunks_ && phase_ == Phase::STREAMING)
     {
         // All chunks confirmed — time to send OTA_END.
@@ -330,8 +328,8 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
 }
 void OtaForwarder::handleTick()
 {
-    // forward-concern #9: tick(count=0, abandon=false) is indistinguishable
-    // from "not streaming" — read status() separately.
+    // tick(count=0, abandon=false) is indistinguishable from "not streaming";
+    // consult status() separately so we skip ticks while idle.
     auto status = bulk_.status();
     if (status != AstrOsBulkTransport::BulkSender::Status::STREAMING &&
         status != AstrOsBulkTransport::BulkSender::Status::AWAITING_BEGIN_ACK)
@@ -350,7 +348,8 @@ void OtaForwarder::handleTick()
     uint64_t nowMs = static_cast<uint64_t>(esp_timer_get_time() / 1000);
     auto tr = bulk_.tick(nowMs);
 
-    // forward-concern #12: check abandon BEFORE iterating retransmitSeqs.
+    // Check abandon BEFORE iterating retransmitSeqs — TickResult sets both
+    // independently and abandon is the terminal signal.
     if (tr.abandon)
     {
         ESP_LOGW(TAG, "BulkSender abandoned (retry count exceeded) for %s; recording FAILED",
@@ -359,11 +358,9 @@ void OtaForwarder::handleTick()
         return;
     }
 
-    // forward-concern #8: emit retransmits BEFORE pulling new chunks. The
-    // retransmit list and the streamDrain loop both call sendOtaFrame —
-    // ordering matters because a future "send before tick" loop would
-    // silently skip the retransmits (BulkSender doesn't rewind
-    // nextSeqToSend_ when a tick triggers retransmit).
+    // Emit retransmits BEFORE pulling new chunks via streamDrain. BulkSender
+    // doesn't rewind nextSeqToSend_ when tick triggers retransmits, so a
+    // drain-first loop would silently skip them.
     for (uint8_t i = 0; i < tr.count; i++)
     {
         const uint32_t seq = tr.retransmitSeqs[i];
@@ -598,6 +595,7 @@ void OtaForwarder::emitDeployDoneAndReset()
     for (const auto &r : results_)
     {
         const char *statusStr;
+        std::string wireError = r.errorOrEmpty;
         switch (r.status)
         {
         case PadawanStatus::OK:
@@ -608,12 +606,15 @@ void OtaForwarder::emitDeployDoneAndReset()
             break;
         default:
             // If a new enum value lands and emitDeployDoneAndReset isn't
-            // updated, fail loudly rather than silently mapping to FAILED.
+            // updated, fail loudly on both master AND wire so the operator
+            // sees the bug from the server side instead of just the master
+            // log.
             ESP_LOGE(TAG, "Unmapped PadawanStatus=%d; defaulting to FAILED", (int)r.status);
             statusStr = "FAILED";
+            wireError = "unmapped_status_" + std::to_string((int)r.status);
             break;
         }
-        wire.push_back({r.controllerId, statusStr, r.finalVersion, r.errorOrEmpty});
+        wire.push_back({r.controllerId, statusStr, r.finalVersion, wireError});
     }
     AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, wire);
 
@@ -626,8 +627,18 @@ void OtaForwarder::emitDeployDoneAndReset()
     active_.store(false);
 }
 
-bool OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site)
+void OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site)
 {
+    // Uniform null-check so callers don't all have to guard. xQueueSend on a
+    // null handle returns errQUEUE_FULL with no diagnostic — the explicit
+    // check below avoids "queue full" misdiagnosis when the real cause is
+    // "queue not initialized."
+    if (otaForwarderQueue_ == nullptr)
+    {
+        ESP_LOGE(TAG, "%s: otaForwarderQueue not initialized; sentinel dropped", site);
+        return;
+    }
+
     queue_ota_forwarder_msg_t m{};
     m.kind = kind;
     // Sentinel bytes are wire-impossible (xferId is 1..ESPNOW_PEER_LIMIT=10).
@@ -643,14 +654,12 @@ bool OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char
         break;
     default:
         ESP_LOGE(TAG, "postTimeoutSentinel: unsupported kind %d from %s", (int)kind, site);
-        return false;
+        return;
     }
     if (xQueueSend(otaForwarderQueue_, &m, 0) != pdTRUE)
     {
         ESP_LOGE(TAG, "%s: otaForwarderQueue full; sentinel dropped — forwarder may hang", site);
-        return false;
     }
-    return true;
 }
 
 void OtaForwarder::emitOtaBeginFrame()
