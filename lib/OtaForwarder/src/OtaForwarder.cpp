@@ -691,7 +691,10 @@ void OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char
 
     queue_ota_forwarder_msg_t m{};
     m.kind = kind;
-    // Sentinel bytes are wire-impossible (xferId is 1..ESPNOW_PEER_LIMIT=10).
+    // Use 0xFF as a local timeout sentinel. Real xferId values are non-zero
+    // and derived from the order-list index (+1), so they are bounded by the
+    // configured order-list size rather than ESPNOW_PEER_LIMIT; this path
+    // relies only on excluding 0 and 0xFF from real wire values.
     switch (kind)
     {
     case OTA_FWD_BEGIN_NAK:
