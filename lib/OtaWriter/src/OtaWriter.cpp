@@ -148,6 +148,10 @@ void OtaWriter::process(queue_ota_writer_msg_t &msg)
         ESP_LOGE(TAG, "process: unknown msg.kind=%d", (int)msg.kind);
         break;
     }
+    // Convention (mirrors OtaReceiver::process / OtaForwarder::process):
+    // process() owns the free contract. Callers (otaWriterTask) must NOT
+    // free externally — doing so would double-free.
+    freeOtaWriterMsg(&msg);
 }
 
 // ─── Stubbed handlers — Tasks 5/6/7/8 fill in the bodies ────────────────
