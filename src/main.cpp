@@ -282,9 +282,10 @@ void init(void)
         abort();
     }
 
-    // Sized for the SHA-compute window: a ~1.5 MB firmware hashes in ~3 s
-    // during which ~60 ticks (50 ms cadence) back up. 64 slots absorb it
-    // without dropping the deadline-bearing sentinels.
+    // Sized for streaming-phase peak load: 50 ms tick + ACK/NAK arrivals
+    // from a chunk-streaming peer can overlap if the consumer is briefly
+    // blocked on file I/O. 64 slots give enough headroom that
+    // deadline-bearing sentinel posts don't get dropped under burst.
     otaForwarderQueue = xQueueCreate(64, sizeof(queue_ota_forwarder_msg_t));
     if (otaForwarderQueue == NULL)
     {

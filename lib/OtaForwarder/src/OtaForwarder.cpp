@@ -186,6 +186,7 @@ void OtaForwarder::handleBeginAck(queue_ota_forwarder_msg_t &msg)
     }
     beginAckTimerStop();
     phase_ = Phase::STREAMING;
+    tickTimerStart();
     // Kick a tick immediately so the first send window starts draining
     // before the 50 ms tick cadence catches up.
     handleTick();
@@ -245,6 +246,10 @@ void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
     if (msg.data_ack.highestContiguousSeq + 1 >= firmwareTotalChunks_ && phase_ == Phase::STREAMING)
     {
         // All chunks confirmed — time to send OTA_END.
+        // Stop the tick timer: AWAITING_END_ACK has no streaming work, so
+        // continued ticks would just enqueue no-ops and risk crowding the
+        // end-ack timeout sentinel out of the queue.
+        tickTimerStop();
         emitOtaEndFrame();
         phase_ = Phase::AWAITING_END_ACK;
         endAckTimerStart();
@@ -378,6 +383,12 @@ void OtaForwarder::handleTick()
         hdr.payloadLen = static_cast<uint16_t>(expectedLen);
 
         std::memcpy(payloadBuf, &hdr, sizeof(hdr));
+        // `firmware_read_short` is distinct from `firmware_read_failed`:
+        //   short — fread returned fewer bytes than requested (file changed
+        //           mid-transfer: truncation, unlink, sparse-file weirdness)
+        //   failed — ferror() set during the SHA pass at file-open
+        //           (typically an SD driver/hardware fault)
+        // Different root causes → different operator next-steps.
         if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0 ||
             std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_) != expectedLen)
         {
@@ -548,7 +559,9 @@ void OtaForwarder::startNextPadawan()
     phase_ = Phase::AWAITING_BEGIN_ACK;
     emitOtaBeginFrame();
     beginAckTimerStart();
-    tickTimerStart();
+    // tickTimer is started only when entering STREAMING (see handleBeginAck);
+    // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
+    // queue with no-op messages and risks crowding out deadline sentinels.
 }
 void OtaForwarder::abortCurrentPadawan(const std::string &reason)
 {
