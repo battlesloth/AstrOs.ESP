@@ -89,8 +89,8 @@ private:
 
     // Logs at WARN if a wire-frame send failed. Replies are advisory only —
     // master will retry/abandon on its own timeout if the reply doesn't land.
-    // Centralizes the per-NAK-site send-failure log so 14 call sites don't
-    // each carry an inline if-block.
+    // Centralizes the per-send failure log so callers don't each carry an
+    // inline if-block.
     void logSendResult(const char *site, esp_err_t err);
 
     std::atomic<bool> active_{false};

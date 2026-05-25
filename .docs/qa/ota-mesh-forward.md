@@ -49,7 +49,7 @@ The M4 merge-bar test. **This case must pass for M4 PR to merge.**
 5. Expected padawan log sequence:
    - `OtaWriter: handleBegin accepted: xferId=1 totalSize=N chunks=K chunkSize=128 partition='ota_X' (size=M, offset=0x...)`
    - Many `OtaWriter: handleData ... accepted` (DEBUG only) — no NAKs
-   - `OtaWriter: handleEnd: transfer xferId=1 OK — N bytes verified on partition 'ota_X' (NB: boot partition unchanged; PR set 2 will flip)`
+   - `OtaWriter: handleEnd: transfer xferId=1 OK — N bytes verified on partition 'ota_X'`
 6. Expected server UI: `pad1: OK`, deploy summary shows 1/1 successful
 
 ### Test case 2: byte-level verification
@@ -93,8 +93,9 @@ Validates that a stuck transfer self-aborts within 10 s.
 3. Trigger a deploy with order list `[pad1]`
 4. Padawan receives BEGIN, ACKs, awaits chunks
 5. Expected after ~10 s on padawan: `handleWatchdogFire: idle threshold (10000ms) exceeded for xferId=N — aborting transfer`
-6. Confirm padawan `isActive()` returns false: trigger a fresh deploy; it must succeed (test case 1 happy path replay)
-7. Revert the master-side modification
+6. **Late-END silent drop**: without rebooting the padawan, re-enable `bulk_.nextChunkToSend()` on master (revert the test modification), then trigger another deploy with the SAME order list. Master's OtaForwarder may emit an OTA_END from the prior aborted attempt before the new BEGIN propagates. Expected padawan log on that stray END: `handleEnd: xferId=N arrived while inactive — silent drop (master END_ACK timeout will recover)` — confirms the cleanup #1 fix #3 silent-drop path. (If the stray END doesn't reproduce, skip — this sub-step is opportunistic.)
+7. Confirm padawan `isActive()` returns false: trigger a fresh deploy; it must succeed (test case 1 happy path replay)
+8. Revert any remaining master-side modifications
 
 ### Stack high-water mark check
 
