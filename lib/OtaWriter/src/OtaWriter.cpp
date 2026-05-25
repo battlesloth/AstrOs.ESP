@@ -262,7 +262,97 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
 
 void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleData: stubbed (Task 6) — xferId=%u seq=%u", msg.data.xferId, msg.data.seq);
+    const uint8_t *mac = msg.data.srcMac;
+    const uint8_t xferId = msg.data.xferId;
+    const uint32_t seq = msg.data.seq;
+
+    if (!active_)
+    {
+        // Inactive NAK: chunk arrived while no transfer is live. Use the
+        // wire's xferId (not currentXferId_) since the master is still
+        // tagging by its in-flight transfer.
+        ESP_LOGW(TAG, "handleData: chunk for xferId=%u seq=%u arrived while inactive — NAK OUT_OF_ORDER", xferId, seq);
+        sendDataNak(mac, xferId, /*highestContiguousSeq=*/0, /*nextExpectedSeq=*/0,
+                    /*windowRemaining=*/0, OtaDataNakReason::OUT_OF_ORDER);
+        return;
+    }
+
+    auto cr = bulk_.onChunk(xferId, seq, msg.data.payloadLen, msg.data.crc16, msg.data.payload);
+
+    if (cr.decision == AstrOsBulkTransport::Decision::NAK)
+    {
+        OtaDataNakReason wireReason = OtaDataNakReason::OUT_OF_ORDER;
+        switch (cr.reason)
+        {
+        case AstrOsBulkTransport::NakReason::CRC:
+            wireReason = OtaDataNakReason::CRC;
+            break;
+        case AstrOsBulkTransport::NakReason::SIZE:
+            wireReason = OtaDataNakReason::SIZE;
+            break;
+        case AstrOsBulkTransport::NakReason::OUT_OF_ORDER:
+            wireReason = OtaDataNakReason::OUT_OF_ORDER;
+            break;
+        case AstrOsBulkTransport::NakReason::FLASH_FULL:
+            // BulkReceiver's receive-side capacity exhausted — terminal on
+            // our end. Map to WRITE so the master abandons rather than
+            // retransmitting into a writer that has no room.
+            ESP_LOGW(TAG, "handleData: NAK reason=FLASH_FULL — wire-encoding as WRITE (terminal)");
+            wireReason = OtaDataNakReason::WRITE;
+            break;
+        case AstrOsBulkTransport::NakReason::NONE:
+            // Shouldn't happen on a NAK decision; fall through to OUT_OF_ORDER
+            // as the safest hint for the master.
+            ESP_LOGW(TAG, "handleData: NAK with reason=NONE — wire-encoding as OUT_OF_ORDER");
+            wireReason = OtaDataNakReason::OUT_OF_ORDER;
+            break;
+        }
+        ESP_LOGW(TAG, "handleData: xferId=%u seq=%u NAK reason=%d (hcs=%u nes=%u wr=%u)", xferId, seq, (int)wireReason,
+                 (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
+        sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining, wireReason);
+        return;
+    }
+
+    // ACK path: BulkReceiver accepted the chunk. Write to flash, update
+    // streaming SHA, reply ACK.
+    esp_err_t wErr = esp_ota_write(otaHandle_, cr.payload, cr.payloadLen);
+    if (wErr != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleData: esp_ota_write failed: %s — aborting transfer xferId=%u seq=%u",
+                 esp_err_to_name(wErr), xferId, seq);
+        // Send NAK with WRITE reason so master logs a distinct failure
+        // signal (vs CRC / SIZE / OUT_OF_ORDER which suggest retransmit).
+        // WRITE is terminal — master should abandon the padawan.
+        sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining,
+                    OtaDataNakReason::WRITE);
+        resetOtaHandleAndSha();
+        watchdogStop();
+        return;
+    }
+
+    if (shaActive_)
+    {
+        AstrOsSha256_update(&shaCtx_, cr.payload, cr.payloadLen);
+    }
+    else
+    {
+        // Shouldn't happen — handleBegin sets shaActive_ on the same path
+        // that opens the OTA handle. If we hit this branch the SHA stream
+        // is desynchronized; the END-side compare will catch it as a
+        // HASH_MISMATCH, but log loudly.
+        ESP_LOGE(TAG, "handleData: shaActive_=false on accepted chunk — END will report HASH_MISMATCH");
+    }
+
+    ESP_LOGD(TAG, "handleData: xferId=%u seq=%u accepted (cum=%u next=%u wr=%u)", xferId, seq,
+             (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
+
+    esp_err_t sErr = sendDataAck(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining);
+    if (sErr != ESP_OK)
+    {
+        ESP_LOGW(TAG, "handleData: sendDataAck failed: %s — master tick-retransmit will re-trigger",
+                 esp_err_to_name(sErr));
+    }
+    watchdogRestart();
 }
 
 void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
