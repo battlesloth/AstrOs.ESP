@@ -559,6 +559,30 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
         return;
     }
 
+    // Forwarder queue is only allocated on master nodes (per main.cpp init).
+    // A padawan receiving FW_DEPLOY_BEGIN over serial is a routing
+    // misconfiguration — log + synthesize a per-target FAILED so the
+    // operator sees something terminal and JobLock releases.
+    if (this->otaForwarderQueue == nullptr)
+    {
+        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN received but otaForwarderQueue not initialized — rejecting (not master?)");
+        std::vector<astros_fw_deploy_result_t> failures;
+        failures.reserve(rec.orderIds.empty() ? 1 : rec.orderIds.size());
+        if (rec.orderIds.empty())
+        {
+            failures.push_back({"unknown", "FAILED", "", "not_master"});
+        }
+        else
+        {
+            for (const auto &id : rec.orderIds)
+            {
+                failures.push_back({id, "FAILED", "", "not_master"});
+            }
+        }
+        this->sendFwDeployDone(msgId, rec.transferId, failures);
+        return;
+    }
+
     std::string joined;
     for (size_t i = 0; i < rec.orderIds.size(); i++)
     {
