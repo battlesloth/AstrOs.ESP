@@ -158,7 +158,106 @@ void OtaWriter::process(queue_ota_writer_msg_t &msg)
 
 void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
 {
-    ESP_LOGW(TAG, "handleBegin: stubbed (Task 5) — xferId=%u totalSize=%u", msg.begin.xferId, msg.begin.totalSize);
+    const uint8_t *mac = msg.begin.srcMac;
+    const uint8_t xferId = msg.begin.xferId;
+
+    if (active_)
+    {
+        ESP_LOGW(TAG, "handleBegin: xferId=%u arrived while xferId=%u is active — replying BUSY", xferId,
+                 currentXferId_);
+        sendBeginNak(mac, xferId, OtaBeginNakReason::BUSY);
+        return;
+    }
+
+    // BulkReceiver wants a uint8_t xferId; rec.xferId is already a uint8_t
+    // from the wire, no parse needed.
+
+    // Inactive partition lookup. esp_ota_get_next_update_partition(NULL)
+    // returns the slot that's NOT currently the boot partition. On a fresh
+    // factory image where ota_data hasn't been written yet, ESP-IDF picks
+    // ota_0; once we've ever booted from ota_0, this returns ota_1.
+    inactivePartition_ = esp_ota_get_next_update_partition(NULL);
+    if (inactivePartition_ == nullptr)
+    {
+        ESP_LOGE(
+            TAG,
+            "handleBegin: esp_ota_get_next_update_partition returned NULL — partition table is missing ota_0/ota_1");
+        sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION);
+        return;
+    }
+
+    if (msg.begin.totalSize > inactivePartition_->size)
+    {
+        ESP_LOGW(TAG, "handleBegin: totalSize=%u exceeds partition '%s' size=%u — NAK NO_PARTITION",
+                 (unsigned)msg.begin.totalSize, inactivePartition_->label, (unsigned)inactivePartition_->size);
+        inactivePartition_ = nullptr;
+        sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION);
+        return;
+    }
+
+    // esp_ota_begin allocates internal state + reserves the partition for
+    // writing. OTA_SIZE_UNKNOWN tells it to erase only the sectors we
+    // actually write (lazy per-sector erase inside esp_ota_write). Passing
+    // the exact totalSize would let ESP-IDF erase the whole reserved span
+    // up front — that's a one-shot erase of ~2 MB (8MB board) or ~6.4 MB
+    // (16MB board), which can exceed the BEGIN_ACK timeout window. Lazy
+    // per-sector erase keeps the M4 happy-path latency budget intact;
+    // bench data via the M4 checkpoint validates this assumption
+    // (resolves design open-Q #5).
+    esp_err_t bErr = esp_ota_begin(inactivePartition_, OTA_SIZE_UNKNOWN, &otaHandle_);
+    if (bErr != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleBegin: esp_ota_begin failed: %s — NAK BEGIN_FAILED", esp_err_to_name(bErr));
+        otaHandle_ = 0;
+        inactivePartition_ = nullptr;
+        sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED);
+        return;
+    }
+
+    // BulkReceiver windowSize matches the master's BulkSender window (8) —
+    // see lib/OtaForwarder/include/OtaForwarder.hpp:156's kWindowSize.
+    constexpr uint8_t kWindowSize = 8;
+    auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kWindowSize);
+    if (!br.valid)
+    {
+        ESP_LOGW(TAG, "handleBegin: BulkReceiver::begin rejected: reason=%d (totalSize=%u chunks=%u chunkSize=%u)",
+                 (int)br.reason, (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks,
+                 (unsigned)msg.begin.chunkSize);
+        // esp_ota_begin succeeded but BulkReceiver setup failed —
+        // resetOtaHandleAndSha clears the partial state.
+        resetOtaHandleAndSha();
+        sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED);
+        return;
+    }
+
+    AstrOsSha256_init(&shaCtx_);
+    shaActive_ = true;
+
+    // Latch per-transfer state.
+    currentXferId_ = xferId;
+    memcpy(currentMasterMac_, mac, 6);
+    currentTotalSize_ = msg.begin.totalSize;
+    memcpy(expectedSha256_, msg.begin.sha256Expected, 32);
+    active_ = true;
+
+    ESP_LOGI(
+        TAG,
+        "handleBegin accepted: xferId=%u totalSize=%u chunks=%u chunkSize=%u partition='%s' (size=%u, offset=0x%lx)",
+        xferId, (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, (unsigned)msg.begin.chunkSize,
+        inactivePartition_->label, (unsigned)inactivePartition_->size, (unsigned long)inactivePartition_->address);
+
+    esp_err_t sendErr = sendBeginAck(mac, xferId);
+    if (sendErr != ESP_OK)
+    {
+        ESP_LOGW(TAG, "handleBegin: sendBeginAck failed: %s — relying on master tick-retransmit",
+                 esp_err_to_name(sendErr));
+        // Don't abort the transfer on ACK send failure — master's
+        // BEGIN_ACK timeout (2 s) will fire if the ACK never lands, at
+        // which point master retransmits OTA_BEGIN. Padawan-side state
+        // stays committed; the second BEGIN will hit the BUSY path above
+        // and return another ACK attempt.
+    }
+    watchdogStart();
 }
 
 void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
