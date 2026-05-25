@@ -383,16 +383,26 @@ void OtaForwarder::handleTick()
         hdr.payloadLen = static_cast<uint16_t>(expectedLen);
 
         std::memcpy(payloadBuf, &hdr, sizeof(hdr));
-        // `firmware_read_short` is distinct from `firmware_read_failed`:
-        //   short — fread returned fewer bytes than requested (file changed
-        //           mid-transfer: truncation, unlink, sparse-file weirdness)
-        //   failed — ferror() set during the SHA pass at file-open
-        //           (typically an SD driver/hardware fault)
-        // Different root causes → different operator next-steps.
-        if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0 ||
-            std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_) != expectedLen)
+        // Split fseek/fread checks so a seek failure isn't conflated with a
+        // short read in FW_DEPLOY_DONE. Reason vocabulary:
+        //   firmware_seek_failed — fseek returned non-zero (seek-time fault)
+        //   firmware_read_short  — fread returned fewer bytes than requested
+        //                          (file changed mid-transfer: truncation,
+        //                          unlink, sparse-file weirdness)
+        //   firmware_read_failed — ferror() set during the SHA pass at file
+        //                          open (SD driver/hardware fault)
+        // Different root causes → different operator next-steps. Matches
+        // streamDrain's per-check splitting.
+        if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0)
         {
-            ESP_LOGE(TAG, "Failed to re-read seq=%u for retransmit", seq);
+            ESP_LOGE(TAG, "fseek(%u) failed for retransmit seq=%u; abandoning", offset, seq);
+            abortCurrentPadawan("firmware_seek_failed");
+            return;
+        }
+        size_t read = std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_);
+        if (read != expectedLen)
+        {
+            ESP_LOGE(TAG, "fread(%u) returned %zu for retransmit seq=%u; abandoning", expectedLen, read, seq);
             abortCurrentPadawan("firmware_read_short");
             return;
         }
