@@ -126,6 +126,12 @@ private:
     // with that name is registered.
     bool resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const;
 
+    // True iff srcMac matches the padawan we're currently transferring to.
+    // Guards against stale or misrouted ACK/NAK frames from other peers
+    // advancing the BulkSender state. Sentinel-bytes paths (timer cbs)
+    // run BEFORE this check so the all-zero srcMac never reaches here.
+    bool isFromCurrentPadawan(const uint8_t srcMac[6]) const;
+
     // Active gate (read by pollingTimer's task).
     std::atomic<bool> active_{false};
 

@@ -198,6 +198,11 @@ void OtaForwarder::handleBeginAck(queue_ota_forwarder_msg_t &msg)
         ESP_LOGW(TAG, "Spurious OTA_BEGIN_ACK while phase=%d (xferId=%u); dropping", (int)phase_, msg.begin_ack.xferId);
         return;
     }
+    if (!isFromCurrentPadawan(msg.begin_ack.srcMac))
+    {
+        ESP_LOGW(TAG, "OTA_BEGIN_ACK from unexpected peer (xferId=%u); dropping", msg.begin_ack.xferId);
+        return;
+    }
     auto r = bulk_.onBeginAck(msg.begin_ack.xferId);
     if (r.decision != AstrOsBulkTransport::BeginAckResult::Decision::OK)
     {
@@ -222,10 +227,19 @@ void OtaForwarder::handleBeginNak(queue_ota_forwarder_msg_t &msg)
     }
 
     // Sentinel xferId=0xFF + reason=0xFF means "begin ack timeout fired".
+    // Check BEFORE the srcMac validation: the timer-cb sentinel has an
+    // all-zero srcMac (zero-init), so srcMac check would reject it.
     if (msg.begin_nak.xferId == 0xFF && msg.begin_nak.reason == 0xFF)
     {
         ESP_LOGW(TAG, "OTA_BEGIN_ACK timeout for %s after 2s; abandoning", currentControllerId_.c_str());
         abortCurrentPadawan("begin_ack_timeout");
+        return;
+    }
+
+    if (!isFromCurrentPadawan(msg.begin_nak.srcMac))
+    {
+        ESP_LOGW(TAG, "OTA_BEGIN_NAK from unexpected peer (xferId=%u reason=%u); dropping", msg.begin_nak.xferId,
+                 msg.begin_nak.reason);
         return;
     }
 
@@ -239,6 +253,12 @@ void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
     if (phase_ != Phase::STREAMING && phase_ != Phase::AWAITING_END_ACK)
     {
         ESP_LOGW(TAG, "Spurious OTA_DATA_ACK while phase=%d (xferId=%u); dropping", (int)phase_, msg.data_ack.xferId);
+        return;
+    }
+    if (!isFromCurrentPadawan(msg.data_ack.srcMac))
+    {
+        ESP_LOGW(TAG, "OTA_DATA_ACK from unexpected peer (xferId=%u cumulativeSeq=%u); dropping", msg.data_ack.xferId,
+                 msg.data_ack.highestContiguousSeq);
         return;
     }
     auto r = bulk_.onDataAck(msg.data_ack.xferId, msg.data_ack.highestContiguousSeq);
@@ -287,6 +307,12 @@ void OtaForwarder::handleDataNak(queue_ota_forwarder_msg_t &msg)
         ESP_LOGW(TAG, "Spurious OTA_DATA_NAK while phase=%d (xferId=%u); dropping", (int)phase_, msg.data_nak.xferId);
         return;
     }
+    if (!isFromCurrentPadawan(msg.data_nak.srcMac))
+    {
+        ESP_LOGW(TAG, "OTA_DATA_NAK from unexpected peer (xferId=%u nextExpectedSeq=%u); dropping", msg.data_nak.xferId,
+                 msg.data_nak.nextExpectedSeq);
+        return;
+    }
     auto r = bulk_.onDataNak(msg.data_nak.xferId, msg.data_nak.nextExpectedSeq,
                              static_cast<AstrOsBulkTransport::NakReason>(msg.data_nak.reason));
     switch (r.decision)
@@ -315,16 +341,30 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
                  msg.end_ack.xferId, msg.end_ack.status);
         return;
     }
-    endAckTimerStop();
-    tickTimerStop();
 
     // Sentinel xferId=0xFF + status=0xFF means END_ACK timeout fired.
+    // Check BEFORE the srcMac validation: the timer-cb sentinel has an
+    // all-zero srcMac (zero-init), so srcMac check would reject it.
     if (msg.end_ack.xferId == 0xFF && msg.end_ack.status == 0xFF)
     {
+        endAckTimerStop();
+        tickTimerStop();
         ESP_LOGW(TAG, "OTA_END_ACK timeout for %s after 5s; abandoning", currentControllerId_.c_str());
         abortCurrentPadawan("end_ack_timeout");
         return;
     }
+
+    if (!isFromCurrentPadawan(msg.end_ack.srcMac))
+    {
+        // Don't stop the timer — the real padawan might still respond, or
+        // the timeout will resolve the wait correctly.
+        ESP_LOGW(TAG, "OTA_END_ACK from unexpected peer (xferId=%u status=%u); dropping", msg.end_ack.xferId,
+                 msg.end_ack.status);
+        return;
+    }
+
+    endAckTimerStop();
+    tickTimerStop();
 
     auto endResult = bulk_.onEndAck(msg.end_ack.xferId, static_cast<OtaEndStatus>(msg.end_ack.status));
     switch (endResult.decision)
@@ -916,4 +956,9 @@ bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t
         }
     }
     return false;
+}
+
+bool OtaForwarder::isFromCurrentPadawan(const uint8_t srcMac[6]) const
+{
+    return std::memcmp(srcMac, currentPadawanMac_, 6) == 0;
 }
