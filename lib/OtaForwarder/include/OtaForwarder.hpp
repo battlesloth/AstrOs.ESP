@@ -56,7 +56,8 @@ private:
         STREAMING = 2,
         AWAITING_END_ACK = 3,
         BETWEEN_PADAWANS = 4, // result recorded; pulling next from order list
-        DONE = 5              // order list exhausted; FW_DEPLOY_DONE emitted
+        // Note: there is no DONE state — emitDeployDoneAndReset transitions
+        // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
 
     // Stringified to OK/FAILED at the wire boundary. If you add a value
