@@ -864,11 +864,22 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
     }
 }
 
+// All three Start helpers use stop-then-start: esp_timer has no native
+// restart and start on an already-running timer returns
+// ESP_ERR_INVALID_STATE. Stop on an idle timer is a documented no-op,
+// so the leading stop is safe regardless of prior state. Capture the
+// start return value and log on failure so a silently-dead timer
+// (the forwarder would hang in AWAITING_* forever) is diagnosable.
 void OtaForwarder::tickTimerStart()
 {
-    if (tickTimer_)
+    if (!tickTimer_)
+        return;
+    esp_timer_stop(tickTimer_);
+    esp_err_t err = esp_timer_start_periodic(tickTimer_, kTickPeriodUs);
+    if (err != ESP_OK)
     {
-        esp_timer_start_periodic(tickTimer_, kTickPeriodUs);
+        ESP_LOGE(TAG, "tickTimerStart: esp_timer_start_periodic failed: %s — streaming will stall",
+                 esp_err_to_name(err));
     }
 }
 void OtaForwarder::tickTimerStop()
@@ -880,9 +891,14 @@ void OtaForwarder::tickTimerStop()
 }
 void OtaForwarder::beginAckTimerStart()
 {
-    if (beginAckTimer_)
+    if (!beginAckTimer_)
+        return;
+    esp_timer_stop(beginAckTimer_);
+    esp_err_t err = esp_timer_start_once(beginAckTimer_, kBeginAckTimeoutUs);
+    if (err != ESP_OK)
     {
-        esp_timer_start_once(beginAckTimer_, kBeginAckTimeoutUs);
+        ESP_LOGE(TAG, "beginAckTimerStart: esp_timer_start_once failed: %s — forwarder may hang in AWAITING_BEGIN_ACK",
+                 esp_err_to_name(err));
     }
 }
 void OtaForwarder::beginAckTimerStop()
@@ -894,9 +910,14 @@ void OtaForwarder::beginAckTimerStop()
 }
 void OtaForwarder::endAckTimerStart()
 {
-    if (endAckTimer_)
+    if (!endAckTimer_)
+        return;
+    esp_timer_stop(endAckTimer_);
+    esp_err_t err = esp_timer_start_once(endAckTimer_, kEndAckTimeoutUs);
+    if (err != ESP_OK)
     {
-        esp_timer_start_once(endAckTimer_, kEndAckTimeoutUs);
+        ESP_LOGE(TAG, "endAckTimerStart: esp_timer_start_once failed: %s — forwarder may hang in AWAITING_END_ACK",
+                 esp_err_to_name(err));
     }
 }
 void OtaForwarder::endAckTimerStop()
