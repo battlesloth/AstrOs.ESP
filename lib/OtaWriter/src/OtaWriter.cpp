@@ -495,7 +495,23 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 
 void OtaWriter::handleWatchdogFire()
 {
-    ESP_LOGW(TAG, "handleWatchdogFire: stubbed (Task 8)");
+    if (!active_)
+    {
+        // Late fire: handleEnd or a NAK-side reset already cleaned up,
+        // and the watchdog signal landed in the queue before watchdogStop
+        // took effect. No-op — but log so a misfiring timer is visible.
+        ESP_LOGI(TAG, "handleWatchdogFire: no active transfer; treating as late signal");
+        return;
+    }
+    ESP_LOGE(TAG, "handleWatchdogFire: idle threshold (%llums) exceeded for xferId=%u — aborting transfer",
+             kWatchdogIdleUs / 1000ULL, currentXferId_);
+    // No reply to master — the watchdog fires when the master is unreachable
+    // or has already abandoned the transfer (its own BEGIN_ACK / data-ack /
+    // END_ACK timeouts will have triggered). Sending a NAK into a dead
+    // mesh wastes bandwidth and risks confusing a fresh transfer that
+    // happens to be using the same xferId from a different master incarnation.
+    resetOtaHandleAndSha();
+    watchdogStop();
 }
 
 // ─── Wire-emission helpers — Tasks 5/6/7 use these ──────────────────────
