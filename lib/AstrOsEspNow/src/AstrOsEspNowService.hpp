@@ -49,6 +49,16 @@ private:
 
     AstrOsEspNowMessageService messageService;
 
+    QueueHandle_t otaForwarderQueue_ = nullptr;
+
+    // Routes an OTA ACK/NAK packet (master-side receive) into
+    // otaForwarderQueue_. Parses via M1's parseOta* free functions.
+    // Returns false ONLY for wire-malformed payload (parse rejection);
+    // returns true on successful enqueue AND on intentional queue-full
+    // drop (handled-then-dropped, not unhandled — the dropped ACK/NAK
+    // will be reconstructed by the next padawan retransmit or tick).
+    bool routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet);
+
     void getMasterMac(uint8_t *macAddress);
     void updateMasterMac(uint8_t *macAddress);
 
@@ -88,6 +98,23 @@ public:
 
     void sendBasicCommand(AstrOsPacketType type, std::string peer, std::string msgId, std::string msg);
     void sendBasicAckNak(std::string msgId, AstrOsPacketType type, std::string msg);
+
+    // Binary-frame TX for OTA. Builds the wire frame via
+    // messageService.generateOtaPacket(type, payload, len), unicasts to
+    // `mac` via esp_now_send. Returns ESP_OK on successful enqueue;
+    // ESP_ERR_INVALID_ARG if the builder rejected (wrong type / oversize);
+    // whatever esp_now_send returned otherwise.
+    //
+    // Memory ownership: `payload` is copied into the wire frame inside
+    // generateOtaPacket; caller retains ownership of the input buffer.
+    // The internal frame buffer is freed unconditionally after esp_now_send
+    // returns (Pattern A immediate-free, matching the other send-helpers).
+    esp_err_t sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len);
+
+    // OTA ACK/NAK arrivals on the master are routed into this queue.
+    // Called from main.cpp during init; before this is set, OTA arrivals
+    // on master fall through to ESP_LOGW + drop (same path as padawan).
+    void setOtaForwarderQueue(QueueHandle_t q);
 
     std::string getMac();
     std::string getName();

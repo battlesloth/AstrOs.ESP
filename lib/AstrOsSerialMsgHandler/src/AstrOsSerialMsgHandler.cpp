@@ -4,6 +4,7 @@
 #include <AstrOsSerialMsgHandler.hpp>
 #include <AstrOsSerialProtocol.hpp>
 #include <AstrOsUtility.h>
+#include <OtaForwarderQueueMessage.h>
 #include <OtaQueueMessage.h>
 #include <errno.h>
 #include <esp_log.h>
@@ -36,11 +37,13 @@ AstrOsSerialMsgHandler::AstrOsSerialMsgHandler() {}
 
 AstrOsSerialMsgHandler::~AstrOsSerialMsgHandler() {}
 
-void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue, QueueHandle_t serialQueue, QueueHandle_t otaQueue)
+void AstrOsSerialMsgHandler::Init(QueueHandle_t handlerQueue, QueueHandle_t serialQueue, QueueHandle_t otaQueue,
+                                  QueueHandle_t otaForwarderQueue)
 {
     this->handlerQueue = handlerQueue;
     this->serialQueue = serialQueue;
     this->otaQueue = otaQueue;
+    this->otaForwarderQueue = otaForwarderQueue;
 
     this->msgService = AstrOsSerialMessageService();
 }
@@ -556,6 +559,30 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
         return;
     }
 
+    // Forwarder queue is only allocated on master nodes (per main.cpp init).
+    // A padawan receiving FW_DEPLOY_BEGIN over serial is a routing
+    // misconfiguration — log + synthesize a per-target FAILED so the
+    // operator sees something terminal and JobLock releases.
+    if (this->otaForwarderQueue == nullptr)
+    {
+        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN received but otaForwarderQueue not initialized — rejecting (not master?)");
+        std::vector<astros_fw_deploy_result_t> failures;
+        failures.reserve(rec.orderIds.empty() ? 1 : rec.orderIds.size());
+        if (rec.orderIds.empty())
+        {
+            failures.push_back({"unknown", "FAILED", "", "not_master"});
+        }
+        else
+        {
+            for (const auto &id : rec.orderIds)
+            {
+                failures.push_back({id, "FAILED", "", "not_master"});
+            }
+        }
+        this->sendFwDeployDone(msgId, rec.transferId, failures);
+        return;
+    }
+
     std::string joined;
     for (size_t i = 0; i < rec.orderIds.size(); i++)
     {
@@ -566,9 +593,9 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
         joined += rec.orderIds[i];
     }
 
-    queue_ota_msg_t m;
+    queue_ota_forwarder_msg_t m;
     memset(&m, 0, sizeof(m));
-    m.kind = OTA_MSG_DEPLOY_BEGIN;
+    m.kind = OTA_FWD_DEPLOY_BEGIN;
     m.transferId = dupString(rec.transferId);
     m.deploy.msgId = dupString(msgId);
     m.deploy.orderList = dupString(joined);
@@ -576,25 +603,27 @@ void AstrOsSerialMsgHandler::handleFwDeployBeginInbound(const std::string &msgId
     if (m.transferId == nullptr || m.deploy.msgId == nullptr || m.deploy.orderList == nullptr)
     {
         ESP_LOGE(TAG, "Malloc failed in FW_DEPLOY_BEGIN dispatch");
-        freeOtaMsg(&m);
+        freeOtaForwarderMsg(&m);
         // Synthesize a FAILED result per target so JobLock can release.
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
         {
-            failures.push_back({id, "FAILED", "", "io_error"});
+            failures.push_back({id, "FAILED", "", "alloc_failed"});
         }
         this->sendFwDeployDone(msgId, rec.transferId, failures);
         return;
     }
 
-    if (xQueueSend(this->otaQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
+    if (xQueueSend(this->otaForwarderQueue, &m, pdMS_TO_TICKS(500)) != pdTRUE)
     {
-        ESP_LOGW(TAG, "otaQueue full at FW_DEPLOY_BEGIN");
-        freeOtaMsg(&m);
+        ESP_LOGW(TAG, "otaForwarderQueue full at FW_DEPLOY_BEGIN");
+        freeOtaForwarderMsg(&m);
         std::vector<astros_fw_deploy_result_t> failures;
         for (const auto &id : rec.orderIds)
         {
-            failures.push_back({id, "FAILED", "", "io_error"});
+            // Back-pressure, not I/O — match OtaForwarder's "forwarder_busy"
+            // sibling so an operator scanning logs doesn't hunt SD/flash.
+            failures.push_back({id, "FAILED", "", "forwarder_queue_full"});
         }
         this->sendFwDeployDone(msgId, rec.transferId, failures);
     }

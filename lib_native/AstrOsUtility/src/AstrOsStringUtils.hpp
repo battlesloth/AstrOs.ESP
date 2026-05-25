@@ -195,6 +195,35 @@ public:
         out[2 * len] = '\0';
     }
 
+    /// @brief Parse an RS (0x1E) separated controller-id list. Empty fields
+    ///        are dropped (unlike splitString which preserves middles).
+    ///        Tolerates a nullptr.
+    [[nodiscard]] static std::vector<std::string> parseOrderList(const char *raw)
+    {
+        std::vector<std::string> out;
+        if (raw == nullptr)
+        {
+            return out;
+        }
+        std::string s = raw;
+        size_t start = 0;
+        while (start < s.size())
+        {
+            size_t end = s.find(RECORD_SEPARATOR, start);
+            std::string id = (end == std::string::npos) ? s.substr(start) : s.substr(start, end - start);
+            if (!id.empty())
+            {
+                out.push_back(id);
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return out;
+    }
+
     template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)
     {
         int size = std::snprintf(nullptr, 0, format.c_str(), std::forward<Args>(args)...);

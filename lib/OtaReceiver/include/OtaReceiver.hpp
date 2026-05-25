@@ -8,6 +8,8 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
+#include <optional>
 #include <string>
 
 // needed for QueueHandle_t, must be in this order
@@ -56,6 +58,11 @@ private:
     AstrOsSha256Ctx shaCtx_;
     bool shaActive_ = false;
 
+    // Set inside handleEnd's success-rename branch. Read by
+    // getLastFirmwarePath() under lastFirmwareMutex_.
+    mutable std::mutex lastFirmwareMutex_;
+    std::string lastFirmwarePath_;
+
 public:
     OtaReceiver();
     ~OtaReceiver();
@@ -80,11 +87,21 @@ public:
         return active_;
     }
 
+    // Returns the path of the most recently successfully-renamed firmware,
+    // or std::nullopt if no firmware has been received yet. Set by
+    // handleEnd's success-rename branch. Thread-safe; OtaForwarder
+    // (different task on same core) reads this on FW_DEPLOY_BEGIN to
+    // locate the staged .bin file.
+    //
+    // Single-firmware-at-a-time assumption: the typical server flow is
+    // "upload, then immediately deploy". Multi-firmware tracking (by
+    // transferId or sha) is a future-milestone concern.
+    std::optional<std::string> getLastFirmwarePath() const;
+
 private:
     void handleBegin(queue_ota_msg_t &msg);
     void handleChunk(queue_ota_msg_t &msg);
     void handleEnd(queue_ota_msg_t &msg);
-    void handleDeployBegin(queue_ota_msg_t &msg);
     void handleWatchdogFire();
 
     // esp_timer's one-shot has no native "restart" — these centralize the

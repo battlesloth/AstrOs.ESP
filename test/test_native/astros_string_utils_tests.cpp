@@ -188,3 +188,56 @@ TEST(StringUtils, ParseStrictU8AcceptsLeadingZeros)
     EXPECT_EQ(7u, AstrOsStringUtils::parseStrictU8("007").value());
     EXPECT_EQ(0u, AstrOsStringUtils::parseStrictU8("00").value());
 }
+
+TEST(StringUtils, ParseOrderListNullReturnsEmpty)
+{
+    auto v = AstrOsStringUtils::parseOrderList(nullptr);
+    EXPECT_TRUE(v.empty());
+}
+
+TEST(StringUtils, ParseOrderListEmptyReturnsEmpty)
+{
+    auto v = AstrOsStringUtils::parseOrderList("");
+    EXPECT_TRUE(v.empty());
+}
+
+TEST(StringUtils, ParseOrderListSingleId)
+{
+    auto v = AstrOsStringUtils::parseOrderList("body");
+    ASSERT_EQ(1u, v.size());
+    EXPECT_EQ("body", v[0]);
+}
+
+TEST(StringUtils, ParseOrderListMultipleIds)
+{
+    // Use string-literal concatenation to break hex-escape greediness:
+    // "\x1Ec" would be parsed as a 12-bit hex escape, not RS + 'c'.
+    auto v = AstrOsStringUtils::parseOrderList("body\x1E"
+                                               "core\x1E"
+                                               "dome");
+    ASSERT_EQ(3u, v.size());
+    EXPECT_EQ("body", v[0]);
+    EXPECT_EQ("core", v[1]);
+    EXPECT_EQ("dome", v[2]);
+}
+
+TEST(StringUtils, ParseOrderListDropsTrailingEmpty)
+{
+    auto v = AstrOsStringUtils::parseOrderList("body\x1E"
+                                               "core\x1E");
+    ASSERT_EQ(2u, v.size());
+    EXPECT_EQ("body", v[0]);
+    EXPECT_EQ("core", v[1]);
+}
+
+TEST(StringUtils, ParseOrderListDropsLeadingAndMiddleEmpties)
+{
+    // Consecutive RS would represent an empty controller-id, which is invalid
+    // as a deploy target — drop them all.
+    auto v = AstrOsStringUtils::parseOrderList("\x1E"
+                                               "body\x1E\x1E"
+                                               "core");
+    ASSERT_EQ(2u, v.size());
+    EXPECT_EQ("body", v[0]);
+    EXPECT_EQ("core", v[1]);
+}

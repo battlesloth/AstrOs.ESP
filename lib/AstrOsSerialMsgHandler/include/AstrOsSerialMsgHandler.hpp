@@ -16,6 +16,7 @@ private:
     QueueHandle_t handlerQueue;
     QueueHandle_t serialQueue;
     QueueHandle_t otaQueue;
+    QueueHandle_t otaForwarderQueue;
 
     AstrOsSerialMessageService msgService;
 
@@ -30,7 +31,8 @@ private:
 public:
     AstrOsSerialMsgHandler();
     ~AstrOsSerialMsgHandler();
-    void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue, QueueHandle_t otaQueue);
+    void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue, QueueHandle_t otaQueue,
+              QueueHandle_t otaForwarderQueue);
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
     void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,

@@ -154,9 +154,6 @@ void OtaReceiver::process(queue_ota_msg_t &msg)
     case OTA_MSG_END:
         handleEnd(msg);
         break;
-    case OTA_MSG_DEPLOY_BEGIN:
-        handleDeployBegin(msg);
-        break;
     case OTA_MSG_WATCHDOG_FIRE:
         handleWatchdogFire();
         break;
@@ -271,6 +268,18 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         bulk_.reset();
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
         return;
+    }
+
+    // Invalidate the prior firmware's accessor entry now that we're
+    // committed to a new staging file. Placed AFTER all rejection paths
+    // (parse / SD / fopen) so a failed BEGIN attempt doesn't invalidate
+    // a perfectly-good prior firmware. If the accepted transfer itself
+    // later fails (HASH_MISMATCH, rename failure), the accessor stays
+    // empty — a subsequent FW_DEPLOY_BEGIN reports "no_firmware" rather
+    // than silently deploying the previous firmware.
+    {
+        std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+        lastFirmwarePath_.clear();
     }
 
     AstrOsSha256_init(&shaCtx_);
@@ -497,6 +506,10 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
                 }
                 if (rename(kStagingPath, finalPath) == 0)
                 {
+                    {
+                        std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+                        lastFirmwarePath_ = finalPath;
+                    }
                     ESP_LOGI(TAG, "FW_TRANSFER_END OK: transferId=%s totalChunks=%u path=%s sha=%s",
                              transferIdIn.c_str(), (unsigned)msg.end.totalChunks, finalPath, computedHex);
                     AstrOs_SerialMsgHandler.sendFwTransferEndAck(msgId, transferIdIn, "OK", computedHex);
@@ -588,39 +601,12 @@ void OtaReceiver::handleEnd(queue_ota_msg_t &msg)
     }
 }
 
-void OtaReceiver::handleDeployBegin(queue_ota_msg_t &msg)
+std::optional<std::string> OtaReceiver::getLastFirmwarePath() const
 {
-    std::string transferIdIn = msg.transferId ? msg.transferId : "";
-    std::string msgId = msg.deploy.msgId ? msg.deploy.msgId : "";
-    std::string orderListStr = msg.deploy.orderList ? msg.deploy.orderList : "";
-
-    if (orderListStr.empty())
+    std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+    if (lastFirmwarePath_.empty())
     {
-        // sendFwDeployDone would drop empty results — skip to avoid double-log.
-        ESP_LOGE(TAG, "FW_DEPLOY_BEGIN orderList empty — dropping");
-        return;
+        return std::nullopt;
     }
-
-    std::vector<astros_fw_deploy_result_t> results;
-    size_t start = 0;
-    while (start < orderListStr.size())
-    {
-        size_t end = orderListStr.find('\x1E', start);
-        std::string id =
-            (end == std::string::npos) ? orderListStr.substr(start) : orderListStr.substr(start, end - start);
-        if (!id.empty())
-        {
-            results.push_back({id, "FAILED", "", "not_implemented"});
-        }
-        if (end == std::string::npos)
-        {
-            break;
-        }
-        start = end + 1;
-    }
-
-    ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s target-count=%zu — all-FAILED not_implemented", transferIdIn.c_str(),
-             results.size());
-
-    AstrOs_SerialMsgHandler.sendFwDeployDone(msgId, transferIdIn, results);
+    return lastFirmwarePath_;
 }

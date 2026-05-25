@@ -14,10 +14,9 @@ extern "C"
         OTA_MSG_BEGIN = 0,
         OTA_MSG_CHUNK = 1,
         OTA_MSG_END = 2,
-        OTA_MSG_DEPLOY_BEGIN = 3,
         // Posted by the idle-activity watchdog when no chunk activity is seen
         // within the threshold. No payload; transferId is nullptr.
-        OTA_MSG_WATCHDOG_FIRE = 4
+        OTA_MSG_WATCHDOG_FIRE = 3
     } ota_msg_kind_t;
 
     // Discriminated union carrying one decoded inbound FW_* message from
@@ -33,7 +32,6 @@ extern "C"
     //   OTA_MSG_BEGIN          transferId, msgId, targetList
     //   OTA_MSG_CHUNK          transferId, payload
     //   OTA_MSG_END            transferId, msgId
-    //   OTA_MSG_DEPLOY_BEGIN   transferId, msgId, orderList
     //   OTA_MSG_WATCHDOG_FIRE  none (transferId is nullptr; no union arm)
     //
     // sha256Hex / finalSha256Hex are inline 65-byte buffers (64 hex chars +
@@ -76,12 +74,6 @@ extern "C"
                 uint32_t totalChunks;
                 char finalSha256Hex[SHA256_HEX_LEN + 1];
             } end;
-
-            struct
-            {
-                char *msgId;     // DEPLOY_BEGIN's msgId for DONE echo
-                char *orderList; // RS-separated controller-id list
-            } deploy;
         };
     } queue_ota_msg_t;
 
@@ -109,12 +101,6 @@ extern "C"
         case OTA_MSG_END:
             free(m->end.msgId);
             m->end.msgId = NULL;
-            break;
-        case OTA_MSG_DEPLOY_BEGIN:
-            free(m->deploy.msgId);
-            free(m->deploy.orderList);
-            m->deploy.msgId = NULL;
-            m->deploy.orderList = NULL;
             break;
         case OTA_MSG_WATCHDOG_FIRE:
             // No union arm; transferId is nullptr by contract.

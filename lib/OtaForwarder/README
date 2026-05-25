@@ -1,0 +1,13 @@
+# OtaForwarder (MIXED)
+
+Master-only OTA forwarder for the mesh-forward feature. Consumes:
+
+- `lib_native/AstrOsBulkTransport::BulkSender` — sliding-window send/ACK state machine
+- `lib_native/AstrOsMessaging` — wire-format builders/parsers
+- `lib/OtaReceiver::getLastFirmwarePath()` — staged firmware path lookup
+- `lib/AstrOsEspNow::sendOtaFrame()` — binary-frame ESP-NOW TX
+
+Runs on a dedicated FreeRTOS task pinned to core 1. Master only — gated
+on `isMasterNode` at task spawn in `src/main.cpp`.
+
+See `.docs/plans/` for design + implementation history.
