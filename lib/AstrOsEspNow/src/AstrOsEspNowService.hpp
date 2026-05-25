@@ -52,10 +52,11 @@ private:
     QueueHandle_t otaForwarderQueue_ = nullptr;
 
     // Routes an OTA ACK/NAK packet (master-side receive) into
-    // otaForwarderQueue_. Parses via M1's parseOta* free functions to
-    // distinguish wire-malformed (rec.valid == false) from
-    // wire-valid-but-queue-full failures. Returns true on success;
-    // false logs and drops.
+    // otaForwarderQueue_. Parses via M1's parseOta* free functions.
+    // Returns false ONLY for wire-malformed payload (parse rejection);
+    // returns true on successful enqueue AND on intentional queue-full
+    // drop (handled-then-dropped, not unhandled — the dropped ACK/NAK
+    // will be reconstructed by the next padawan retransmit or tick).
     bool routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet);
 
     void getMasterMac(uint8_t *macAddress);

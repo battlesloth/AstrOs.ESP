@@ -198,16 +198,6 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         return;
     }
 
-    // Invalidate the prior firmware's accessor entry the moment a new
-    // transfer starts. If the new transfer fails (hash mismatch, rename
-    // failure, transfer abandoned), an intervening FW_DEPLOY_BEGIN would
-    // otherwise pick up the stale path and deploy the previous firmware
-    // without any signal it wasn't the one the operator just uploaded.
-    {
-        std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
-        lastFirmwarePath_.clear();
-    }
-
     // BulkReceiver wants a uint8_t; parseStrictU8 rejects whitespace and signed forms.
     auto parsed = AstrOsStringUtils::parseStrictU8(transferIdIn);
     if (!parsed.has_value())
@@ -278,6 +268,18 @@ void OtaReceiver::handleBegin(queue_ota_msg_t &msg)
         bulk_.reset();
         AstrOs_SerialMsgHandler.sendFwTransferBeginAck(msgId, transferIdIn, "io_error");
         return;
+    }
+
+    // Invalidate the prior firmware's accessor entry now that we're
+    // committed to a new staging file. Placed AFTER all rejection paths
+    // (parse / SD / fopen) so a failed BEGIN attempt doesn't invalidate
+    // a perfectly-good prior firmware. If the accepted transfer itself
+    // later fails (HASH_MISMATCH, rename failure), the accessor stays
+    // empty — a subsequent FW_DEPLOY_BEGIN reports "no_firmware" rather
+    // than silently deploying the previous firmware.
+    {
+        std::lock_guard<std::mutex> lock(lastFirmwareMutex_);
+        lastFirmwarePath_.clear();
     }
 
     AstrOsSha256_init(&shaCtx_);

@@ -382,7 +382,7 @@ void OtaForwarder::handleTick()
             std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_) != expectedLen)
         {
             ESP_LOGE(TAG, "Failed to re-read seq=%u for retransmit", seq);
-            abortCurrentPadawan("file_read_short");
+            abortCurrentPadawan("firmware_read_short");
             return;
         }
 
@@ -725,14 +725,14 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
             if (std::fseek(firmwareFile_, offset, SEEK_SET) != 0)
             {
                 ESP_LOGE(TAG, "fseek(%u) failed mid-transfer; abandoning", offset);
-                abortCurrentPadawan("file_seek_failed");
+                abortCurrentPadawan("firmware_seek_failed");
                 return;
             }
             size_t read = std::fread(payloadBuf + sizeof(hdr), 1, expectedLen, firmwareFile_);
             if (read != expectedLen)
             {
                 ESP_LOGE(TAG, "fread(%u) returned %zu mid-transfer; abandoning", expectedLen, read);
-                abortCurrentPadawan("file_read_short");
+                abortCurrentPadawan("firmware_read_short");
                 return;
             }
 

@@ -234,7 +234,7 @@ void app_main()
                                     1) != pdPASS)
         {
             ESP_LOGE(TAG, "Failed to create otaForwarderTask — aborting init");
-            return;
+            abort();
         }
     }
 
