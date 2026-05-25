@@ -314,6 +314,15 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
                  (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
         logSendResult("handleData chunk NAK", sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq,
                                                           cr.windowRemaining, wireReason));
+        // Silence-based watchdog: a transient NAK (CRC/SIZE/OUT_OF_ORDER/NONE)
+        // still proves master is alive and retransmitting, so reset the idle
+        // timer. FLASH_FULL is the exception — it's wire-encoded as terminal
+        // WRITE so master abandons; leaving the watchdog ticking ensures
+        // cleanup if master ignores the WRITE NAK and keeps sending.
+        if (cr.reason != AstrOsBulkTransport::NakReason::FLASH_FULL)
+        {
+            watchdogRestart();
+        }
         return;
     }
 
