@@ -358,6 +358,7 @@ void init(void)
     if (!isMasterNode.load())
     {
         AstrOs_OtaWriter.Init(otaWriterQueue);
+        AstrOs_EspNow.setOtaWriterQueue(otaWriterQueue);
     }
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 

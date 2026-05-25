@@ -50,6 +50,7 @@ private:
     AstrOsEspNowMessageService messageService;
 
     QueueHandle_t otaForwarderQueue_ = nullptr;
+    QueueHandle_t otaWriterQueue_ = nullptr;
 
     // Routes an OTA ACK/NAK packet (master-side receive) into
     // otaForwarderQueue_. Parses via M1's parseOta* free functions.
@@ -58,6 +59,15 @@ private:
     // drop (handled-then-dropped, not unhandled — the dropped ACK/NAK
     // will be reconstructed by the next padawan retransmit or tick).
     bool routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet);
+
+    // Padawan-side OTA dispatcher. Parses OTA_BEGIN / OTA_DATA / OTA_END
+    // via parseOta*, fills a queue_ota_writer_msg_t (OTA_DATA additionally
+    // mallocs + memcpys the payload because parseOtaData returns a pointer
+    // into the soon-to-be-freed packet buffer), posts to otaWriterQueue_.
+    // Returns true if the packet was handled (queued or intentionally
+    // dropped); false if a parse error means the dispatcher's residual
+    // switch should log an unhandled-packet diagnostic.
+    bool routeOtaToWriter(const uint8_t *src, const astros_packet_t &packet);
 
     void getMasterMac(uint8_t *macAddress);
     void updateMasterMac(uint8_t *macAddress);
@@ -115,6 +125,11 @@ public:
     // Called from main.cpp during init; before this is set, OTA arrivals
     // on master fall through to ESP_LOGW + drop (same path as padawan).
     void setOtaForwarderQueue(QueueHandle_t q);
+
+    // Padawan-only. Setter for the otaWriterQueue used by the OTA arm of
+    // the residual switch. nullptr leaves the dispatcher in the M3 "stub"
+    // state (logs + drops). Master sets nullptr or skips the call entirely.
+    void setOtaWriterQueue(QueueHandle_t q);
 
     std::string getMac();
     std::string getName();

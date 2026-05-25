@@ -10,7 +10,9 @@
     "dependencies": {
         "AstrOsBulkTransport": "*",
         "AstrOsEspNow": "*",
+        "AstrOsEspNowPeers": "*",
         "AstrOsMessaging": "*",
+        "AstrOsQueueMessages": "*",
         "AstrOsUtility": "*"
     }
 }
