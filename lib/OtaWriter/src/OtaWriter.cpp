@@ -106,6 +106,10 @@ void OtaWriter::watchdogStop()
 
 void OtaWriter::resetOtaHandleAndSha()
 {
+    // Stop the watchdog first so a pending fire either no-ops on the
+    // already-stopped timer or queues a WATCHDOG_FIRE that hits the
+    // late-signal path below (active_ = false by the time it dispatches).
+    watchdogStop();
     if (otaHandle_ != 0)
     {
         // esp_ota_abort releases the handle. Return value isn't actionable
@@ -126,6 +130,14 @@ void OtaWriter::resetOtaHandleAndSha()
     currentTotalSize_ = 0;
     memset(expectedSha256_, 0, sizeof(expectedSha256_));
     active_ = false;
+}
+
+void OtaWriter::logSendResult(const char *site, esp_err_t err)
+{
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "%s send failed: %s — master timeout will recover", site, esp_err_to_name(err));
+    }
 }
 
 void OtaWriter::process(queue_ota_writer_msg_t &msg)
@@ -165,7 +177,7 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
     {
         ESP_LOGW(TAG, "handleBegin: xferId=%u arrived while xferId=%u is active — replying BUSY", xferId,
                  currentXferId_);
-        sendBeginNak(mac, xferId, OtaBeginNakReason::BUSY);
+        logSendResult("handleBegin BUSY NAK", sendBeginNak(mac, xferId, OtaBeginNakReason::BUSY));
         return;
     }
 
@@ -182,7 +194,7 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         ESP_LOGE(
             TAG,
             "handleBegin: esp_ota_get_next_update_partition returned NULL — partition table is missing ota_0/ota_1");
-        sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION);
+        logSendResult("handleBegin NO_PARTITION NAK", sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION));
         return;
     }
 
@@ -191,7 +203,8 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         ESP_LOGW(TAG, "handleBegin: totalSize=%u exceeds partition '%s' size=%u — NAK NO_PARTITION",
                  (unsigned)msg.begin.totalSize, inactivePartition_->label, (unsigned)inactivePartition_->size);
         inactivePartition_ = nullptr;
-        sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION);
+        logSendResult("handleBegin NO_PARTITION (oversize) NAK",
+                      sendBeginNak(mac, xferId, OtaBeginNakReason::NO_PARTITION));
         return;
     }
 
@@ -210,7 +223,8 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         ESP_LOGE(TAG, "handleBegin: esp_ota_begin failed: %s — NAK BEGIN_FAILED", esp_err_to_name(bErr));
         otaHandle_ = 0;
         inactivePartition_ = nullptr;
-        sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED);
+        logSendResult("handleBegin BEGIN_FAILED (esp_ota_begin) NAK",
+                      sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED));
         return;
     }
 
@@ -226,7 +240,8 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         // esp_ota_begin succeeded but BulkReceiver setup failed —
         // resetOtaHandleAndSha clears the partial state.
         resetOtaHandleAndSha();
-        sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED);
+        logSendResult("handleBegin BEGIN_FAILED (BulkReceiver) NAK",
+                      sendBeginNak(mac, xferId, OtaBeginNakReason::BEGIN_FAILED));
         return;
     }
 
@@ -246,17 +261,11 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         xferId, (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, (unsigned)msg.begin.chunkSize,
         inactivePartition_->label, (unsigned)inactivePartition_->size, (unsigned long)inactivePartition_->address);
 
-    esp_err_t sendErr = sendBeginAck(mac, xferId);
-    if (sendErr != ESP_OK)
-    {
-        ESP_LOGW(TAG, "handleBegin: sendBeginAck failed: %s — relying on master tick-retransmit",
-                 esp_err_to_name(sendErr));
-        // Don't abort the transfer on ACK send failure — master's
-        // BEGIN_ACK timeout (2 s) will fire if the ACK never lands, at
-        // which point master retransmits OTA_BEGIN. Padawan-side state
-        // stays committed; the second BEGIN will hit the BUSY path above
-        // and return another ACK attempt.
-    }
+    // Don't abort the transfer on ACK send failure — master's BEGIN_ACK
+    // timeout (2 s) will fire if the ACK never lands, at which point master
+    // retransmits OTA_BEGIN. Padawan-side state stays committed; the second
+    // BEGIN will hit the BUSY path above and return another ACK attempt.
+    logSendResult("handleBegin BEGIN_ACK", sendBeginAck(mac, xferId));
     watchdogStart();
 }
 
@@ -270,10 +279,12 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
     {
         // Inactive NAK: chunk arrived while no transfer is live. Use the
         // wire's xferId (not currentXferId_) since the master is still
-        // tagging by its in-flight transfer.
+        // tagging by its in-flight transfer. Zero hint fields signal
+        // "receiver inactive" — non-zero would invite the master to
+        // rewind to a seq we don't track.
         ESP_LOGW(TAG, "handleData: chunk for xferId=%u seq=%u arrived while inactive — NAK OUT_OF_ORDER", xferId, seq);
-        sendDataNak(mac, xferId, /*highestContiguousSeq=*/0, /*nextExpectedSeq=*/0,
-                    /*windowRemaining=*/0, OtaDataNakReason::OUT_OF_ORDER);
+        logSendResult("handleData inactive NAK",
+                      sendDataNak(mac, xferId, /*hcs=*/0, /*nes=*/0, /*wr=*/0, OtaDataNakReason::OUT_OF_ORDER));
         return;
     }
 
@@ -309,7 +320,8 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
         }
         ESP_LOGW(TAG, "handleData: xferId=%u seq=%u NAK reason=%d (hcs=%u nes=%u wr=%u)", xferId, seq, (int)wireReason,
                  (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
-        sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining, wireReason);
+        logSendResult("handleData chunk NAK", sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq,
+                                                          cr.windowRemaining, wireReason));
         return;
     }
 
@@ -320,13 +332,13 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
     {
         ESP_LOGE(TAG, "handleData: esp_ota_write failed: %s — aborting transfer xferId=%u seq=%u",
                  esp_err_to_name(wErr), xferId, seq);
-        // Send NAK with WRITE reason so master logs a distinct failure
-        // signal (vs CRC / SIZE / OUT_OF_ORDER which suggest retransmit).
-        // WRITE is terminal — master should abandon the padawan.
-        sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining,
-                    OtaDataNakReason::WRITE);
+        // Terminal failure: send WRITE NAK with zero hint fields. The wire
+        // contract treats windowRemaining=0 as "receiver inactive" — that
+        // matches our post-reset state and prevents the master from
+        // retransmitting into a torn-down writer.
+        logSendResult("handleData WRITE NAK (esp_ota_write)",
+                      sendDataNak(mac, xferId, /*hcs=*/0, /*nes=*/0, /*wr=*/0, OtaDataNakReason::WRITE));
         resetOtaHandleAndSha();
-        watchdogStop();
         return;
     }
 
@@ -346,12 +358,8 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
     ESP_LOGD(TAG, "handleData: xferId=%u seq=%u accepted (cum=%u next=%u wr=%u)", xferId, seq,
              (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
 
-    esp_err_t sErr = sendDataAck(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining);
-    if (sErr != ESP_OK)
-    {
-        ESP_LOGW(TAG, "handleData: sendDataAck failed: %s — master tick-retransmit will re-trigger",
-                 esp_err_to_name(sErr));
-    }
+    logSendResult("handleData DATA_ACK",
+                  sendDataAck(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining));
     watchdogRestart();
 }
 
@@ -362,10 +370,13 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 
     if (!active_)
     {
-        ESP_LOGW(TAG, "handleEnd: xferId=%u arrived while inactive — replying WRITE_ERROR", xferId);
-        // No reasonable SHA to echo; send all-zero buffer.
-        uint8_t zero[32] = {0};
-        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero);
+        // Silent drop: WRITE_ERROR is reserved for actual flash-write
+        // failures; replying it here would corrupt the master's forensic
+        // signal. Master's END_ACK timeout will recover the transfer
+        // status. Same discipline as handleWatchdogFire — don't reply
+        // into a likely-dead mesh.
+        ESP_LOGI(TAG, "handleEnd: xferId=%u arrived while inactive — silent drop (master END_ACK timeout will recover)",
+                 xferId);
         return;
     }
 
@@ -378,11 +389,10 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     {
         ESP_LOGW(TAG, "handleEnd: BulkReceiver::onEnd rejected: reason=%d", (int)er.reason);
         uint8_t zero[32] = {0};
-        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero);
+        logSendResult("handleEnd onEnd-rejected END_ACK", sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero));
         if (teardownRequested)
         {
             resetOtaHandleAndSha();
-            watchdogStop();
         }
         return;
     }
@@ -404,9 +414,9 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     {
         ESP_LOGE(TAG, "handleEnd: streaming SHA mismatch — replying HASH_MISMATCH (chunks=%u, totalSize=%u)",
                  (unsigned)msg.end.totalChunksSent, (unsigned)currentTotalSize_);
-        sendEndAck(mac, xferId, OtaEndStatus::HASH_MISMATCH, streamedDigest);
+        logSendResult("handleEnd HASH_MISMATCH END_ACK",
+                      sendEndAck(mac, xferId, OtaEndStatus::HASH_MISMATCH, streamedDigest));
         resetOtaHandleAndSha();
-        watchdogStop();
         return;
     }
 
@@ -422,9 +432,9 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
         // failure (per IDF docs); zero the handle so resetOtaHandleAndSha
         // doesn't try to re-abort it.
         otaHandle_ = 0;
-        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest);
+        logSendResult("handleEnd WRITE_ERROR (esp_ota_end) END_ACK",
+                      sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest));
         resetOtaHandleAndSha();
-        watchdogStop();
         return;
     }
     otaHandle_ = 0;
@@ -464,9 +474,9 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 
     if (!readbackOk)
     {
-        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest);
+        logSendResult("handleEnd WRITE_ERROR (readback IO) END_ACK",
+                      sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, streamedDigest));
         resetOtaHandleAndSha();
-        watchdogStop();
         return;
     }
 
@@ -476,21 +486,19 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
                  "handleEnd: READ-BACK hash mismatch — flash write silently corrupted bytes; replying WRITE_ERROR");
         // Send the readback digest (not streamed) so master forensics can
         // see what's actually on flash vs what we expected.
-        sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, readbackDigest);
+        logSendResult("handleEnd WRITE_ERROR (readback mismatch) END_ACK",
+                      sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, readbackDigest));
         resetOtaHandleAndSha();
-        watchdogStop();
         return;
     }
 
-    // All three checks passed.
-    ESP_LOGI(TAG,
-             "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s' (NB: boot partition unchanged; PR "
-             "set 2 will flip)",
-             xferId, (unsigned)currentTotalSize_, inactivePartition_->label);
-    sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest);
+    // All three checks passed. esp_ota_end finalized the write but did NOT
+    // activate the new partition — a follow-up step owns the boot-table flip.
+    ESP_LOGI(TAG, "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s'", xferId,
+             (unsigned)currentTotalSize_, inactivePartition_->label);
+    logSendResult("handleEnd OK END_ACK", sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest));
 
     resetOtaHandleAndSha();
-    watchdogStop();
 }
 
 void OtaWriter::handleWatchdogFire()
@@ -511,7 +519,6 @@ void OtaWriter::handleWatchdogFire()
     // mesh wastes bandwidth and risks confusing a fresh transfer that
     // happens to be using the same xferId from a different master incarnation.
     resetOtaHandleAndSha();
-    watchdogStop();
 }
 
 // ─── Wire-emission helpers — Tasks 5/6/7 use these ──────────────────────

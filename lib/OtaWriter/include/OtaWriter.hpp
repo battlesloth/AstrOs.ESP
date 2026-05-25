@@ -87,6 +87,12 @@ private:
                           uint8_t windowRemaining, OtaDataNakReason reason);
     esp_err_t sendEndAck(const uint8_t mac[6], uint8_t xferId, OtaEndStatus status, const uint8_t sha256Computed[32]);
 
+    // Logs at WARN if a wire-frame send failed. Replies are advisory only —
+    // master will retry/abandon on its own timeout if the reply doesn't land.
+    // Centralizes the per-NAK-site send-failure log so 14 call sites don't
+    // each carry an inline if-block.
+    void logSendResult(const char *site, esp_err_t err);
+
     // Active gate (read by pollingTimer's task).
     std::atomic<bool> active_{false};
 
