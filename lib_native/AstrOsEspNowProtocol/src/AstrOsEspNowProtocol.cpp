@@ -374,9 +374,11 @@ namespace AstrOsEspNowProtocol
         OtaDataHeader hdr;
         std::memcpy(&hdr, packet.payload, sizeof(hdr));
         // The actual firmware-bytes count is packet.payloadSize - sizeof(header).
-        // hdr.payloadLen MUST equal that, else reject.
+        // hdr.payloadLen MUST equal that, else reject. Reject 0-byte payloads
+        // too — BulkSender never emits empty chunks, and accepting one would
+        // push malloc(0) (implementation-defined) through the dispatcher.
         const int actualBytes = packet.payloadSize - static_cast<int>(sizeof(OtaDataHeader));
-        if (static_cast<int>(hdr.payloadLen) != actualBytes)
+        if (hdr.payloadLen == 0 || static_cast<int>(hdr.payloadLen) != actualBytes)
         {
             return rec;
         }

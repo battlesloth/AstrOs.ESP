@@ -246,11 +246,18 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         xferId, (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, (unsigned)msg.begin.chunkSize,
         inactivePartition_->label, (unsigned)inactivePartition_->size, (unsigned long)inactivePartition_->address);
 
-    // Don't abort the transfer on ACK send failure — master's BEGIN_ACK
-    // timeout (2 s) will fire if the ACK never lands, at which point master
-    // retransmits OTA_BEGIN. Padawan-side state stays committed; the second
-    // BEGIN will hit the BUSY path above and return another ACK attempt.
-    logSendResult("handleBegin BEGIN_ACK", sendBeginAck(mac, xferId));
+    // If the ACK frame never even got enqueued, the master will hit its 2 s
+    // BEGIN_ACK timeout and abandon (OtaForwarder::handleBeginNak). Leaving
+    // active_=true would force an operator retry to wait out the 10 s
+    // watchdog before getting anything but a BUSY NAK. Release state now.
+    esp_err_t ackErr = sendBeginAck(mac, xferId);
+    logSendResult("handleBegin BEGIN_ACK", ackErr);
+    if (ackErr != ESP_OK)
+    {
+        ESP_LOGW(TAG, "handleBegin: sendBeginAck failed — releasing writer state so a retry can begin");
+        resetOtaHandleAndSha();
+        return;
+    }
     watchdogStart();
 }
 

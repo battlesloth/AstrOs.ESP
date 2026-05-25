@@ -402,6 +402,31 @@ TEST(OtaRecordParsers, ParseOtaDataRejectsPayloadLenMismatch)
         free(pkt.data);
 }
 
+TEST(OtaRecordParsers, ParseOtaDataRejectsZeroPayloadLen)
+{
+    // A header-only OTA_DATA frame (payloadLen == 0) is malformed — BulkSender
+    // never emits empty chunks, and accepting one would push a zero-length
+    // malloc through the dispatcher with implementation-defined behavior.
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t frame[sizeof(OtaDataHeader)];
+    OtaDataHeader hdr{};
+    hdr.xferId = 1;
+    hdr.seq = 0;
+    hdr.payloadLen = 0;
+    hdr.crc16 = 0;
+    std::memcpy(frame, &hdr, sizeof(hdr));
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_DATA, frame, sizeof(frame));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto rec = AstrOsEspNowProtocol::parseOtaData(parsed);
+    EXPECT_FALSE(rec.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
 TEST(OtaRecordParsers, ParseOtaBeginAckRoundTrip)
 {
     auto svc = AstrOsEspNowMessageService();

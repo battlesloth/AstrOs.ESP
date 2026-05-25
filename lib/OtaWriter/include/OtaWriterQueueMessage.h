@@ -30,9 +30,11 @@ extern "C"
     // the consumer uses it as the reply target for ACK/NAK. Inline (not
     // malloc'd) to avoid heap traffic on the chunk hot path.
     //
-    // Producers MUST zero-initialize the struct before populating it
-    // (e.g., `queue_ota_writer_msg_t m = {};`) so freeOtaWriterMsg's
-    // free(m.data.payload) on a non-DATA kind sees a NULL pointer.
+    // freeOtaWriterMsg only frees data.payload when kind == OTA_WR_DATA, so
+    // zero-init isn't required for the current free path. It's still
+    // recommended hygiene (`queue_ota_writer_msg_t m = {};`) — if the free
+    // helper is ever made kind-agnostic, the inactive union arms must already
+    // be NULL.
 
     typedef enum
     {

@@ -4,9 +4,6 @@
     "description": "Padawan-side ESP-NOW OTA writer: wraps BulkReceiver, drives esp_ota_*, verifies via streaming + read-back SHA-256",
     "frameworks": "espidf",
     "platforms": "espressif32",
-    "build": {
-        "flags": ["-std=gnu++17"]
-    },
     "dependencies": {
         "AstrOsBulkTransport": "*",
         "AstrOsEspNow": "*",
