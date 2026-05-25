@@ -428,150 +428,154 @@ void OtaForwarder::handleTick()
 
 void OtaForwarder::startNextPadawan()
 {
-    // Skip the "master" entry — self-flash isn't wired yet; record FAILED.
-    while (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "master")
+    // Iterative advance through the order list. The order-list length is
+    // operator-controlled (no wire-layer bound), so a recursive walk could
+    // blow the 4096 B task stack on a long list of unknown_peer / invalid
+    // entries. Loop until a valid target is found or a terminal condition
+    // (order exhausted / no_firmware) fires.
+    while (true)
     {
-        results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "master_self_flash_pending"});
-        nextOrderIdx_++;
-    }
-
-    if (nextOrderIdx_ >= orderList_.size())
-    {
-        emitDeployDoneAndReset();
-        return;
-    }
-
-    currentControllerId_ = orderList_[nextOrderIdx_];
-
-    if (!resolveControllerMac(currentControllerId_, currentPadawanMac_))
-    {
-        ESP_LOGW(TAG, "Controller %s not registered as a peer; recording FAILED", currentControllerId_.c_str());
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "unknown_peer"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-
-    auto firmwarePathOpt = AstrOs_OtaReceiver.getLastFirmwarePath();
-    if (!firmwarePathOpt.has_value())
-    {
-        ESP_LOGW(TAG, "No staged firmware (getLastFirmwarePath empty) — all-FAILED");
-        // Apply no_firmware to the remaining targets.
-        while (nextOrderIdx_ < orderList_.size())
+        // Skip "master" entries — self-flash isn't wired yet; record FAILED.
+        if (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "master")
         {
-            results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "no_firmware"});
+            results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "master_self_flash_pending"});
             nextOrderIdx_++;
+            continue;
         }
-        emitDeployDoneAndReset();
+
+        if (nextOrderIdx_ >= orderList_.size())
+        {
+            emitDeployDoneAndReset();
+            return;
+        }
+
+        currentControllerId_ = orderList_[nextOrderIdx_];
+
+        if (!resolveControllerMac(currentControllerId_, currentPadawanMac_))
+        {
+            ESP_LOGW(TAG, "Controller %s not registered as a peer; recording FAILED", currentControllerId_.c_str());
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "unknown_peer"});
+            nextOrderIdx_++;
+            continue;
+        }
+
+        auto firmwarePathOpt = AstrOs_OtaReceiver.getLastFirmwarePath();
+        if (!firmwarePathOpt.has_value())
+        {
+            ESP_LOGW(TAG, "No staged firmware (getLastFirmwarePath empty) — all-FAILED");
+            // Apply no_firmware to the remaining targets.
+            while (nextOrderIdx_ < orderList_.size())
+            {
+                results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "no_firmware"});
+                nextOrderIdx_++;
+            }
+            emitDeployDoneAndReset();
+            return;
+        }
+
+        const std::string &firmwarePath = *firmwarePathOpt;
+        firmwareFile_ = std::fopen(firmwarePath.c_str(), "rb");
+        if (firmwareFile_ == nullptr)
+        {
+            ESP_LOGE(TAG, "fopen(%s) failed", firmwarePath.c_str());
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_open_failed"});
+            nextOrderIdx_++;
+            continue;
+        }
+
+        struct stat st;
+        if (stat(firmwarePath.c_str(), &st) != 0)
+        {
+            ESP_LOGE(TAG, "stat(%s) failed", firmwarePath.c_str());
+            std::fclose(firmwareFile_);
+            firmwareFile_ = nullptr;
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_stat_failed"});
+            nextOrderIdx_++;
+            continue;
+        }
+        firmwareTotalSize_ = static_cast<uint32_t>(st.st_size);
+        firmwareTotalChunks_ = (firmwareTotalSize_ + kChunkSize - 1) / kChunkSize;
+
+        // Zero-byte firmware would surface as the generic "begin_rejected"
+        // from BulkSender::begin(totalChunks=0); catch it here so the
+        // operator sees the actual cause.
+        if (firmwareTotalChunks_ == 0)
+        {
+            ESP_LOGE(TAG, "Firmware file is empty (size=0); abandoning padawan");
+            std::fclose(firmwareFile_);
+            firmwareFile_ = nullptr;
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_empty"});
+            nextOrderIdx_++;
+            continue;
+        }
+
+        // Compute SHA-256 of the file (forensic-grade defensive check; the
+        // padawan also verifies). One-shot at file open; ships in the
+        // OTA_BEGIN frame's sha256Expected field. 512 B buffer keeps stack
+        // pressure low on the 4096 B task stack — SHA-256 throughput is
+        // dominated by the 64 B per-block transform, not the I/O buffer.
+        AstrOsSha256Ctx shaCtx;
+        AstrOsSha256_init(&shaCtx);
+        uint8_t buf[512];
+        while (size_t r = std::fread(buf, 1, sizeof(buf), firmwareFile_))
+        {
+            AstrOsSha256_update(&shaCtx, buf, r);
+        }
+        // fread returning 0 ambiguates EOF vs error; check ferror so a short
+        // SD read doesn't ship a SHA computed over a truncated file (which
+        // the padawan would report as HASH_MISMATCH for what is really a
+        // master-side I/O fault).
+        if (std::ferror(firmwareFile_))
+        {
+            ESP_LOGE(TAG, "fread error during SHA pass; abandoning padawan");
+            std::fclose(firmwareFile_);
+            firmwareFile_ = nullptr;
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_read_failed"});
+            nextOrderIdx_++;
+            continue;
+        }
+        AstrOsSha256_final(&shaCtx, firmwareSha256_);
+
+        // fseek(SEEK_SET) over rewind(): rewind silently swallows errors. A
+        // bad seek here would burn the full chunk budget shipping wrong
+        // bytes before the padawan's SHA mismatch catches it — fail fast.
+        if (std::fseek(firmwareFile_, 0, SEEK_SET) != 0)
+        {
+            ESP_LOGE(TAG, "fseek(0) failed after SHA pass");
+            std::fclose(firmwareFile_);
+            firmwareFile_ = nullptr;
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_seek_failed"});
+            nextOrderIdx_++;
+            continue;
+        }
+
+        // Bounded by ESPNOW_PEER_LIMIT=10 today; the uint8_t cast would roll
+        // over to 0 (the "no xfer in progress" sentinel) at idx 255.
+        currentXferId_ = static_cast<uint8_t>(nextOrderIdx_ + 1);
+
+        auto br =
+            bulk_.begin(currentXferId_, firmwareTotalChunks_, kChunkSize, kWindowSize, kAckTimeoutMs, kMaxRetries);
+        if (!br.valid)
+        {
+            ESP_LOGE(TAG, "BulkSender::begin rejected reason=%d", (int)br.reason);
+            std::fclose(firmwareFile_);
+            firmwareFile_ = nullptr;
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "begin_rejected"});
+            nextOrderIdx_++;
+            continue;
+        }
+
+        ESP_LOGI(TAG, "Starting transfer to %s (xferId=%u, chunks=%u, size=%u)", currentControllerId_.c_str(),
+                 currentXferId_, firmwareTotalChunks_, firmwareTotalSize_);
+
+        phase_ = Phase::AWAITING_BEGIN_ACK;
+        emitOtaBeginFrame();
+        beginAckTimerStart();
+        // tickTimer is started only when entering STREAMING (see handleBeginAck);
+        // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
+        // queue with no-op messages and risks crowding out deadline sentinels.
         return;
     }
-
-    const std::string &firmwarePath = *firmwarePathOpt;
-    firmwareFile_ = std::fopen(firmwarePath.c_str(), "rb");
-    if (firmwareFile_ == nullptr)
-    {
-        ESP_LOGE(TAG, "fopen(%s) failed", firmwarePath.c_str());
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_open_failed"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-
-    struct stat st;
-    if (stat(firmwarePath.c_str(), &st) != 0)
-    {
-        ESP_LOGE(TAG, "stat(%s) failed", firmwarePath.c_str());
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_stat_failed"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-    firmwareTotalSize_ = static_cast<uint32_t>(st.st_size);
-    firmwareTotalChunks_ = (firmwareTotalSize_ + kChunkSize - 1) / kChunkSize;
-
-    // Zero-byte firmware would surface as the generic "begin_rejected"
-    // from BulkSender::begin(totalChunks=0); catch it here so the
-    // operator sees the actual cause.
-    if (firmwareTotalChunks_ == 0)
-    {
-        ESP_LOGE(TAG, "Firmware file is empty (size=0); abandoning padawan");
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_empty"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-
-    // Compute SHA-256 of the file (forensic-grade defensive check; the
-    // padawan also verifies). One-shot at file open; ships in the
-    // OTA_BEGIN frame's sha256Expected field. 512 B buffer keeps stack
-    // pressure low on the 4096 B task stack — SHA-256 throughput is
-    // dominated by the 64 B per-block transform, not the I/O buffer.
-    AstrOsSha256Ctx shaCtx;
-    AstrOsSha256_init(&shaCtx);
-    uint8_t buf[512];
-    while (size_t r = std::fread(buf, 1, sizeof(buf), firmwareFile_))
-    {
-        AstrOsSha256_update(&shaCtx, buf, r);
-    }
-    // fread returning 0 ambiguates EOF vs error; check ferror so a short
-    // SD read doesn't ship a SHA computed over a truncated file (which
-    // the padawan would report as HASH_MISMATCH for what is really a
-    // master-side I/O fault).
-    if (std::ferror(firmwareFile_))
-    {
-        ESP_LOGE(TAG, "fread error during SHA pass; abandoning padawan");
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_read_failed"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-    AstrOsSha256_final(&shaCtx, firmwareSha256_);
-
-    // fseek(SEEK_SET) over rewind(): rewind silently swallows errors. A
-    // bad seek here would burn the full chunk budget shipping wrong
-    // bytes before the padawan's SHA mismatch catches it — fail fast.
-    if (std::fseek(firmwareFile_, 0, SEEK_SET) != 0)
-    {
-        ESP_LOGE(TAG, "fseek(0) failed after SHA pass");
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_seek_failed"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-
-    // Bounded by ESPNOW_PEER_LIMIT=10 today; the uint8_t cast would roll
-    // over to 0 (the "no xfer in progress" sentinel) at idx 255.
-    currentXferId_ = static_cast<uint8_t>(nextOrderIdx_ + 1);
-
-    auto br = bulk_.begin(currentXferId_, firmwareTotalChunks_, kChunkSize, kWindowSize, kAckTimeoutMs, kMaxRetries);
-    if (!br.valid)
-    {
-        ESP_LOGE(TAG, "BulkSender::begin rejected reason=%d", (int)br.reason);
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-        results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "begin_rejected"});
-        nextOrderIdx_++;
-        startNextPadawan();
-        return;
-    }
-
-    ESP_LOGI(TAG, "Starting transfer to %s (xferId=%u, chunks=%u, size=%u)", currentControllerId_.c_str(),
-             currentXferId_, firmwareTotalChunks_, firmwareTotalSize_);
-
-    phase_ = Phase::AWAITING_BEGIN_ACK;
-    emitOtaBeginFrame();
-    beginAckTimerStart();
-    // tickTimer is started only when entering STREAMING (see handleBeginAck);
-    // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
-    // queue with no-op messages and risks crowding out deadline sentinels.
 }
 void OtaForwarder::abortCurrentPadawan(const std::string &reason)
 {
