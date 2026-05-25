@@ -243,7 +243,12 @@ void app_main()
 
     if (!isMasterNode.load())
     {
-        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 4096, (void *)otaWriterQueue, 6, NULL, 1) !=
+        // 8 KB stack (not 4 KB matching the receiver/forwarder family):
+        // OtaWriter::handleEnd declares a 4 KB read-back buffer on the stack
+        // alongside SHA-256 ctx + call frames. T7 code review flagged that
+        // 4 KB + ~1 KB frames + FreeRTOS context exceeds a 4 KB stack.
+        // Bench validation can tune this down if HWM shows comfortable margin.
+        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
             pdPASS)
         {
             ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");

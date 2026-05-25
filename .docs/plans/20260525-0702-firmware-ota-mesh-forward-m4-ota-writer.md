@@ -890,7 +890,12 @@ Find the existing `otaForwarderTask` spawn block (around line 231-238), which us
 ```cpp
     if (!isMasterNode.load())
     {
-        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 4096, (void *)otaWriterQueue, 6, NULL, 1) !=
+        // 8 KB stack (not 4 KB matching the receiver/forwarder family):
+        // OtaWriter::handleEnd declares a 4 KB read-back buffer on the stack
+        // alongside SHA-256 ctx + call frames. T7 code review flagged that
+        // 4 KB + ~1 KB frames + FreeRTOS context exceeds a 4 KB stack.
+        // Bench validation can tune this down if HWM shows comfortable margin.
+        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
             pdPASS)
         {
             ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
@@ -899,7 +904,7 @@ Find the existing `otaForwarderTask` spawn block (around line 231-238), which us
     }
 ```
 
-Note: stack is 4 KB matching `otaReceiverTask` / `otaForwarderTask`. The design doc Task 144 calls out "M4 bench validates against the actual high-water mark"; the task-creation high-water-mark warning at 500 B remaining will surface if this is too small.
+Note: stack is 8 KB (vs the 4 KB used by `otaReceiverTask` / `otaForwarderTask`). T7's code review flagged that handleEnd's 4 KB readback buffer + FreeRTOS context + call frames will overflow a 4 KB stack. Bench validation may tune this down if HWM shows comfortable margin (target ≥ 1 KB remaining); the design doc Task 144 captures this trade-off.
 
 - [ ] **Step 6: Extend the padawan polling-pause gate**
 
@@ -1659,9 +1664,10 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     // can't recover from (the master sent fewer chunks than it claimed).
     auto er = bulk_.onEnd(xferId, msg.end.totalChunksSent);
     bool teardownRequested = AstrOsBulkTransport::shouldTeardownOnEndResult(er);
-    if (!er.valid)
+    if (er.status != AstrOsBulkTransport::EndResult::Status::OK)
     {
-        ESP_LOGW(TAG, "handleEnd: BulkReceiver::onEnd rejected: reason=%d", (int)er.reason);
+        ESP_LOGW(TAG, "handleEnd: BulkReceiver::onEnd rejected: status=%d reason=%d",
+                 (int)er.status, (int)er.reason);
         uint8_t zero[32] = {0};
         sendEndAck(mac, xferId, OtaEndStatus::WRITE_ERROR, zero);
         if (teardownRequested)
