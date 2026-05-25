@@ -150,6 +150,13 @@ private:
     static constexpr uint32_t kAckTimeoutMs = 400;
     static constexpr uint8_t kMaxRetries = 3;
 
+    // Hard upper bound on the order list size. Must stay well below 254 so
+    // that currentXferId_ = nextOrderIdx_ + 1 never produces 0 (no-xfer
+    // sentinel) or 0xFF (timeout sentinel). 32 is generous beyond the
+    // current ESPNOW_PEER_LIMIT=10 with plenty of margin for future growth.
+    static constexpr size_t kMaxOrderListSize = 32;
+    static_assert(kMaxOrderListSize < 0xFE, "xferId derivation would wrap into sentinel range");
+
     // Per-deploy state.
     AstrOsBulkTransport::BulkSender bulk_;
     Phase phase_ = Phase::IDLE;

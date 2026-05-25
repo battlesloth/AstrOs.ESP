@@ -161,6 +161,27 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
         return;
     }
 
+    // Cap the order list at kMaxOrderListSize so the per-padawan xferId
+    // derivation (nextOrderIdx_ + 1) can't wrap into the sentinel range
+    // (0 = "no xfer in progress", 0xFF = "timeout sentinel"). An
+    // oversized list almost certainly indicates a malformed or hostile
+    // FW_DEPLOY_BEGIN; reject the whole deploy with one FAILED row per
+    // submitted target so JobLock terminates cleanly.
+    if (orderList_.size() > kMaxOrderListSize)
+    {
+        ESP_LOGW(TAG, "FW_DEPLOY_BEGIN orderList size %zu exceeds cap %zu — rejecting", orderList_.size(),
+                 (size_t)kMaxOrderListSize);
+        std::vector<astros_fw_deploy_result_t> failures;
+        failures.reserve(orderList_.size());
+        for (const auto &id : orderList_)
+        {
+            failures.push_back({id, "FAILED", "", "order_list_too_large"});
+        }
+        AstrOs_SerialMsgHandler.sendFwDeployDone(deployMsgId_, deployTransferId_, failures);
+        orderList_.clear();
+        return;
+    }
+
     nextOrderIdx_ = 0;
     results_.clear();
     results_.reserve(orderList_.size());
@@ -549,8 +570,10 @@ void OtaForwarder::startNextPadawan()
             continue;
         }
 
-        // Bounded by ESPNOW_PEER_LIMIT=10 today; the uint8_t cast would roll
-        // over to 0 (the "no xfer in progress" sentinel) at idx 255.
+        // Safe because handleDeployBegin caps orderList_.size() at
+        // kMaxOrderListSize (< 0xFE per the static_assert in the header).
+        // Yields xferIds 1..kMaxOrderListSize — never 0 ("no xfer") or
+        // 0xFF ("timeout sentinel").
         currentXferId_ = static_cast<uint8_t>(nextOrderIdx_ + 1);
 
         auto br =
