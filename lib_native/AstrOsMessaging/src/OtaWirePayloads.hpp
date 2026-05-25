@@ -62,8 +62,13 @@ struct __attribute__((packed)) OtaDataHeader
     uint8_t xferId;
     uint32_t seq;
     uint16_t payloadLen;
-    uint16_t crc16; // CRC-16/CCITT-FALSE over [xferId..end of firmware-bytes]
-                    // (matches the AstrOsBulkTransport::crc16_ccitt_false function)
+    uint16_t crc16; // CRC-16/CCITT-FALSE over the full header bytes
+                    // (xferId/seq/payloadLen/crc16) + payload bytes, computed
+                    // with crc16 itself treated as 0. Use
+                    // AstrOsBulkTransport::crc16_ccitt_false. Verifier must
+                    // zero the crc16 field before recomputing.
+                    // NOTE: distinct from the serial-path BulkReceiver, which
+                    // checks CRC over payload only.
 };
 static_assert(sizeof(OtaDataHeader) == 9, "OtaDataHeader must be 9 bytes on the wire");
 

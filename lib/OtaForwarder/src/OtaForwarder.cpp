@@ -736,11 +736,17 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
                 return;
             }
 
-            // CRC-16/CCITT-FALSE over the header (post-xferId) + payload —
-            // matching BulkReceiver's verification. Compute over the same
-            // span the receiver hashes.
+            // CRC-16/CCITT-FALSE over the entire OtaDataHeader bytes +
+            // payload bytes per the M1 wire spec (OtaWirePayloads.hpp:65 —
+            // "[xferId..end of firmware-bytes]"). The crc16 field inside
+            // the header is zero at this point (zero-init on hdr{}); the
+            // computed CRC is patched in below. M4's padawan verifier
+            // must zero the crc16 field before recomputing.
+            //
+            // NOTE: this span differs from the serial-path BulkReceiver,
+            // which checks CRC over payload only — the two transports
+            // deliberately use different CRC contracts.
             uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
-            // Patch the CRC into the header bytes that are now in payloadBuf.
             std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
 
             esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
