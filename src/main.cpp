@@ -233,7 +233,7 @@ void app_main()
 
     if (isMasterNode.load())
     {
-        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 4096, (void *)otaForwarderQueue, 6, NULL,
+        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 8192, (void *)otaForwarderQueue, 6, NULL,
                                     1) != pdPASS)
         {
             ESP_LOGE(TAG, "Failed to create otaForwarderTask — aborting init");

@@ -496,8 +496,12 @@ void OtaForwarder::startNextPadawan()
     // (order exhausted / no_firmware) fires.
     while (true)
     {
-        // Skip "master" entries — self-flash isn't wired yet; record FAILED.
-        if (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "master")
+        // Skip the master self-flash entry — encoded as the all-zero MAC by
+        // the Pi-side FW_DEPLOY_BEGIN convention (see the matching
+        // "00:00:00:00:00:00" / "master" pair in
+        // astros_serial_protocol_tests fixtures). Self-flash isn't wired
+        // yet; record FAILED so the deploy advances to the padawans.
+        if (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "00:00:00:00:00:00")
         {
             results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "master_self_flash_pending"});
             nextOrderIdx_++;
@@ -967,10 +971,14 @@ bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t
     // ESPNOW_PEER_LIMIT (10), so the cost is negligible. getPeers
     // internally acquires the peer mutex and returns a vector copy, so
     // the read is thread-safe.
+    //
+    // controllerId is a MAC string ("XX:XX:XX:XX:XX:XX", uppercase), as
+    // populated by the Pi-side controllerVariantCache and forwarded in
+    // FW_DEPLOY_BEGIN. MAC is the canonical identity on the ESP side.
     auto peers = AstrOs_EspNow.getPeers();
     for (const auto &p : peers)
     {
-        if (controllerId == p.name)
+        if (controllerId == AstrOsStringUtils::macToString(p.mac_addr))
         {
             std::memcpy(outMac, p.mac_addr, 6);
             return true;
