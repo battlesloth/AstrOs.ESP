@@ -511,10 +511,11 @@ static void pollingTimerCallback(void *arg)
     // halving wire throughput. Heartbeat log + display timeout stay unconditional.
     //
     // Padawan-side OTA gate: writer is active while a transfer is in flight.
-    // Pause maintenance work to keep SPI flash contention down (esp_ota_write
-    // erase+program latency degrades when other tasks hit the flash bus
-    // concurrently). OtaWriter::isActive() is safe to call on master too —
-    // AstrOs_OtaWriter is never Init'd on master, so active_ stays false.
+    // Pause polling/discovery ESP-NOW traffic to keep SPI flash contention
+    // down (esp_ota_write erase+program latency degrades when other tasks hit
+    // the flash bus concurrently). OtaWriter::isActive() is safe to call on
+    // master too — AstrOs_OtaWriter is never Init'd on master, so active_
+    // stays false.
     const bool otaActive =
         AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isActive() || AstrOs_OtaWriter.isActive();
 
