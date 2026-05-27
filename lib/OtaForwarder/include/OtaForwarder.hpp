@@ -124,8 +124,8 @@ private:
     // Stats periodic timer (2 s cadence) — fired while a transfer is live so
     // bench logs get a low-noise progress heartbeat. Started in
     // startNextPadawan after the first OTA_BEGIN is sent; stopped in
-    // finishCurrentPadawanAndAdvance (used by completeCurrentPadawan,
-    // handleFlashResult, handleFlashResultTimeout) and abortCurrentPadawan.
+    // finishCurrentPadawanAndAdvance (used by handleFlashResult,
+    // handleFlashResultTimeout, abortCurrentPadawan).
     // First emission ~2 s after start, which naturally announces the session
     // is running.
     void statsTimerStart();

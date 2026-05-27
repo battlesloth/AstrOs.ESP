@@ -411,6 +411,9 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
         // AWAITING_FLASH_RESULT phase and wait for OTA_FLASH_RESULT to land.
         // kFlashResultTimeoutUs is the safety bound on padawan misbehavior
         // during the pre-flash delay window.
+        // Stop stats timer — counters are frozen at this point; continued
+        // 2 s heartbeats with unchanged values would just be log noise.
+        statsTimerStop();
         phase_ = Phase::AWAITING_FLASH_RESULT;
         flashResultTimerStart();
         return;
@@ -1173,6 +1176,12 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
     {
         ESP_LOGW(TAG, "handleFlashResult: xferId mismatch (got %u, expected %u); dropping",
                  (unsigned)msg.flash_result.xferId, (unsigned)currentXferId_);
+        return;
+    }
+    if (!isFromCurrentPadawan(msg.flash_result.srcMac))
+    {
+        ESP_LOGW(TAG, "handleFlashResult: OTA_FLASH_RESULT from unexpected peer (xferId=%u); dropping",
+                 (unsigned)msg.flash_result.xferId);
         return;
     }
     flashResultTimerStop();

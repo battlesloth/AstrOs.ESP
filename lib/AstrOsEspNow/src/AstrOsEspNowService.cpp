@@ -531,10 +531,13 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
             fm.flash_result.reason = static_cast<char *>(malloc(rec.reason.size()));
             if (fm.flash_result.reason == nullptr)
             {
-                ESP_LOGE(TAG, "OTA_FLASH_RESULT: malloc reason copy failed; dropping");
-                return true;
+                ESP_LOGW(TAG, "OTA_FLASH_RESULT: malloc reason copy failed; forwarding status without reason");
+                fm.flash_result.reasonLen = 0;
             }
-            memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
+            else
+            {
+                memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
+            }
         }
         else
         {

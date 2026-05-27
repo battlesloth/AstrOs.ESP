@@ -133,7 +133,7 @@ public:
     int validatePacket(astros_packet_t packet);
 };
 
-// True iff `type` is one of the OTA packet types (M1 + M4 additions).
+// True iff `type` is one of the OTA_* packet types.
 bool isOtaPacketType(AstrOsPacketType type);
 
 #endif

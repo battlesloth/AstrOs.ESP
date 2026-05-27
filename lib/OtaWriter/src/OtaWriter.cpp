@@ -706,6 +706,11 @@ esp_err_t OtaWriter::sendFlashResult(const uint8_t mac[6], uint8_t xferId, OtaFl
     OtaFlashResultPayload payload{};
     payload.xferId = xferId;
     payload.status = static_cast<uint8_t>(status);
+    if (reason.size() > sizeof(payload.reason))
+    {
+        ESP_LOGW(TAG, "sendFlashResult: reason truncated from %zu to %u bytes", reason.size(),
+                 (unsigned)sizeof(payload.reason));
+    }
     payload.reasonLen = static_cast<uint8_t>(std::min<size_t>(reason.size(), sizeof(payload.reason)));
     if (payload.reasonLen > 0)
     {
