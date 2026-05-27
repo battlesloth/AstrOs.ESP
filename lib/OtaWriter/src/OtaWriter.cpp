@@ -3,6 +3,7 @@
 #include <AstrOsEspNowService.hpp>
 #include <esp_log.h>
 
+#include <algorithm>
 #include <cstring>
 
 static const char *TAG = "OtaWriter";
@@ -590,7 +591,40 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 
     ESP_LOGI(TAG, "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s'", xferId,
              (unsigned)currentTotalSize_, inactivePartition_->label);
+
+    // Stop timers before the 2 s delay so neither fires mid-wait and
+    // triggers a spurious abort path. resetOtaHandleAndSha() would stop
+    // them too, but it also clears mac/xferId — which sendFlashResult still
+    // needs. Stop them explicitly here so the order is: timers-stop →
+    // sendEndAck → delay → sendFlashResult → resetOtaHandleAndSha.
+    watchdogStop();
+    statsTimerStop();
+
     logSendResult("handleEnd OK END_ACK", sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest));
+
+    // M4 PLACEHOLDER — see .docs/plans/20260527-0143-firmware-ota-progress-emission-design.md
+    //
+    // Verification passed. Send OTA_END_ACK OK immediately (above) so the
+    // master can emit FW_PROGRESS FLASHING and the UI flash row lights up.
+    // Then deliberately delay 2 s so that flash row is visibly current
+    // before reporting the M4 placeholder failure.
+    //
+    // PR set 2 replaces this block with:
+    //   - vTaskDelay(pdMS_TO_TICKS(2000));
+    //   - esp_err_t err = esp_ota_set_boot_partition(inactivePartition_);
+    //   - sendFlashResult(mac, xferId,
+    //                     err == ESP_OK ? OtaFlashStatus::OK : OtaFlashStatus::FAILED,
+    //                     err == ESP_OK ? "" : esp_err_to_name(err));
+    //   - if (err == ESP_OK) esp_restart();
+    //
+    // The vTaskDelay below mirrors the natural PR set 2 cadence so server
+    // timing assumptions tested against M4 hold unchanged against PR set 2.
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_err_t flashErr = sendFlashResult(mac, xferId, OtaFlashStatus::FLASH_NOT_IMPLEMENTED, "pr_set_1_placeholder");
+    if (flashErr != ESP_OK)
+    {
+        ESP_LOGW(TAG, "handleEnd: sendFlashResult failed: %s", esp_err_to_name(flashErr));
+    }
 
     resetOtaHandleAndSha();
 }
@@ -666,4 +700,19 @@ esp_err_t OtaWriter::sendEndAck(const uint8_t mac[6], uint8_t xferId, OtaEndStat
     memcpy(p.sha256Computed, sha256Computed, sizeof(p.sha256Computed));
     return AstrOs_EspNow.sendOtaFrame(mac, AstrOsPacketType::OTA_END_ACK, reinterpret_cast<const uint8_t *>(&p),
                                       sizeof(p));
+}
+
+esp_err_t OtaWriter::sendFlashResult(const uint8_t mac[6], uint8_t xferId, OtaFlashStatus status,
+                                     const std::string &reason)
+{
+    OtaFlashResultPayload payload{};
+    payload.xferId = xferId;
+    payload.status = static_cast<uint8_t>(status);
+    payload.reasonLen = static_cast<uint8_t>(std::min<size_t>(reason.size(), sizeof(payload.reason)));
+    if (payload.reasonLen > 0)
+    {
+        std::memcpy(payload.reason, reason.data(), payload.reasonLen);
+    }
+    return AstrOs_EspNow.sendOtaFrame(mac, AstrOsPacketType::OTA_FLASH_RESULT,
+                                      reinterpret_cast<const uint8_t *>(&payload), sizeof(payload));
 }

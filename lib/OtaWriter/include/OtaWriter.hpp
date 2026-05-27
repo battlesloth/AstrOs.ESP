@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 // needed for QueueHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
@@ -95,6 +96,10 @@ private:
     esp_err_t sendDataNak(const uint8_t mac[6], uint8_t xferId, uint32_t highestContiguousSeq, uint32_t nextExpectedSeq,
                           uint8_t windowRemaining, OtaDataNakReason reason);
     esp_err_t sendEndAck(const uint8_t mac[6], uint8_t xferId, OtaEndStatus status, const uint8_t sha256Computed[32]);
+    // Send OTA_FLASH_RESULT — emitted from handleEnd after the 2 s pre-flash
+    // delay. Mirrors sendEndAck's shape: builds the wire payload, calls
+    // AstrOs_EspNow.sendOtaFrame, returns the esp_err_t from the underlying send.
+    esp_err_t sendFlashResult(const uint8_t mac[6], uint8_t xferId, OtaFlashStatus status, const std::string &reason);
 
     // Logs at WARN if a wire-frame send failed. Replies are advisory only —
     // master will retry/abandon on its own timeout if the reply doesn't land.
