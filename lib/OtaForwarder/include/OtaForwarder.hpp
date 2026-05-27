@@ -203,8 +203,9 @@ private:
 
     // Stats counters (reset in startNextPadawan). All read+written by the
     // owning task only (otaForwarderTask) — no atomics. lastSentSeq_ is the
-    // most recent seq put on the wire (incl. retransmits). highestAckedSeq_
-    // tracks the cumulative-ACK cursor observed in handleDataAck.
+    // high-water mark of seqs placed on the wire — retransmits don't refresh
+    // it, so this reflects forward progress, not the latest retry.
+    // highestAckedSeq_ tracks the cumulative-ACK cursor from handleDataAck.
     uint32_t statsLastSentSeq_ = 0;
     uint32_t statsHighestAckedSeq_ = 0;
     bool statsAnyAcked_ = false; // disambiguates "0 acked" from "none acked yet"

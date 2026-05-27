@@ -327,7 +327,7 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         xferId, (unsigned)msg.begin.totalSize, (unsigned)msg.begin.totalChunks, (unsigned)msg.begin.chunkSize,
         inactivePartition_->label, (unsigned)inactivePartition_->size, (unsigned long)inactivePartition_->address);
 
-    // If the ACK frame never even got enqueued, the master will hit its 2 s
+    // If the ACK frame never even got enqueued, the master will hit its
     // BEGIN_ACK timeout and abandon (OtaForwarder::handleBeginNak). Leaving
     // active_=true would force an operator retry to wait out the 10 s
     // watchdog before getting anything but a BUSY NAK. Release state now.
