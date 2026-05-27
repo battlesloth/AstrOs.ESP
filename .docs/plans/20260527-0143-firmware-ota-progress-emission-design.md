@@ -78,56 +78,112 @@ PADAWAN                          MASTER (OtaForwarder)             SERVER
    OTA_BEGIN  ◀──────────────────│
    OTA_DATA   ◀──────────────────│  (many)
    OTA_END    ◀──────────────────│
-                                  │
+                                  │ ─── FW_PROGRESS stage=VERIFYING ─ ▶ Verifying
+                                  │     (emitted at OTA_END send so the
+                                  │      verify row lights up while the
+                                  │      padawan is doing the 3 gates)
    handleEnd → 3 integrity gates  │
    pass on padawan side           │
    (SHA, esp_ota_end, readback)   │
                                   │
-   OTA_END_ACK with new           │
-   status FLASH_NOT_IMPLEMENTED ─▶│
-                                  │ ─── FW_PROGRESS stage=VERIFYING ─ ▶ Verifying
-                                  │
+   OTA_END_ACK OK ───────────────▶│
+   (verification succeeded;       │
+    no flash committed yet)       │
                                   │ ─── FW_PROGRESS stage=FLASHING ── ▶ Flashing
-                                  │     (synthesized — master enters flash state
-                                  │      before mapping padawan's status into results_)
+                                  │     (flash row lights up while padawan
+                                  │      is in its pre-flash delay)
+   Padawan delays 2 s             │
+   (visible window for the        │
+    Flashing row)                 │
                                   │
-                                  │ ─── FW_DEPLOY_DONE result        ─ ▶ Flashing → Failed
-                                  │     outcome=FAILED                    (reason: flash_not_implemented)
+   ┌──────────────────────────────┴──────────────────────────────┐
+   │ M4 (this PR):                                               │
+   │   Padawan sends OTA_FLASH_RESULT with                       │
+   │     status=FLASH_NOT_IMPLEMENTED                            │
+   │                                                             │
+   │ PR set 2 (future):                                          │
+   │   Padawan calls esp_ota_set_boot_partition                  │
+   │   Padawan sends OTA_FLASH_RESULT status=OK (or FAILED       │
+   │     if the boot-partition flip returned error)              │
+   │   Padawan triggers reboot                                   │
+   └──────────────────────────────┬──────────────────────────────┘
+                                  │
+   OTA_FLASH_RESULT ─────────────▶│
+                                  │
+                                  │ M4: Flashing → Failed
+                                  │ ─── FW_DEPLOY_DONE outcome=FAILED ▶
                                   │     reason=flash_not_implemented
+                                  │
+                                  │ PR set 2: Flashing → Rebooting
+                                  │ ─── FW_PROGRESS stage=REBOOTING ─ ▶
+                                  │     (continues to VERSION_CONFIRMED
+                                  │      via post-reboot heartbeat path)
 ```
 
 The padawan **does** verify successfully (the three integrity gates pass),
-which is why the master can honestly emit `VERIFYING` after `OTA_END_ACK`
-arrives. The padawan then explicitly reports that the next step — the
-boot-partition flip — is not implemented, via the new `OtaEndStatus` value.
+sends `OTA_END_ACK OK`, and then waits 2 s before reporting the flash
+outcome via a separate `OTA_FLASH_RESULT` message. The 2 s wait gives the
+server-visible `Flashing` row a chance to render before the terminal
+transition lands — without it, `FLASHING` and `FAILED` would arrive back-
+to-back at the orchestrator and the row would never render as `'current'`.
+
+This split also makes the wire protocol honest about the two lifecycle
+phases: `OTA_END_ACK` reports verification done, `OTA_FLASH_RESULT`
+reports the flash-commit outcome. In M4 the placeholder behavior is
+expressed entirely on the new message; the existing `OTA_END_ACK` enum
+is untouched.
 
 ## Wire-format changes
 
-### `OtaEndStatus` — new value `FLASH_NOT_IMPLEMENTED`
+### New message: `OTA_FLASH_RESULT`
 
-Defined in `lib_native/AstrOsMessaging/src/OtaWirePayloads.hpp`. The
-existing enum:
+Padawan → master, sent after the padawan's 2 s pre-flash delay. Reports
+the outcome of the flash-commit step distinct from the verification step
+that `OTA_END_ACK` already covers.
+
+Defined alongside the existing OTA payloads in
+`lib_native/AstrOsMessaging/src/OtaWirePayloads.hpp`:
 
 ```cpp
-enum class OtaEndStatus : uint8_t {
-    OK = 0,
-    HASH_MISMATCH = 1,
-    WRITE_ERROR = 2,
-    // NEW:
-    FLASH_NOT_IMPLEMENTED = 3,
+enum class OtaFlashStatus : uint8_t {
+    OK = 0,                     // esp_ota_set_boot_partition succeeded (PR set 2)
+    FLASH_NOT_IMPLEMENTED = 1,  // M4 placeholder — flash step deliberately skipped
+    FAILED = 2,                 // esp_ota_set_boot_partition returned error (PR set 2)
+};
+
+struct __attribute__((packed)) OtaFlashResultPayload {
+    uint8_t  xferId;            // matches the active transfer
+    uint8_t  status;            // OtaFlashStatus
+    uint8_t  reasonLen;         // length of reason string, 0..63
+    char     reason[63];        // optional reason / detail string; truncated, not NUL-required
 };
 ```
 
-Semantics: "Transfer + on-device verification succeeded; the flash-commit
-step (boot-partition flip) is intentionally not implemented in this
-firmware build." Distinct from `WRITE_ERROR` (which is a real failure of
-`esp_ota_write`) and from `HASH_MISMATCH` (data corruption). This value is
-**only valid when emitted by an M4 firmware build that has chosen this
-placeholder strategy**; PR set 2 firmware will not emit it and may
-eventually remove it.
+`reason` is populated on `FLASH_NOT_IMPLEMENTED` (typically the literal
+`pr_set_1_placeholder`) and on `FAILED` (the underlying `esp_err_t` name).
+On `OK` it is the empty string.
 
-A native test pin (`test/test_native/`) covers the round-trip of the new
-enum value through `buildOtaEnd*` / `parseOtaEnd*`.
+Wire-format builder + parser pair added to
+`lib_native/AstrOsMessaging/src/OtaWirePayloads.{hpp,cpp}`:
+`buildOtaFlashResult(...)` and `parseOtaFlashResult(...)`. Native
+round-trip tests in `test/test_native/astros_ota_espnow_messages_tests.cpp`
+cover OK, FLASH_NOT_IMPLEMENTED-with-reason, FAILED-with-reason, and
+malformed/truncated rejection.
+
+Packet type enum gets a new variant in
+`lib_native/AstrOsEspNowProtocol/include/AstrOsEspNowProtocol.hpp`:
+
+```cpp
+enum class AstrOsPacketType : uint8_t {
+    // ... existing ...
+    OTA_FLASH_RESULT = N,  // padawan -> master flash outcome
+};
+```
+
+Dispatch added to `AstrOsEspNow::routeOtaToForwarder` (master-side
+inbound) so the master forwarder receives the new message in its queue.
+
+### `FW_PROGRESS` — implement the existing-but-unbuilt contract
 
 ### `FW_PROGRESS` — implement the existing-but-unbuilt contract
 
@@ -251,49 +307,124 @@ touch FW_PROGRESS; that channel is master → server):
 |---|---|---|---|---|
 | `startNextPadawan` after `emitOtaBeginFrame` | SENDING | 0 | firmwareTotalSize_ | `""` |
 | Every ~5% of `firmwareTotalSize_` during streaming | SENDING | running | firmwareTotalSize_ | `""` |
-| `handleEndAck` with OK or FLASH_NOT_IMPLEMENTED | VERIFYING | firmwareTotalSize_ | firmwareTotalSize_ | `""` |
-| Immediately before mapping the padawan's status into `results_` (in `completeCurrentPadawan` and the M4-specific flash-not-implemented path) | FLASHING | firmwareTotalSize_ | firmwareTotalSize_ | `"pr_set_1_placeholder"` |
+| `emitOtaEndFrame` — immediately after the OTA_END frame is enqueued for the padawan | VERIFYING | firmwareTotalSize_ | firmwareTotalSize_ | `""` |
+| `handleEndAck` on OK arrival from padawan | FLASHING | firmwareTotalSize_ | firmwareTotalSize_ | `""` |
 
 The throttling at 5% intervals matches the M5 plan cadence in
 `20260523-1023-firmware-ota-mesh-forward-design.md:391-405`. For a 1.2 MB
 firmware image, that's ~20 SENDING events + 1 VERIFYING + 1 FLASHING per
 padawan.
 
+**Critical trigger placement**:
+- `VERIFYING` is emitted when the master *sends* `OTA_END` (not when
+  `OTA_END_ACK` arrives back). This makes the verify row light up while
+  the padawan is doing the 3 integrity gates, instead of flashing on
+  for milliseconds at the transition to flash.
+- `FLASHING` is emitted when `OTA_END_ACK OK` arrives from the padawan.
+  The padawan then sits in its 2 s pre-flash delay; the flash row is
+  visible for the full duration of that delay. When `OTA_FLASH_RESULT`
+  eventually arrives, the master maps it into `FW_DEPLOY_DONE` per the
+  table below.
+
+No FW_PROGRESS is emitted on `OTA_FLASH_RESULT` arrival — the message's
+status field drives the per-padawan result in `FW_DEPLOY_DONE`, and the
+server state machine takes the controller from `Flashing → Failed` (M4)
+or `Flashing → Rebooting → VersionConfirmed` (PR set 2, with REBOOTING /
+VERSION_CONFIRMED emitted via separate triggers not in scope for this
+PR).
+
 ## Padawan-side change
 
 In `lib/OtaWriter/src/OtaWriter.cpp::handleEnd`, when the three integrity
-gates all pass (the current `OK` path):
+gates all pass:
 
-```cpp
-// All three gates passed. M4 ships transfer + verify but does NOT
-// commit to the boot partition (no esp_ota_set_boot_partition).
-// Explicitly signal this to the master so the deploy UX shows the
-// flash step as a known-pending failure. Replaced with OtaEndStatus::OK
-// when PR set 2 implements the boot-commit step.
-sendEndAck(mac, xferId, OtaEndStatus::FLASH_NOT_IMPLEMENTED, sha256Computed);
-```
+1. Send `OTA_END_ACK OK` immediately with the streamed digest (current
+   behavior, unchanged).
+2. Schedule a 2 s delay before the flash-result emission. Implementation
+   options:
+   - **vTaskDelay** (`vTaskDelay(pdMS_TO_TICKS(2000))`) — blocks
+     `otaWriterTask` for 2 s. Simple. The task has no pipelined work to
+     do during this window (OTA is single-shot per transfer; no other
+     messages drain from this queue mid-transfer), so blocking is
+     acceptable. Recommended for M4.
+   - **esp_timer one-shot** — schedules a callback that posts
+     `OTA_WR_FLASH_FIRE` into the writer queue, which then sends the
+     OTA_FLASH_RESULT and (in PR set 2) calls
+     `esp_ota_set_boot_partition`. More complex but non-blocking.
+     Probably correct for PR set 2 since the post-flash reboot path is
+     intricate; can be deferred from M4.
+3. After the delay, send `OTA_FLASH_RESULT` with
+   `status = OtaFlashStatus::FLASH_NOT_IMPLEMENTED`,
+   `reason = "pr_set_1_placeholder"`. PR set 2 replaces this with a
+   real `esp_ota_set_boot_partition` call followed by
+   `OtaFlashResult(OK)` or `OtaFlashResult(FAILED)` per the IDF return.
 
-The streamed digest is still echoed back (it's accurate; the bytes are
-on the inactive partition exactly as expected). The change is purely the
-status byte.
+A comment block at the placeholder call site explicitly marks this as
+M4 placeholder behavior and references this design doc by filename.
 
-A code comment block at the call site explicitly marks this as a
-placeholder and references this design doc.
+The padawan's existing `currentXferId_` / `currentMasterMac_` per-
+transfer state is retained for the duration of the delay so the
+follow-up flash-result emission addresses the right peer.
 
 ## OtaForwarder result mapping
 
-In `lib/OtaForwarder/src/OtaForwarder.cpp::handleEndAck` (the master-side
-consumer of the padawan's `OTA_END_ACK`):
+Two padawan-originated messages now feed the master's per-padawan result:
 
-| Padawan status | OtaForwarder outcome | FW_DEPLOY_DONE result |
+**`OTA_END_ACK` (existing)** — verification outcome only. Master uses this
+to either advance to `FLASHING` (on OK) or record an early failure (on
+HASH_MISMATCH / WRITE_ERROR):
+
+| End-ack status | Master action | FW_DEPLOY_DONE result |
 |---|---|---|
-| OK | (unreachable in M4) | OK |
-| HASH_MISMATCH | FAILED | `controllerId, FAILED, "", "hash_mismatch"` |
-| WRITE_ERROR | FAILED | `controllerId, FAILED, "", "write_error"` |
+| OK | emit FW_PROGRESS FLASHING; wait for OTA_FLASH_RESULT | (deferred — see flash-result table) |
+| HASH_MISMATCH | record FAILED immediately; cancel further wait | `controllerId, FAILED, "", "hash_mismatch"` |
+| WRITE_ERROR | record FAILED immediately; cancel further wait | `controllerId, FAILED, "", "write_error"` |
+
+**`OTA_FLASH_RESULT` (new)** — flash-commit outcome:
+
+| Flash-result status | OtaForwarder outcome | FW_DEPLOY_DONE result |
+|---|---|---|
+| OK | OK (PR set 2 only — never reached in M4) | `controllerId, OK, finalVersion, ""` |
 | **FLASH_NOT_IMPLEMENTED** | **FAILED** | `controllerId, FAILED, "", "flash_not_implemented"` |
+| FAILED | FAILED | `controllerId, FAILED, "", reason` (from the wire) |
 
 The reason string flows through `FwDeployDoneResult.error` to the UI's
 controller-detail view.
+
+**Master-side flash-result wait timeout.** After emitting FLASHING the
+master starts a timer with a generous timeout (proposed: 10 s, configurable
+via a `kFlashResultTimeoutUs` constant in `OtaForwarder.hpp`). If
+`OTA_FLASH_RESULT` does not arrive within the window, the master records
+the padawan as FAILED with reason `"flash_result_timeout"`. This covers
+the "padawan crashed during the pre-flash delay" failure mode that would
+otherwise leave the master waiting forever.
+
+**New forwarder phase: `AWAITING_FLASH_RESULT`.** The current OtaForwarder
+phase enum (in `OtaForwarder.hpp`) gains a new state inserted between
+`AWAITING_END_ACK` and `BETWEEN_PADAWANS`:
+
+```cpp
+enum class Phase : uint8_t {
+    IDLE,
+    AWAITING_BEGIN_ACK,
+    STREAMING,
+    AWAITING_END_ACK,
+    AWAITING_FLASH_RESULT,   // NEW: holding for padawan's flash outcome
+    BETWEEN_PADAWANS,
+};
+```
+
+State transitions adjust: on `OTA_END_ACK OK` arrival, instead of
+calling `completeCurrentPadawan` immediately, the forwarder transitions
+to `AWAITING_FLASH_RESULT`, emits FW_PROGRESS FLASHING, and arms the
+flash-result timer. `completeCurrentPadawan` runs on `OTA_FLASH_RESULT`
+arrival (with the status mapped into `results_`) or on flash-result
+timer fire (recording the `flash_result_timeout` failure).
+
+Sequential per-padawan iteration (current model) means the next
+padawan's deploy doesn't start until the current padawan's
+flash-result is in. The flash-result timer prevents indefinite blocking
+on a dead padawan.
 
 ## Non-goals
 
@@ -315,50 +446,78 @@ controller-detail view.
 
 ## Migration plan
 
-The new enum value (`OtaEndStatus::FLASH_NOT_IMPLEMENTED`) and new server
-stage (`FwStage.Flashing`) need to land together — a server running pre-
-this-design code receiving the new status would log an unknown-outcome
-warning, and an M4 firmware running pre-this-design server code would
-hit the same illegal-transition bug. Coordination:
+The new wire message (`OTA_FLASH_RESULT`) and new server stage
+(`FwStage.Flashing`) need to land together — a server running pre-
+this-design code would still hit the illegal-transition bug, and an M4
+firmware emitting FW_PROGRESS against a pre-this-design server would
+have its messages logged as unknown. Coordination:
 
-1. Land server-side enum + state-machine + UI mapping changes first.
-   Pre-existing M4 firmware deploys continue to hit the
-   illegal-transition bug (no regression).
-2. Land firmware FW_PROGRESS emission + padawan placeholder change. M4
-   deploys against the updated server now show the intended UI flow.
-3. When PR set 2 ships:
-   - Padawan sends `OK` again (real flash commit succeeded).
-   - Firmware adds `REBOOTING` + `VERSION_CONFIRMED` FW_PROGRESS emission.
-   - Server's `Flashing → Rebooting → VersionConfirmed` path becomes the
-     happy path.
-   - `OtaEndStatus::FLASH_NOT_IMPLEMENTED` can be retired (or kept as a
-     debug/test-mode hook).
+1. Land firmware wire-format additions first (new `OtaFlashStatus`
+   enum, `OtaFlashResultPayload` struct, `OTA_FLASH_RESULT` packet
+   type, native round-trip tests). No behavioral change yet — the new
+   message is defined but never emitted or consumed. This step is
+   independently mergeable.
+2. Land server-side enum + state-machine + UI mapping changes
+   (`FwStage.Flashing`, `Verifying → Flashing → Failed` transitions,
+   `FLASHING → 'flash'` mapping, `FIRMWARE_STAGES` row reorder). M4
+   firmware in the field continues to hit the illegal-transition bug
+   (no regression).
+3. Land firmware FW_PROGRESS emission + padawan flash-result emission
+   change. M4 deploys against the updated server now show the intended
+   UI flow.
+4. When PR set 2 ships:
+   - Padawan replaces the `FLASH_NOT_IMPLEMENTED` placeholder with the
+     real `esp_ota_set_boot_partition` call and emits
+     `OtaFlashResult(OK)` or `OtaFlashResult(FAILED)` per the IDF
+     return.
+   - Padawan adds the reboot trigger after a successful flash-result
+     send.
+   - Firmware adds `REBOOTING` + `VERSION_CONFIRMED` FW_PROGRESS
+     emission (triggered by post-reboot heartbeat resync paths).
+   - Server's `Flashing → Rebooting → VersionConfirmed` path becomes
+     the happy path; `FLASH_NOT_IMPLEMENTED` retires (or stays as a
+     debug/test-mode hook for development builds).
 
 ## Phasing
 
-Single phase. ~6 tasks, two-repo coordination. Below the "more than ~8
-discrete tasks" scope-guard threshold from `CLAUDE.md`. Tasks:
+Single phase. ~8 tasks, two-repo coordination. At the "more than ~8
+discrete tasks" scope-guard threshold from `CLAUDE.md` — manageable as
+one plan but worth flagging. Tasks:
 
-1. **AstrOs.ESP — wire format.** Add `OtaEndStatus::FLASH_NOT_IMPLEMENTED`,
-   native round-trip test, update `OtaWirePayloads.hpp` comment.
-2. **AstrOs.ESP — `getFwProgress` + `sendFwProgress`.** Builder + wrapper +
-   native round-trip test.
-3. **AstrOs.ESP — `OtaForwarder` emission.** Wire SENDING/VERIFYING/FLASHING
-   per the cadence table.
-4. **AstrOs.ESP — `OtaWriter::handleEnd` placeholder.** Send
-   `FLASH_NOT_IMPLEMENTED` instead of OK; comment block referencing this
-   design.
-5. **AstrOs.Server — enum + state machine + mapping + row order.** Add
-   `FwStage.Flashing`, update transitions, update UI mapping, update
-   `ServerFwStage` type, reorder `FIRMWARE_STAGES` to
-   `['download', 'transfer', 'verify', 'flash', 'reboot']`, update tests.
-6. **AstrOs.Server — orchestrator integration test.** Simulate M4 sequence
-   end-to-end (FW_PROGRESS chain + FW_DEPLOY_DONE FAILED with
-   flash_not_implemented), assert UI-visible state.
-
-Bench validation: a 2-padawan deploy from the server UI must render
-`✓ transfer ! flash` and surface the `flash_not_implemented` reason in
-the controller detail view.
+1. **AstrOs.ESP — `OTA_FLASH_RESULT` wire format.** Add
+   `OtaFlashStatus` enum, `OtaFlashResultPayload` struct,
+   `buildOtaFlashResult` / `parseOtaFlashResult`, new
+   `AstrOsPacketType::OTA_FLASH_RESULT` variant, native round-trip
+   tests. No emit/consume yet — wire format only.
+2. **AstrOs.ESP — `getFwProgress` + `sendFwProgress`.** Builder +
+   wrapper + native round-trip test.
+3. **AstrOs.ESP — `OtaForwarder` FW_PROGRESS emission.** Wire
+   SENDING/VERIFYING/FLASHING per the cadence table. VERIFYING fires
+   on `emitOtaEndFrame`; FLASHING fires on `OTA_END_ACK OK` arrival.
+4. **AstrOs.ESP — `OtaForwarder` flash-result handling.** Add
+   consumer for `OTA_FLASH_RESULT`, map status into `results_`, add
+   per-padawan flash-result wait timer (`kFlashResultTimeoutUs`,
+   proposed 10 s).
+5. **AstrOs.ESP — `OtaWriter::handleEnd` placeholder.** Send
+   `OTA_END_ACK OK` immediately (unchanged), then `vTaskDelay(2 s)`,
+   then send `OTA_FLASH_RESULT(FLASH_NOT_IMPLEMENTED, "pr_set_1_placeholder")`.
+   Comment block referencing this design.
+6. **AstrOs.Server — enum + state machine + mapping + row order.** Add
+   `FwStage.Flashing`, update transitions (`Verifying → Flashing`,
+   `Flashing → Rebooting`, `Flashing → Failed`), update
+   `mapServerStageToUiStage` (`FLASHING → 'flash'`), update
+   `controllerStatePillKind`, update `ServerFwStage` type, reorder
+   `FIRMWARE_STAGES` to `['download', 'transfer', 'verify', 'flash', 'reboot']`,
+   update affected tests.
+7. **AstrOs.Server — orchestrator integration test.** Simulate M4
+   sequence end-to-end (FW_PROGRESS chain + FW_DEPLOY_DONE FAILED with
+   `flash_not_implemented`), assert UI-visible state and the
+   2 s-visible-Flashing timing assumption.
+8. **Bench validation.** 2-padawan deploy from the server UI must
+   render `✓ download ✓ transfer ✓ verify ! flash idle-reboot` and
+   surface the `flash_not_implemented` reason in the controller-detail
+   view. Verify state visibly persists for ~2 s before flashing turns
+   red.
 
 ## Related references
 
