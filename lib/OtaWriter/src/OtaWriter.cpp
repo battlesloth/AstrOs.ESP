@@ -14,11 +14,14 @@ OtaWriter::OtaWriter() {}
 OtaWriter::~OtaWriter()
 {
     // esp_timer_stop on an idle timer is harmless.
-    if (watchdog_ != nullptr)
+    for (esp_timer_handle_t *t : {&watchdog_, &statsTimer_})
     {
-        esp_timer_stop(watchdog_);
-        esp_timer_delete(watchdog_);
-        watchdog_ = nullptr;
+        if (*t != nullptr)
+        {
+            esp_timer_stop(*t);
+            esp_timer_delete(*t);
+            *t = nullptr;
+        }
     }
     resetOtaHandleAndSha();
 }
@@ -48,6 +51,20 @@ void OtaWriter::Init(QueueHandle_t otaWriterQueue)
         // only stuck-recovery is lost. Mirrors OtaReceiver's choice.
         ESP_LOGE(TAG, "esp_timer_create(ota_writer_watchdog) failed: %s — watchdog disabled", esp_err_to_name(err));
         watchdog_ = nullptr;
+    }
+
+    const esp_timer_create_args_t statsArgs = {
+        .callback = &OtaWriter::statsTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_writer_stats",
+        .skip_unhandled_events = true,
+    };
+    esp_err_t statsErr = esp_timer_create(&statsArgs, &statsTimer_);
+    if (statsErr != ESP_OK)
+    {
+        ESP_LOGE(TAG, "esp_timer_create(ota_writer_stats) failed: %s — stats log disabled", esp_err_to_name(statsErr));
+        statsTimer_ = nullptr;
     }
 
     ESP_LOGI(TAG, "OtaWriter initialized (watchdog idle threshold: %llums)", kWatchdogIdleUs / 1000ULL);
@@ -102,12 +119,61 @@ void OtaWriter::watchdogStop()
     esp_timer_stop(watchdog_);
 }
 
+void OtaWriter::statsTimerCb(void *arg)
+{
+    auto self = static_cast<OtaWriter *>(arg);
+    if (self->otaWriterQueue_ == nullptr)
+    {
+        return;
+    }
+    queue_ota_writer_msg_t msg{};
+    msg.kind = OTA_WR_STATS_FIRE;
+    // Best-effort: missing one stats fire is harmless; next tick catches up.
+    xQueueSend(self->otaWriterQueue_, &msg, 0);
+}
+
+void OtaWriter::statsTimerStart()
+{
+    if (statsTimer_ == nullptr)
+        return;
+    esp_timer_stop(statsTimer_);
+    esp_err_t err = esp_timer_start_periodic(statsTimer_, kStatsPeriodUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "stats: esp_timer_start_periodic failed: %s — stats log will be silent", esp_err_to_name(err));
+    }
+}
+
+void OtaWriter::statsTimerStop()
+{
+    if (statsTimer_ == nullptr)
+        return;
+    esp_timer_stop(statsTimer_);
+}
+
+void OtaWriter::handleStatsFire()
+{
+    if (!active_)
+    {
+        // Stale fire after transfer ended; stop the timer to silence further
+        // noise (start/stop wiring guarantees this is rare).
+        statsTimerStop();
+        return;
+    }
+    const long long acked = statsAnyAcked_ ? static_cast<long long>(statsHighestAckedSeq_) : -1;
+    ESP_LOGI(TAG, "OTA_STATS_RX: xferId=%u seq=%u/%u acked=%lld naks-tx(CRC=%u SIZE=%u OOO=%u FLASH=%u) send-fail=%u",
+             (unsigned)currentXferId_, (unsigned)statsLastRecvSeq_, (unsigned)currentTotalChunks_, acked,
+             (unsigned)statsNaksCRC_, (unsigned)statsNaksSIZE_, (unsigned)statsNaksOOO_, (unsigned)statsNaksFLASH_,
+             (unsigned)statsSendFailCount_);
+}
+
 void OtaWriter::resetOtaHandleAndSha()
 {
     // Stop the watchdog first so a pending fire either no-ops on the
     // already-stopped timer or queues a WATCHDOG_FIRE that hits the
     // late-signal path below (active_ = false by the time it dispatches).
     watchdogStop();
+    statsTimerStop();
     if (otaHandle_ != 0)
     {
         // esp_ota_abort releases the handle. Return value isn't actionable
@@ -153,6 +219,9 @@ void OtaWriter::process(queue_ota_writer_msg_t &msg)
         break;
     case OTA_WR_WATCHDOG_FIRE:
         handleWatchdogFire();
+        break;
+    case OTA_WR_STATS_FIRE:
+        handleStatsFire();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown msg.kind=%d", (int)msg.kind);
@@ -237,7 +306,19 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
     currentXferId_ = xferId;
     memcpy(currentMasterMac_, mac, sizeof(currentMasterMac_));
     currentTotalSize_ = msg.begin.totalSize;
+    currentTotalChunks_ = msg.begin.totalChunks;
     memcpy(expectedSha256_, msg.begin.sha256Expected, sizeof(expectedSha256_));
+
+    // Reset stats counters before the first wire activity.
+    statsLastRecvSeq_ = 0;
+    statsHighestAckedSeq_ = 0;
+    statsAnyAcked_ = false;
+    statsNaksCRC_ = 0;
+    statsNaksSIZE_ = 0;
+    statsNaksOOO_ = 0;
+    statsNaksFLASH_ = 0;
+    statsSendFailCount_ = 0;
+
     active_ = true;
 
     ESP_LOGI(
@@ -255,10 +336,12 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
     if (ackErr != ESP_OK)
     {
         ESP_LOGW(TAG, "handleBegin: sendBeginAck failed — releasing writer state so a retry can begin");
+        statsSendFailCount_++;
         resetOtaHandleAndSha();
         return;
     }
     watchdogStart();
+    statsTimerStart();
 }
 
 void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
@@ -280,6 +363,11 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
         return;
     }
 
+    // Track highest seq seen on the wire (monotonic — late/duplicate
+    // packets don't regress the progress indicator).
+    if (seq > statsLastRecvSeq_)
+        statsLastRecvSeq_ = seq;
+
     auto cr = bulk_.onChunk(xferId, seq, msg.data.payloadLen, msg.data.crc16, msg.data.payload);
 
     if (cr.decision == AstrOsBulkTransport::Decision::NAK)
@@ -289,12 +377,15 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
         {
         case AstrOsBulkTransport::NakReason::CRC:
             wireReason = OtaDataNakReason::CRC;
+            statsNaksCRC_++;
             break;
         case AstrOsBulkTransport::NakReason::SIZE:
             wireReason = OtaDataNakReason::SIZE;
+            statsNaksSIZE_++;
             break;
         case AstrOsBulkTransport::NakReason::OUT_OF_ORDER:
             wireReason = OtaDataNakReason::OUT_OF_ORDER;
+            statsNaksOOO_++;
             break;
         case AstrOsBulkTransport::NakReason::FLASH_FULL:
             // BulkReceiver's receive-side capacity exhausted — terminal on
@@ -302,18 +393,23 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
             // retransmitting into a writer that has no room.
             ESP_LOGW(TAG, "handleData: NAK reason=FLASH_FULL — wire-encoding as WRITE (terminal)");
             wireReason = OtaDataNakReason::WRITE;
+            statsNaksFLASH_++;
             break;
         case AstrOsBulkTransport::NakReason::NONE:
             // Shouldn't happen on a NAK decision; fall through to OUT_OF_ORDER
             // as the safest hint for the master.
             ESP_LOGW(TAG, "handleData: NAK with reason=NONE — wire-encoding as OUT_OF_ORDER");
             wireReason = OtaDataNakReason::OUT_OF_ORDER;
+            statsNaksOOO_++;
             break;
         }
         ESP_LOGW(TAG, "handleData: xferId=%u seq=%u NAK reason=%d (hcs=%u nes=%u wr=%u)", xferId, seq, (int)wireReason,
                  (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
-        logSendResult("handleData chunk NAK", sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq,
-                                                          cr.windowRemaining, wireReason));
+        esp_err_t nakErr =
+            sendDataNak(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining, wireReason);
+        logSendResult("handleData chunk NAK", nakErr);
+        if (nakErr != ESP_OK)
+            statsSendFailCount_++;
         // Silence-based watchdog: a transient NAK (CRC/SIZE/OUT_OF_ORDER/NONE)
         // still proves master is alive and retransmitting, so reset the idle
         // timer. FLASH_FULL is the exception — it's wire-encoded as terminal
@@ -335,8 +431,10 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
         // contract treats windowRemaining=0 as "receiver inactive" — that
         // matches our post-reset state and prevents the master from
         // retransmitting into a torn-down writer.
-        logSendResult("handleData WRITE NAK (esp_ota_write)",
-                      sendDataNak(mac, xferId, /*hcs=*/0, /*nes=*/0, /*wr=*/0, OtaDataNakReason::WRITE));
+        esp_err_t nakErr = sendDataNak(mac, xferId, /*hcs=*/0, /*nes=*/0, /*wr=*/0, OtaDataNakReason::WRITE);
+        logSendResult("handleData WRITE NAK (esp_ota_write)", nakErr);
+        if (nakErr != ESP_OK)
+            statsSendFailCount_++;
         resetOtaHandleAndSha();
         return;
     }
@@ -356,8 +454,14 @@ void OtaWriter::handleData(queue_ota_writer_msg_t &msg)
     ESP_LOGD(TAG, "handleData: xferId=%u seq=%u accepted (cum=%u next=%u wr=%u)", xferId, seq,
              (unsigned)cr.highestContiguousSeq, (unsigned)cr.nextExpectedSeq, (unsigned)cr.windowRemaining);
 
-    logSendResult("handleData DATA_ACK",
-                  sendDataAck(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining));
+    // Stats: chunk accepted, so the wire's cumulative ACK is authoritative.
+    statsHighestAckedSeq_ = cr.highestContiguousSeq;
+    statsAnyAcked_ = true;
+
+    esp_err_t ackErr = sendDataAck(mac, xferId, cr.highestContiguousSeq, cr.nextExpectedSeq, cr.windowRemaining);
+    logSendResult("handleData DATA_ACK", ackErr);
+    if (ackErr != ESP_OK)
+        statsSendFailCount_++;
     watchdogRestart();
 }
 

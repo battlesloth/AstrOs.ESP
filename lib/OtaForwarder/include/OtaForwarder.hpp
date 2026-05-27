@@ -120,6 +120,16 @@ private:
     static void beginAckTimerCb(void *arg);
     static void endAckTimerCb(void *arg);
 
+    // Stats periodic timer (2 s cadence) — fired while a transfer is live so
+    // bench logs get a low-noise progress heartbeat. Started in
+    // startNextPadawan after the first OTA_BEGIN is sent; stopped in
+    // completeCurrentPadawan + abortCurrentPadawan. First emission ~2 s after
+    // start, which naturally announces the session is running.
+    void statsTimerStart();
+    void statsTimerStop();
+    static void statsTimerCb(void *arg);
+    void handleStatsFire();
+
     // Resolves a controller-id (from FW_DEPLOY_BEGIN's order list) to a
     // MAC. Linear-scans AstrOs_EspNow.getPeers() — small list, cheap.
     // Returns true if found; fills outMac. Returns false if no peer
@@ -144,12 +154,17 @@ private:
     esp_timer_handle_t tickTimer_ = nullptr;
     esp_timer_handle_t beginAckTimer_ = nullptr;
     esp_timer_handle_t endAckTimer_ = nullptr;
+    esp_timer_handle_t statsTimer_ = nullptr;
 
-    // Cadence: 50 ms tick, 2 s BEGIN_ACK timeout, 5 s END_ACK timeout
-    // (from the frozen contract; see design doc §Timeouts).
+    // Cadence: 50 ms tick, 5 s BEGIN_ACK timeout, 5 s END_ACK timeout,
+    // 2 s stats emission. BEGIN_ACK was 2 s but bench measurements showed
+    // padawan BEGIN_ACK round-trip lands around 2.5 s (esp_ota_begin +
+    // BulkReceiver::begin + ESP-NOW send back), causing spurious abandonments
+    // on healthy peers.
     static constexpr uint64_t kTickPeriodUs = 50ULL * 1000ULL;
-    static constexpr uint64_t kBeginAckTimeoutUs = 2ULL * 1000ULL * 1000ULL;
+    static constexpr uint64_t kBeginAckTimeoutUs = 5ULL * 1000ULL * 1000ULL;
     static constexpr uint64_t kEndAckTimeoutUs = 5ULL * 1000ULL * 1000ULL;
+    static constexpr uint64_t kStatsPeriodUs = 2ULL * 1000ULL * 1000ULL;
 
     // BulkSender params (from the frozen contract).
     static constexpr uint16_t kChunkSize = 128;
@@ -185,6 +200,16 @@ private:
     uint32_t firmwareTotalSize_ = 0;
     uint32_t firmwareTotalChunks_ = 0;
     uint8_t firmwareSha256_[32] = {0};
+
+    // Stats counters (reset in startNextPadawan). All read+written by the
+    // owning task only (otaForwarderTask) — no atomics. lastSentSeq_ is the
+    // most recent seq put on the wire (incl. retransmits). highestAckedSeq_
+    // tracks the cumulative-ACK cursor observed in handleDataAck.
+    uint32_t statsLastSentSeq_ = 0;
+    uint32_t statsHighestAckedSeq_ = 0;
+    bool statsAnyAcked_ = false; // disambiguates "0 acked" from "none acked yet"
+    uint32_t statsNaksRecvCount_ = 0;
+    uint32_t statsSendFailCount_ = 0;
 };
 
 extern OtaForwarder AstrOs_OtaForwarder;

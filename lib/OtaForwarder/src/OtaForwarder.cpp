@@ -28,7 +28,7 @@ OtaForwarder::~OtaForwarder()
     // against the timer-leak hazard if a test fixture ever instantiates a
     // non-singleton OtaForwarder; mirrors the April 2026 code review's
     // concern about latent leaks in similar singletons.
-    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_})
+    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_})
     {
         if (*t)
         {
@@ -78,6 +78,15 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&endArgs, &endAckTimer_));
+
+    esp_timer_create_args_t statsArgs = {
+        .callback = &OtaForwarder::statsTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_stats",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&statsArgs, &statsTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -104,6 +113,9 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_TICK:
         handleTick();
+        break;
+    case OTA_FWD_STATS_FIRE:
+        handleStatsFire();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -231,7 +243,7 @@ void OtaForwarder::handleBeginNak(queue_ota_forwarder_msg_t &msg)
     // all-zero srcMac (zero-init), so srcMac check would reject it.
     if (msg.begin_nak.xferId == 0xFF && msg.begin_nak.reason == 0xFF)
     {
-        ESP_LOGW(TAG, "OTA_BEGIN_ACK timeout for %s after 2s; abandoning", currentControllerId_.c_str());
+        ESP_LOGW(TAG, "OTA_BEGIN_ACK timeout for %s after 5s; abandoning", currentControllerId_.c_str());
         abortCurrentPadawan("begin_ack_timeout");
         return;
     }
@@ -265,6 +277,9 @@ void OtaForwarder::handleDataAck(queue_ota_forwarder_msg_t &msg)
     switch (r.decision)
     {
     case AstrOsBulkTransport::AckResult::Decision::OK:
+        // Update stats cursor — the wire's cumulative ACK is authoritative.
+        statsHighestAckedSeq_ = msg.data_ack.highestContiguousSeq;
+        statsAnyAcked_ = true;
         break;
     case AstrOsBulkTransport::AckResult::Decision::STALE:
         ESP_LOGD(TAG, "Stale ACK cumulativeSeq=%u — ignoring", msg.data_ack.highestContiguousSeq);
@@ -313,6 +328,7 @@ void OtaForwarder::handleDataNak(queue_ota_forwarder_msg_t &msg)
                  msg.data_nak.nextExpectedSeq);
         return;
     }
+    statsNaksRecvCount_++;
     auto r = bulk_.onDataNak(msg.data_nak.xferId, msg.data_nak.nextExpectedSeq,
                              static_cast<AstrOsBulkTransport::NakReason>(msg.data_nak.reason));
     switch (r.decision)
@@ -468,7 +484,8 @@ void OtaForwarder::handleTick()
             return;
         }
 
-        uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
+        // CRC over payload only — see streamDrain for the contract rationale.
+        uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf + sizeof(hdr), expectedLen);
         std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
 
         esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
@@ -480,7 +497,10 @@ void OtaForwarder::handleTick()
             // the bench log surfacing transient ESP-NOW failures so
             // abandon-counter trips are diagnosable.
             ESP_LOGW(TAG, "OTA_DATA retransmit seq=%u sendOtaFrame returned %s", seq, esp_err_to_name(err));
+            statsSendFailCount_++;
         }
+        // Don't update statsLastSentSeq_ here — retransmits are by definition
+        // of seqs already covered by the high-water mark.
     }
 
     // After retransmits, drain new chunks until WINDOW_FULL / ALL_SENT.
@@ -635,9 +655,17 @@ void OtaForwarder::startNextPadawan()
         ESP_LOGI(TAG, "Starting transfer to %s (xferId=%u, chunks=%u, size=%u)", currentControllerId_.c_str(),
                  currentXferId_, firmwareTotalChunks_, firmwareTotalSize_);
 
+        // Reset per-padawan stats counters before the first wire activity.
+        statsLastSentSeq_ = 0;
+        statsHighestAckedSeq_ = 0;
+        statsAnyAcked_ = false;
+        statsNaksRecvCount_ = 0;
+        statsSendFailCount_ = 0;
+
         phase_ = Phase::AWAITING_BEGIN_ACK;
         emitOtaBeginFrame();
         beginAckTimerStart();
+        statsTimerStart();
         // tickTimer is started only when entering STREAMING (see handleBeginAck);
         // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
         // queue with no-op messages and risks crowding out deadline sentinels.
@@ -649,6 +677,7 @@ void OtaForwarder::abortCurrentPadawan(const std::string &reason)
     beginAckTimerStop();
     endAckTimerStop();
     tickTimerStop();
+    statsTimerStop();
     bulk_.reset();
     if (firmwareFile_)
     {
@@ -666,6 +695,7 @@ void OtaForwarder::completeCurrentPadawan()
     beginAckTimerStop();
     endAckTimerStop();
     tickTimerStop();
+    statsTimerStop();
     bulk_.reset();
     if (firmwareFile_)
     {
@@ -774,7 +804,8 @@ void OtaForwarder::emitOtaBeginFrame()
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "OTA_BEGIN sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
-        // Padawan never saw the frame — fail fast instead of waiting 2 s.
+        statsSendFailCount_++;
+        // Padawan never saw the frame — fail fast instead of waiting 5 s.
         postTimeoutSentinel(OTA_FWD_BEGIN_NAK, "emitOtaBeginFrame");
     }
 }
@@ -790,6 +821,7 @@ void OtaForwarder::emitOtaEndFrame()
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "OTA_END sendOtaFrame returned %s; posting timeout sentinel immediately", esp_err_to_name(err));
+        statsSendFailCount_++;
         // Padawan never saw the frame — fail fast instead of waiting 5 s.
         postTimeoutSentinel(OTA_FWD_END_ACK, "emitOtaEndFrame");
     }
@@ -833,17 +865,12 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
                 return;
             }
 
-            // CRC-16/CCITT-FALSE over the entire OtaDataHeader bytes +
-            // payload bytes per the M1 wire spec (OtaWirePayloads.hpp:65 —
-            // "[xferId..end of firmware-bytes]"). The crc16 field inside
-            // the header is zero at this point (zero-init on hdr{}); the
-            // computed CRC is patched in below. M4's padawan verifier
-            // must zero the crc16 field before recomputing.
-            //
-            // NOTE: this span differs from the serial-path BulkReceiver,
-            // which checks CRC over payload only — the two transports
-            // deliberately use different CRC contracts.
-            uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf, sizeof(hdr) + expectedLen);
+            // CRC-16/CCITT-FALSE over payload bytes only. Matches what
+            // BulkReceiver::onChunk recomputes on the padawan side and the
+            // serial-path receiver — both transports share one CRC contract.
+            // Header-byte integrity is already covered by ESP-NOW's MAC-layer
+            // CRC32 and parseOtaData's field validation.
+            uint16_t crc = AstrOsBulkTransport::crc16_ccitt_false(payloadBuf + sizeof(hdr), expectedLen);
             std::memcpy(payloadBuf + offsetof(OtaDataHeader, crc16), &crc, sizeof(crc));
 
             esp_err_t err = AstrOs_EspNow.sendOtaFrame(currentPadawanMac_, AstrOsPacketType::OTA_DATA, payloadBuf,
@@ -851,9 +878,15 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
             if (err != ESP_OK)
             {
                 ESP_LOGW(TAG, "OTA_DATA seq=%u sendOtaFrame returned %s; tick will retry", seq, esp_err_to_name(err));
+                statsSendFailCount_++;
                 // Don't abort here — tick-based retransmit will catch it.
                 return;
             }
+            // Track highest seq put on wire (monotonic — retransmits don't
+            // regress this, so the stat reflects progress, not the most
+            // recent retry).
+            if (seq > statsLastSentSeq_)
+                statsLastSentSeq_ = seq;
             continue;
         }
 
@@ -963,6 +996,74 @@ void OtaForwarder::endAckTimerCb(void *arg)
         return;
     }
     self->postTimeoutSentinel(OTA_FWD_END_ACK, "endAckTimerCb");
+}
+
+void OtaForwarder::statsTimerStart()
+{
+    if (!statsTimer_)
+        return;
+    esp_timer_stop(statsTimer_);
+    esp_err_t err = esp_timer_start_periodic(statsTimer_, kStatsPeriodUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "statsTimerStart: esp_timer_start_periodic failed: %s — stats log will be silent",
+                 esp_err_to_name(err));
+    }
+}
+
+void OtaForwarder::statsTimerStop()
+{
+    if (statsTimer_)
+    {
+        esp_timer_stop(statsTimer_);
+    }
+}
+
+void OtaForwarder::statsTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+    {
+        return;
+    }
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_STATS_FIRE;
+    // Best-effort: missing one stats fire is harmless; next tick catches up.
+    xQueueSend(self->otaForwarderQueue_, &m, 0);
+}
+
+void OtaForwarder::handleStatsFire()
+{
+    if (phase_ == Phase::IDLE)
+    {
+        // Stale fire arriving after the transfer ended; stop the timer to
+        // prevent further noise (start/stop wiring guarantees this is rare).
+        statsTimerStop();
+        return;
+    }
+    const char *phaseStr = "?";
+    switch (phase_)
+    {
+    case Phase::IDLE:
+        phaseStr = "IDLE";
+        break;
+    case Phase::AWAITING_BEGIN_ACK:
+        phaseStr = "AWAITING_BEGIN_ACK";
+        break;
+    case Phase::STREAMING:
+        phaseStr = "STREAMING";
+        break;
+    case Phase::AWAITING_END_ACK:
+        phaseStr = "AWAITING_END_ACK";
+        break;
+    case Phase::BETWEEN_PADAWANS:
+        phaseStr = "BETWEEN_PADAWANS";
+        break;
+    }
+    const long long acked = statsAnyAcked_ ? static_cast<long long>(statsHighestAckedSeq_) : -1;
+    ESP_LOGI(TAG, "OTA_STATS_TX: xferId=%u seq=%u/%u acked=%lld naks-rx=%u send-fail=%u phase=%s",
+             (unsigned)currentXferId_, (unsigned)statsLastSentSeq_, (unsigned)firmwareTotalChunks_, acked,
+             (unsigned)statsNaksRecvCount_, (unsigned)statsSendFailCount_, phaseStr);
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

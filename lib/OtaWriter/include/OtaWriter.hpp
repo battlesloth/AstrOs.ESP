@@ -75,6 +75,15 @@ private:
     // OTA_WR_WATCHDOG_FIRE; state mutation happens on otaWriterTask.
     static void watchdogTimerCb(void *arg);
 
+    // Stats periodic timer (2 s cadence). Started in handleBegin when the
+    // transfer flips active; stopped in handleEnd success, handleWatchdogFire,
+    // and resetOtaHandleAndSha. Callback posts OTA_WR_STATS_FIRE; state read
+    // happens on otaWriterTask via handleStatsFire.
+    void statsTimerStart();
+    void statsTimerStop();
+    static void statsTimerCb(void *arg);
+    void handleStatsFire();
+
     // Emits an OTA_BEGIN_ACK / NAK frame via AstrOs_EspNow.sendOtaFrame.
     // Returns esp_err_t from the underlying send. Caller logs but does not
     // act on the result — a failed reply will be re-elicited by the
@@ -100,6 +109,9 @@ private:
     esp_timer_handle_t watchdog_ = nullptr;
     static constexpr uint64_t kWatchdogIdleUs = 10ULL * 1000ULL * 1000ULL;
 
+    esp_timer_handle_t statsTimer_ = nullptr;
+    static constexpr uint64_t kStatsPeriodUs = 2ULL * 1000ULL * 1000ULL;
+
     // BulkReceiver (existing PURE lib) handles seq tracking + windowing.
     AstrOsBulkTransport::BulkReceiver bulk_;
 
@@ -113,7 +125,20 @@ private:
     uint8_t currentXferId_ = 0;
     uint8_t currentMasterMac_[6] = {0};
     uint32_t currentTotalSize_ = 0;
+    uint32_t currentTotalChunks_ = 0;
     uint8_t expectedSha256_[32] = {0};
+
+    // Stats counters (reset in handleBegin success path). All read+written
+    // only by otaWriterTask — no atomics. NAKs split by wire reason so a
+    // bench log can pinpoint which failure mode dominates.
+    uint32_t statsLastRecvSeq_ = 0;
+    uint32_t statsHighestAckedSeq_ = 0;
+    bool statsAnyAcked_ = false; // disambiguates "0 acked" from "none acked yet"
+    uint32_t statsNaksCRC_ = 0;
+    uint32_t statsNaksSIZE_ = 0;
+    uint32_t statsNaksOOO_ = 0;
+    uint32_t statsNaksFLASH_ = 0;
+    uint32_t statsSendFailCount_ = 0;
 };
 
 extern OtaWriter AstrOs_OtaWriter;

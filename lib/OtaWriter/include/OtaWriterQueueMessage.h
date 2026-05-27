@@ -41,7 +41,8 @@ extern "C"
         OTA_WR_BEGIN = 0,
         OTA_WR_DATA = 1,
         OTA_WR_END = 2,
-        OTA_WR_WATCHDOG_FIRE = 3
+        OTA_WR_WATCHDOG_FIRE = 3,
+        OTA_WR_STATS_FIRE = 4 // 2 s periodic stats emission while transfer active
     } ota_writer_msg_kind_t;
 
     typedef struct
@@ -96,7 +97,7 @@ extern "C"
             free(m->data.payload);
             m->data.payload = NULL;
         }
-        // BEGIN / END / WATCHDOG_FIRE own no heap pointers.
+        // BEGIN / END / WATCHDOG_FIRE / STATS_FIRE own no heap pointers.
     }
 
 #ifdef __cplusplus
