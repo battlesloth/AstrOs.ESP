@@ -509,4 +509,19 @@ namespace AstrOsEspNowProtocol
         return r;
     }
 
+    FlashResultMapped mapOtaFlashStatusToResult(OtaFlashStatus status, const std::string &wireReason)
+    {
+        switch (status)
+        {
+        case OtaFlashStatus::OK:
+            return {PadawanStatus::OK, ""};
+        case OtaFlashStatus::FLASH_NOT_IMPLEMENTED:
+            return {PadawanStatus::FAILED, wireReason.empty() ? "flash_not_implemented" : wireReason};
+        case OtaFlashStatus::FAILED:
+            return {PadawanStatus::FAILED, wireReason.empty() ? "flash_failed" : wireReason};
+        default:
+            return {PadawanStatus::FAILED, "unknown_flash_status"};
+        }
+    }
+
 } // namespace AstrOsEspNowProtocol

@@ -949,3 +949,40 @@ TEST(OtaFlashResult, RejectsOversizedReasonLen)
     for (auto &pkt : packets)
         free(pkt.data);
 }
+
+// ─── mapOtaFlashStatusToResult tests ─────────────────────────────────────────
+
+TEST(MapOtaFlashStatusToResult, OkDropsReason)
+{
+    auto m = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(OtaFlashStatus::OK, "ignored");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::OK, m.padawanStatus);
+    EXPECT_TRUE(m.errorReason.empty());
+}
+
+TEST(MapOtaFlashStatusToResult, FlashNotImplementedEmptyWireReason)
+{
+    auto m = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(OtaFlashStatus::FLASH_NOT_IMPLEMENTED, "");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, m.padawanStatus);
+    EXPECT_EQ("flash_not_implemented", m.errorReason);
+}
+
+TEST(MapOtaFlashStatusToResult, FlashNotImplementedExplicitWireReason)
+{
+    auto m = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(OtaFlashStatus::FLASH_NOT_IMPLEMENTED, "explicit_reason");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, m.padawanStatus);
+    EXPECT_EQ("explicit_reason", m.errorReason);
+}
+
+TEST(MapOtaFlashStatusToResult, FailedEmptyWireReason)
+{
+    auto m = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(OtaFlashStatus::FAILED, "");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, m.padawanStatus);
+    EXPECT_EQ("flash_failed", m.errorReason);
+}
+
+TEST(MapOtaFlashStatusToResult, FailedExplicitWireReason)
+{
+    auto m = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(OtaFlashStatus::FAILED, "esp_err_xxx");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, m.padawanStatus);
+    EXPECT_EQ("esp_err_xxx", m.errorReason);
+}

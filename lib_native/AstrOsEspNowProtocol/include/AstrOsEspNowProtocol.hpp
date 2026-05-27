@@ -130,6 +130,34 @@ namespace AstrOsEspNowProtocol
         bool valid = false;
     };
 
+    // ─── OtaFlashStatus mapping ───────────────────────────────────────────
+
+    // Two-state outcome used in the FW_DEPLOY_DONE result row.
+    // Declared here (PURE) so both the PURE mapping function and the MIXED
+    // OtaForwarder share one definition without a circular dependency.
+    enum class PadawanStatus : uint8_t
+    {
+        OK,
+        FAILED,
+    };
+
+    struct FlashResultMapped
+    {
+        PadawanStatus padawanStatus;
+        std::string errorReason; // empty on OK; default string or wire reason on FAILED
+    };
+
+    // Pure mapping from wire OtaFlashStatus + optional wire reason string to
+    // the two-field outcome the forwarder records per padawan.
+    //
+    // Rules:
+    //   OK             → PadawanStatus::OK, errorReason=""  (wireReason ignored)
+    //   FLASH_NOT_IMPLEMENTED, wireReason non-empty → FAILED, errorReason=wireReason
+    //   FLASH_NOT_IMPLEMENTED, wireReason empty     → FAILED, errorReason="flash_not_implemented"
+    //   FAILED,         wireReason non-empty → FAILED, errorReason=wireReason
+    //   FAILED,         wireReason empty     → FAILED, errorReason="flash_failed"
+    [[nodiscard]] FlashResultMapped mapOtaFlashStatusToResult(OtaFlashStatus status, const std::string &wireReason);
+
     [[nodiscard]] OtaBeginRecord parseOtaBegin(const astros_packet_t &packet);
     [[nodiscard]] OtaBeginAckRecord parseOtaBeginAck(const astros_packet_t &packet);
     [[nodiscard]] OtaBeginNakRecord parseOtaBeginNak(const astros_packet_t &packet);

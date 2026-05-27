@@ -2,6 +2,7 @@
 #define OTAFORWARDER_HPP
 
 #include <AstrOsBulkTransport.hpp>
+#include <AstrOsEspNowProtocol.hpp>
 #include <OtaForwarderQueueMessage.h>
 
 #include <atomic>
@@ -61,13 +62,10 @@ private:
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
 
-    // Stringified to OK/FAILED at the wire boundary. If you add a value
-    // here, update emitDeployDoneAndReset's switch.
-    enum class PadawanStatus : uint8_t
-    {
-        OK,
-        FAILED,
-    };
+    // PadawanStatus is declared in AstrOsEspNowProtocol (PURE) so the
+    // mapOtaFlashStatusToResult mapping function can live there alongside the
+    // wire records it operates on. Use it directly here.
+    using PadawanStatus = AstrOsEspNowProtocol::PadawanStatus;
 
     struct PadawanResult
     {

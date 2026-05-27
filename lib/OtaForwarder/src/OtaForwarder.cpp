@@ -1187,31 +1187,14 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
     flashResultTimerStop();
 
     OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.flash_result.status);
-    std::string reason(msg.flash_result.reason ? msg.flash_result.reason : "", msg.flash_result.reasonLen);
+    std::string wireReason(msg.flash_result.reason ? msg.flash_result.reason : "", msg.flash_result.reasonLen);
 
-    PadawanStatus padawanStatus = PadawanStatus::FAILED;
-    std::string err = reason;
+    auto mapped = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(status, wireReason);
     std::string finalVersion;
-    switch (status)
-    {
-    case OtaFlashStatus::OK:
-        padawanStatus = PadawanStatus::OK;
-        err = "";
-        break;
-    case OtaFlashStatus::FLASH_NOT_IMPLEMENTED:
-        padawanStatus = PadawanStatus::FAILED;
-        if (err.empty())
-            err = "flash_not_implemented";
-        break;
-    case OtaFlashStatus::FAILED:
-        padawanStatus = PadawanStatus::FAILED;
-        if (err.empty())
-            err = "flash_failed";
-        break;
-    }
 
-    ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status, err.c_str());
-    results_.push_back({currentControllerId_, padawanStatus, finalVersion, err});
+    ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status,
+             mapped.errorReason.c_str());
+    results_.push_back({currentControllerId_, mapped.padawanStatus, finalVersion, mapped.errorReason});
 
     finishCurrentPadawanAndAdvance();
 }
