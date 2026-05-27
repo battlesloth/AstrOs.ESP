@@ -296,6 +296,17 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
     return ss.str();
 }
 
+std::string AstrOsSerialMessageService::getFwProgress(std::string msgId, std::string transferId,
+                                                      std::string controllerId, std::string stage, uint32_t bytesSent,
+                                                      uint32_t totalBytes, std::string detail)
+{
+    std::stringstream ss;
+    ss << AstrOsSerialMessageService::generateHeader(AstrOsSerialMessageType::FW_PROGRESS, msgId);
+    ss << transferId << UNIT_SEPARATOR << controllerId << UNIT_SEPARATOR << stage << UNIT_SEPARATOR << bytesSent
+       << UNIT_SEPARATOR << totalBytes << UNIT_SEPARATOR << detail;
+    return ss.str();
+}
+
 //================== TEST METHODS ==================
 
 /// @brief FOR TESTING PURPOSES. generates a registration sync command message

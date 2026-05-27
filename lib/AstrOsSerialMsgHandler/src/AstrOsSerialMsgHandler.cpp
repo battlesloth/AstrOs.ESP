@@ -374,6 +374,36 @@ void AstrOsSerialMsgHandler::sendFwDeployDone(std::string msgId, std::string tra
     }
 }
 
+void AstrOsSerialMsgHandler::sendFwProgress(std::string transferId, std::string controllerId, std::string stage,
+                                            uint32_t bytesSent, uint32_t totalBytes, std::string detail)
+{
+    // msgId is "na" for unsolicited push events — matches FW_CHUNK_ACK,
+    // FW_CHUNK_NAK, POLL_ACK precedent.
+    auto response =
+        this->msgService.getFwProgress("na", transferId, controllerId, stage, bytesSent, totalBytes, detail);
+
+    if (response.empty())
+    {
+        ESP_LOGE(TAG, "FW_PROGRESS build returned empty — transferId=%s controllerId=%s stage=%s", transferId.c_str(),
+                 controllerId.c_str(), stage.c_str());
+        return;
+    }
+
+    queue_serial_msg_t serialMsg;
+    serialMsg.baudrate = 115200;
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "Send serial queue fail (FW_PROGRESS)");
+        free(serialMsg.data);
+    }
+}
+
 /************************************
  * FW_* inbound dispatch helpers
  *************************************/
