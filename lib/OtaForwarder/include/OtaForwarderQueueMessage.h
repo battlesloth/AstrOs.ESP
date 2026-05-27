@@ -11,11 +11,11 @@ extern "C"
 
     // Discriminated union for otaForwarderQueue.
     //
-    // Memory ownership: producer mallocs every pointer for the kind it sends
-    // and on xQueueSend failure calls freeOtaForwarderMsg() to release its
-    // own allocations. Consumer (otaForwarderTask) calls freeOtaForwarderMsg()
-    // after dispatching to the matching handler. Mixing kinds across the
-    // free path will leak or double-free.
+    // Memory ownership: any malloc'd pointer in the active union arm is
+    // owned by the producer until xQueueSend succeeds; thereafter the
+    // consumer (otaForwarderTask) takes ownership and calls
+    // freeOtaForwarderMsg() after dispatch. Most kinds use inline buffers
+    // and own nothing beyond transferId — see per-arm notes below.
     //
     // ACK/NAK kinds carry their decoded record fields inline — no pointers,
     // no malloc on the hot path. DEPLOY_BEGIN carries three malloc'd strings
@@ -144,7 +144,7 @@ extern "C"
         }
         // ACK/NAK, TICK, FLASH_RESULT, and FLASH_RESULT_TIMEOUT kinds have no
         // malloc'd union arm members — nothing to free beyond transferId below.
-        // flash_result.reason is now an inline buffer, so no free needed.
+        // flash_result.reason is an inline buffer; no free needed.
         free(m->transferId);
         m->transferId = NULL;
     }

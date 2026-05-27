@@ -728,6 +728,7 @@ void OtaForwarder::finishCurrentPadawanAndAdvance()
     }
 
     currentControllerId_.clear();
+    flashResultSpuriousDrops_ = 0;
     phase_ = Phase::BETWEEN_PADAWANS;
     nextOrderIdx_++;
     startNextPadawan();
@@ -1167,21 +1168,31 @@ void OtaForwarder::flashResultTimerCb(void *arg)
 
 void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
 {
+    // Rate-limited drop logger: emits on first occurrence and every 10th
+    // thereafter. Prevents log saturation under mesh spam.
+    auto logSpurious = [this](const char *reason, unsigned xferId)
+    {
+        if (flashResultSpuriousDrops_ == 0 || flashResultSpuriousDrops_ % 10 == 0)
+        {
+            ESP_LOGW(TAG, "handleFlashResult: %s (xferId=%u) — dropping (spurious count=%u)", reason, xferId,
+                     (unsigned)(flashResultSpuriousDrops_ + 1));
+        }
+        flashResultSpuriousDrops_++;
+    };
+
     if (phase_ != Phase::AWAITING_FLASH_RESULT)
     {
-        ESP_LOGW(TAG, "handleFlashResult: unexpected arrival in phase=%d; dropping", (int)phase_);
+        logSpurious("phase mismatch", (unsigned)msg.flash_result.xferId);
         return;
     }
     if (msg.flash_result.xferId != currentXferId_)
     {
-        ESP_LOGW(TAG, "handleFlashResult: xferId mismatch (got %u, expected %u); dropping",
-                 (unsigned)msg.flash_result.xferId, (unsigned)currentXferId_);
+        logSpurious("xferId mismatch", (unsigned)msg.flash_result.xferId);
         return;
     }
     if (!isFromCurrentPadawan(msg.flash_result.srcMac))
     {
-        ESP_LOGW(TAG, "handleFlashResult: OTA_FLASH_RESULT from unexpected peer (xferId=%u); dropping",
-                 (unsigned)msg.flash_result.xferId);
+        logSpurious("unexpected peer", (unsigned)msg.flash_result.xferId);
         return;
     }
     flashResultTimerStop();

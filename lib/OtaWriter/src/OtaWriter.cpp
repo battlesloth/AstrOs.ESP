@@ -617,6 +617,7 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     //
     // The vTaskDelay below mirrors the natural PR set 2 cadence so server
     // timing assumptions tested against M4 hold unchanged against PR set 2.
+    ESP_LOGI(TAG, "handleEnd: M4 placeholder — sleeping 2s before OTA_FLASH_RESULT(FLASH_NOT_IMPLEMENTED)");
     vTaskDelay(pdMS_TO_TICKS(2000));
     esp_err_t flashErr = sendFlashResult(mac, xferId, OtaFlashStatus::FLASH_NOT_IMPLEMENTED, "pr_set_1_placeholder");
     if (flashErr != ESP_OK)

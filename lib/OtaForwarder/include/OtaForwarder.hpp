@@ -228,6 +228,11 @@ private:
     // FW_PROGRESS SENDING throttle: emit on every >=5% byte advance.
     // Reset to 0 in startNextPadawan; updated in streamDrain.
     uint32_t lastProgressBytesSent_ = 0;
+
+    // Spurious OTA_FLASH_RESULT counter — incremented on phase/xferId/srcMac
+    // mismatches. Reset per-transfer in finishCurrentPadawanAndAdvance to
+    // keep "first occurrence" semantics meaningful across deploys.
+    uint32_t flashResultSpuriousDrops_ = 0;
 };
 
 extern OtaForwarder AstrOs_OtaForwarder;

@@ -532,7 +532,8 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
         }
         if (xQueueSend(this->otaForwarderQueue_, &fm, pdMS_TO_TICKS(100)) != pdTRUE)
         {
-            ESP_LOGW(TAG, "OTA_FLASH_RESULT: otaForwarderQueue full; dropping");
+            ESP_LOGE(TAG, "OTA_FLASH_RESULT: otaForwarderQueue full; "
+                          "master will report flash_result_timeout instead of true status");
             freeOtaForwarderMsg(&fm);
         }
         return true;

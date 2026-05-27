@@ -986,3 +986,12 @@ TEST(MapOtaFlashStatusToResult, FailedExplicitWireReason)
     EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, m.padawanStatus);
     EXPECT_EQ("esp_err_xxx", m.errorReason);
 }
+
+TEST(MapOtaFlashStatusToResult, UnknownStatusFallback)
+{
+    // Defense against future OtaFlashStatus enum additions that get
+    // added to the wire enum + parser but forgotten in the mapper.
+    auto result = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(static_cast<OtaFlashStatus>(99), "");
+    EXPECT_EQ(AstrOsEspNowProtocol::PadawanStatus::FAILED, result.padawanStatus);
+    EXPECT_EQ("unknown_flash_status", result.errorReason);
+}

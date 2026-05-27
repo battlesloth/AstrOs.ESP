@@ -156,6 +156,8 @@ namespace AstrOsEspNowProtocol
     //   FLASH_NOT_IMPLEMENTED, wireReason empty     → FAILED, errorReason="flash_not_implemented"
     //   FAILED,         wireReason non-empty → FAILED, errorReason=wireReason
     //   FAILED,         wireReason empty     → FAILED, errorReason="flash_failed"
+    //   unrecognized status (defense against future enum-bump-without-mapping-update):
+    //       padawanStatus=FAILED, errorReason="unknown_flash_status"
     [[nodiscard]] FlashResultMapped mapOtaFlashStatusToResult(OtaFlashStatus status, const std::string &wireReason);
 
     [[nodiscard]] OtaBeginRecord parseOtaBegin(const astros_packet_t &packet);
