@@ -89,7 +89,6 @@ private:
     // Per-padawan lifecycle helpers.
     void startNextPadawan();                             // open file, BulkSender.begin, emit OTA_BEGIN
     void abortCurrentPadawan(const std::string &reason); // record FAILED, advance
-    void completeCurrentPadawan();                       // record OK, close file, advance
     void finishCurrentPadawanAndAdvance(); // shared cleanup: stop all timers, close file, reset bulk, advance index
     void emitDeployDoneAndReset();         // FW_DEPLOY_DONE, return to IDLE
 

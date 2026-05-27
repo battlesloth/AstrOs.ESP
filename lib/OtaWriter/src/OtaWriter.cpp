@@ -592,11 +592,9 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     ESP_LOGI(TAG, "handleEnd: transfer xferId=%u OK — %u bytes verified on partition '%s'", xferId,
              (unsigned)currentTotalSize_, inactivePartition_->label);
 
-    // Stop timers before the 2 s delay so neither fires mid-wait and
-    // triggers a spurious abort path. resetOtaHandleAndSha() would stop
-    // them too, but it also clears mac/xferId — which sendFlashResult still
-    // needs. Stop them explicitly here so the order is: timers-stop →
-    // sendEndAck → delay → sendFlashResult → resetOtaHandleAndSha.
+    // Stop watchdog and stats timer before the 2 s delay so neither
+    // fires while we're sleeping. resetOtaHandleAndSha() at the end of
+    // this function handles the rest of the per-transfer teardown.
     watchdogStop();
     statsTimerStop();
 

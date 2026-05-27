@@ -734,12 +734,6 @@ void OtaForwarder::abortCurrentPadawan(const std::string &reason)
     results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
     finishCurrentPadawanAndAdvance();
 }
-void OtaForwarder::completeCurrentPadawan()
-{
-    ESP_LOGI(TAG, "Transfer to " MACSTR " OK", MAC2STR(currentPadawanMac_));
-    results_.push_back({currentControllerId_, PadawanStatus::OK, "", ""});
-    finishCurrentPadawanAndAdvance();
-}
 void OtaForwarder::emitDeployDoneAndReset()
 {
     ESP_LOGI(TAG, "FW_DEPLOY_DONE: %zu targets, transferId=%s", results_.size(), deployTransferId_.c_str());

@@ -187,7 +187,8 @@ OTA_FLASH_RESULT payload (66 bytes):
   uint8  transfer-id
   uint8  status                  // 0=OK, 1=FLASH_NOT_IMPLEMENTED (M4), 2=FAILED
   uint8  reason-len              // [0, 63]
-  uint8  reason[63]              // snake_case reason string, nul-terminated recommended
+  uint8  reason[63]              // snake_case reason string, NOT NUL-terminated;
+                                 //   readers must consume exactly reason-len bytes
 ```
 
 ### Timing
