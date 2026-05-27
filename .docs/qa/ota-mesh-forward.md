@@ -106,6 +106,30 @@ After test case 1, add a temporary `ESP_LOGI(TAG, "ota_writer hwm=%d", uxTaskGet
 - If comfortably > 2 KB: consider tuning back down toward 6144 to free RAM
 - Remove the temporary log before merging
 
+## M4 — UI deploy with FW_PROGRESS emission + flash-not-implemented placeholder
+
+**Precondition**: Master + 1 padawan flashed with this PR. Server-side PR `feature/fw-progress-flashing-stage` merged.
+
+1. Trigger a firmware deploy from the server's Firmware view.
+2. Observe the UI:
+   - **transfer** row turns yellow ("current") with running byte percentage, then green ✓ when streaming completes.
+   - **verify** row turns yellow within a second of transfer completing, stays yellow for ~2 s.
+   - **flash** row turns yellow when verify completes, stays yellow for ~2 s.
+   - **flash** row turns red ! with status "Flash failed".
+   - **reboot** row remains idle.
+   - Result-bar reads "⚠ <padawan-label> failed during Flash" with detail line showing reason `flash_not_implemented`.
+
+3. Repeat with 2 padawans. Each padawan's flash row turns red after its own 2 s window (sequential per-padawan deploy).
+
+4. Expected master-side log lines (interleaved with existing OTA_STATS_TX):
+   - `OtaForwarder: FW_PROGRESS SENDING bytesSent=… totalBytes=…`
+   - `OtaForwarder: FW_PROGRESS VERIFYING bytesSent=N totalBytes=N` (after OTA_END sent)
+   - `OtaForwarder: FW_PROGRESS FLASHING bytesSent=N totalBytes=N` (after OTA_END_ACK OK)
+   - `OtaForwarder: Flash result for <padawan>: status=1 reason='flash_not_implemented'`
+   - `OtaForwarder: FW_DEPLOY_DONE: 2 targets, transferId=…`
+
+5. Negative case — kill the padawan power immediately after it sends OTA_END_ACK OK (during the 2 s delay window). Master records `flash_result_timeout` after 10 s; UI shows flash failed with detail `flash_result_timeout`.
+
 ## M5 (placeholder)
 
 To be filled in by M5's PR. Will cover:
