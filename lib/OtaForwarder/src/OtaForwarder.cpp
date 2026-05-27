@@ -1187,7 +1187,7 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
     flashResultTimerStop();
 
     OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.flash_result.status);
-    std::string wireReason(msg.flash_result.reason ? msg.flash_result.reason : "", msg.flash_result.reasonLen);
+    std::string wireReason(msg.flash_result.reason, msg.flash_result.reasonLen);
 
     auto mapped = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(status, wireReason);
     std::string finalVersion;

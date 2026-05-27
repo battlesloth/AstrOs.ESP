@@ -25,6 +25,10 @@ extern "C"
     // ESP-NOW frame already carries it byte-for-byte and the consumer
     // typically just logs it — no malloc needed.
     //
+    // flash_result.reason is a 63-byte inline buffer matching the wire payload's
+    // fixed 63 B cap. No malloc needed; producer memcpys reasonLen bytes from
+    // the parsed record directly into this buffer.
+    //
     // srcMac (ACK/NAK kinds) is a 6-byte inline buffer. Used for forensic
     // logging and to cross-check against the current padawan's MAC.
     //
@@ -116,7 +120,7 @@ extern "C"
                 uint8_t xferId;
                 uint8_t status;    // OtaFlashStatus value
                 uint8_t reasonLen; // 0..63
-                char *reason;      // malloc'd; freed in freeOtaForwarderMsg on this kind
+                char reason[63];   // inline — matches the wire payload's fixed 63 B; no malloc needed
             } flash_result;
             // OTA_FWD_TICK and OTA_FWD_FLASH_RESULT_TIMEOUT have no union arm.
         };
@@ -138,13 +142,9 @@ extern "C"
             m->deploy.msgId = NULL;
             m->deploy.orderList = NULL;
         }
-        if (m->kind == OTA_FWD_FLASH_RESULT && m->flash_result.reason != NULL)
-        {
-            free(m->flash_result.reason);
-            m->flash_result.reason = NULL;
-        }
-        // ACK/NAK, TICK, and FLASH_RESULT_TIMEOUT kinds have no other
+        // ACK/NAK, TICK, FLASH_RESULT, and FLASH_RESULT_TIMEOUT kinds have no
         // malloc'd union arm members — nothing to free beyond transferId below.
+        // flash_result.reason is now an inline buffer, so no free needed.
         free(m->transferId);
         m->transferId = NULL;
     }

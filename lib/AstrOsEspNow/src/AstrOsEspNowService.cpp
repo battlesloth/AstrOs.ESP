@@ -525,24 +525,10 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
         memcpy(fm.flash_result.srcMac, src, ESP_NOW_ETH_ALEN);
         fm.flash_result.xferId = rec.xferId;
         fm.flash_result.status = static_cast<uint8_t>(rec.status);
+        fm.flash_result.reasonLen = static_cast<uint8_t>(rec.reason.size());
         if (!rec.reason.empty())
         {
-            fm.flash_result.reasonLen = static_cast<uint8_t>(rec.reason.size());
-            fm.flash_result.reason = static_cast<char *>(malloc(rec.reason.size()));
-            if (fm.flash_result.reason == nullptr)
-            {
-                ESP_LOGW(TAG, "OTA_FLASH_RESULT: malloc reason copy failed; forwarding status without reason");
-                fm.flash_result.reasonLen = 0;
-            }
-            else
-            {
-                memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
-            }
-        }
-        else
-        {
-            fm.flash_result.reasonLen = 0;
-            fm.flash_result.reason = nullptr;
+            memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
         }
         if (xQueueSend(this->otaForwarderQueue_, &fm, pdMS_TO_TICKS(100)) != pdTRUE)
         {
