@@ -120,3 +120,28 @@ struct __attribute__((packed)) OtaEndAckPayload
     uint8_t sha256Computed[32];
 };
 static_assert(sizeof(OtaEndAckPayload) == 34, "OtaEndAckPayload must be 34 bytes on the wire");
+
+// ─── Upstream: flash-commit outcome (sent after the padawan's 2 s
+//     post-verify delay; reports whether esp_ota_set_boot_partition
+//     succeeded, or that flash is intentionally not implemented in this
+//     firmware build (M4 placeholder)). ────────────────────────────────
+
+enum class OtaFlashStatus : uint8_t
+{
+    OK = 0,                    // esp_ota_set_boot_partition succeeded (PR set 2)
+    FLASH_NOT_IMPLEMENTED = 1, // M4 placeholder — flash step deliberately skipped
+    FAILED = 2                 // esp_ota_set_boot_partition returned error (PR set 2)
+};
+
+// OTA_FLASH_RESULT payload. reasonLen is capped at 63 so the struct
+// stays a fixed 66 bytes on the wire (well under the 180 B ESP-NOW
+// fragmentation chunk size). Reason bytes are NOT NUL-terminated;
+// the receiver must read exactly reasonLen bytes.
+struct __attribute__((packed)) OtaFlashResultPayload
+{
+    uint8_t xferId;
+    uint8_t status;    // OtaFlashStatus value
+    uint8_t reasonLen; // 0..63
+    char reason[63];   // populated to reasonLen bytes; rest is don't-care
+};
+static_assert(sizeof(OtaFlashResultPayload) == 66, "OtaFlashResultPayload must be 66 bytes on the wire");

@@ -267,6 +267,7 @@ namespace AstrOsEspNowProtocol
         case AstrOsPacketType::OTA_DATA_ACK:
         case AstrOsPacketType::OTA_DATA_NAK:
         case AstrOsPacketType::OTA_END_ACK:
+        case AstrOsPacketType::OTA_FLASH_RESULT:
             return unsupportedOrWrongRole(isMasterNode);
         case AstrOsPacketType::OTA_BEGIN:
         case AstrOsPacketType::OTA_DATA:
@@ -469,6 +470,43 @@ namespace AstrOsEspNowProtocol
         std::memcpy(rec.sha256Computed, p.sha256Computed, 32);
         rec.valid = true;
         return rec;
+    }
+
+    OtaFlashResultRecord parseOtaFlashResult(const astros_packet_t &packet)
+    {
+        OtaFlashResultRecord r{};
+        if (packet.packetType != AstrOsPacketType::OTA_FLASH_RESULT ||
+            packet.payloadSize != static_cast<int>(sizeof(OtaFlashResultPayload)))
+        {
+            return r;
+        }
+        OtaFlashResultPayload p;
+        std::memcpy(&p, packet.payload, sizeof(p));
+
+        // Reject unknown status values up-front so the master never has to
+        // disambiguate "padawan sent garbage" from "wire decoded fine but
+        // the status is one we don't handle." Future OtaFlashStatus values
+        // need an explicit parser bump in lockstep.
+        switch (static_cast<OtaFlashStatus>(p.status))
+        {
+        case OtaFlashStatus::OK:
+        case OtaFlashStatus::FLASH_NOT_IMPLEMENTED:
+        case OtaFlashStatus::FAILED:
+            break;
+        default:
+            return r;
+        }
+
+        if (p.reasonLen > sizeof(p.reason))
+        {
+            return r;
+        }
+
+        r.xferId = p.xferId;
+        r.status = static_cast<OtaFlashStatus>(p.status);
+        r.reason.assign(p.reason, p.reason + p.reasonLen);
+        r.valid = true;
+        return r;
     }
 
 } // namespace AstrOsEspNowProtocol

@@ -51,6 +51,7 @@ namespace AstrOsENC
     constexpr const static char *OTA_DATA_NAK = "OTA_DATA_NAK";
     constexpr const static char *OTA_END = "OTA_END";
     constexpr const static char *OTA_END_ACK = "OTA_END_ACK";
+    constexpr const static char *OTA_FLASH_RESULT = "OTA_FLASH_RESULT";
 } // namespace AstrOsENC
 
 enum class AstrOsPacketType
@@ -88,6 +89,7 @@ enum class AstrOsPacketType
     OTA_DATA_NAK,
     OTA_END,
     OTA_END_ACK,
+    OTA_FLASH_RESULT, // padawan → master flash-commit outcome
 };
 
 typedef struct
@@ -131,7 +133,7 @@ public:
     int validatePacket(astros_packet_t packet);
 };
 
-// True iff `type` is one of the 8 OTA packet types added in M1.
+// True iff `type` is one of the OTA packet types (M1 + M4 additions).
 bool isOtaPacketType(AstrOsPacketType type);
 
 #endif

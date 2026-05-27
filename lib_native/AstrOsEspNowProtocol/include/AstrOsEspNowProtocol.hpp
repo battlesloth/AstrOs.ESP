@@ -122,6 +122,14 @@ namespace AstrOsEspNowProtocol
         bool valid = false;
     };
 
+    struct OtaFlashResultRecord
+    {
+        uint8_t xferId = 0;
+        OtaFlashStatus status = OtaFlashStatus::OK;
+        std::string reason; // copied from wire bytes; empty when reasonLen == 0
+        bool valid = false;
+    };
+
     [[nodiscard]] OtaBeginRecord parseOtaBegin(const astros_packet_t &packet);
     [[nodiscard]] OtaBeginAckRecord parseOtaBeginAck(const astros_packet_t &packet);
     [[nodiscard]] OtaBeginNakRecord parseOtaBeginNak(const astros_packet_t &packet);
@@ -130,6 +138,7 @@ namespace AstrOsEspNowProtocol
     [[nodiscard]] OtaDataNakRecord parseOtaDataNak(const astros_packet_t &packet);
     [[nodiscard]] OtaEndRecord parseOtaEnd(const astros_packet_t &packet);
     [[nodiscard]] OtaEndAckRecord parseOtaEndAck(const astros_packet_t &packet);
+    [[nodiscard]] OtaFlashResultRecord parseOtaFlashResult(const astros_packet_t &packet);
 
     // Decodes an already-parsed, already-validated ESP-NOW packet.
     // Returns an InterfaceMessage for the MIXED adapter to forward to

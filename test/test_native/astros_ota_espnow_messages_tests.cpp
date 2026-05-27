@@ -704,13 +704,13 @@ TEST(OtaDispatcher, AllUpstreamTypesGateMasterOnly)
     // All padawan→master types: master receives → UnsupportedType; padawan receives → WrongRole.
     AstrOsPacketType upstreamTypes[] = {
         AstrOsPacketType::OTA_BEGIN_ACK, AstrOsPacketType::OTA_BEGIN_NAK, AstrOsPacketType::OTA_DATA_ACK,
-        AstrOsPacketType::OTA_DATA_NAK,  AstrOsPacketType::OTA_END_ACK,
+        AstrOsPacketType::OTA_DATA_NAK,  AstrOsPacketType::OTA_END_ACK,   AstrOsPacketType::OTA_FLASH_RESULT,
     };
 
     for (auto type : upstreamTypes)
     {
-        // payload bytes don't matter for dispatch — we never parse them in M1.
-        uint8_t dummy[sizeof(OtaEndAckPayload)] = {0};
+        // payload bytes don't matter for dispatch — we never parse them here.
+        uint8_t dummy[sizeof(OtaFlashResultPayload)] = {0};
         size_t len = 0;
         switch (type)
         {
@@ -728,6 +728,9 @@ TEST(OtaDispatcher, AllUpstreamTypesGateMasterOnly)
             break;
         case AstrOsPacketType::OTA_END_ACK:
             len = sizeof(OtaEndAckPayload);
+            break;
+        case AstrOsPacketType::OTA_FLASH_RESULT:
+            len = sizeof(OtaFlashResultPayload);
             break;
         default:
             break;
@@ -781,4 +784,168 @@ TEST(OtaDispatcher, AllDownstreamTypesGatePadawanOnly)
 
     for (auto &p : keepAlive)
         free(p.data);
+}
+
+// M4 — Task 1: OtaFlashResultPayload + parseOtaFlashResult round-trip tests.
+//
+// All tests below use the standard packet-encode path (generateOtaPacket +
+// parsePacket) so they also exercise the dispatcher and the binary frame
+// builder — matching the precedent of ParseOtaEndAckRejectsOutOfRangeStatus.
+
+TEST(OtaFlashResult, RoundTripOk)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.xferId = 5;
+    p.status = static_cast<uint8_t>(OtaFlashStatus::OK);
+    p.reasonLen = 0;
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.xferId, 5);
+    EXPECT_EQ(r.status, OtaFlashStatus::OK);
+    EXPECT_EQ(r.reason, "");
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RoundTripFlashNotImplementedWithReason)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.xferId = 7;
+    p.status = static_cast<uint8_t>(OtaFlashStatus::FLASH_NOT_IMPLEMENTED);
+    const char *reason = "pr_set_1_placeholder";
+    p.reasonLen = static_cast<uint8_t>(std::strlen(reason));
+    std::memcpy(p.reason, reason, p.reasonLen);
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.xferId, 7);
+    EXPECT_EQ(r.status, OtaFlashStatus::FLASH_NOT_IMPLEMENTED);
+    EXPECT_EQ(r.reason, "pr_set_1_placeholder");
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RoundTripFailedWithReason)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.xferId = 1;
+    p.status = static_cast<uint8_t>(OtaFlashStatus::FAILED);
+    const char *reason = "esp_ota_set_boot_partition: ESP_ERR_INVALID_STATE";
+    p.reasonLen = static_cast<uint8_t>(std::strlen(reason));
+    ASSERT_LE(p.reasonLen, sizeof(p.reason));
+    std::memcpy(p.reason, reason, p.reasonLen);
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.status, OtaFlashStatus::FAILED);
+    EXPECT_EQ(r.reason, "esp_ota_set_boot_partition: ESP_ERR_INVALID_STATE");
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RoundTripAtMaxReasonLen)
+{
+    // 63-byte reason: documented max. Pins the boundary against an
+    // off-by-one regression (e.g., flipping `> sizeof(p.reason)` to
+    // `>= sizeof(p.reason)` would silently break this case).
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.xferId = 9;
+    p.status = static_cast<uint8_t>(OtaFlashStatus::FAILED);
+    const char *reason = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    p.reasonLen = static_cast<uint8_t>(std::strlen(reason));
+    ASSERT_EQ(p.reasonLen, 63);
+    std::memcpy(p.reason, reason, p.reasonLen);
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.xferId, 9);
+    EXPECT_EQ(r.status, OtaFlashStatus::FAILED);
+    EXPECT_EQ(r.reason.size(), 63u);
+    EXPECT_EQ(r.reason, reason);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RejectsTruncatedPayload)
+{
+    // Send a packet whose payload is one byte short of a valid OtaFlashResultPayload.
+    // The parser must reject on the payloadSize check, not on anything else.
+    auto svc = AstrOsEspNowMessageService();
+    uint8_t shortBuf[sizeof(OtaFlashResultPayload) - 1] = {0};
+
+    auto packets = svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, shortBuf, sizeof(shortBuf));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    EXPECT_FALSE(r.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RejectsUnknownStatus)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.status = 99;
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    EXPECT_FALSE(r.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
+}
+
+TEST(OtaFlashResult, RejectsOversizedReasonLen)
+{
+    auto svc = AstrOsEspNowMessageService();
+    OtaFlashResultPayload p{};
+    p.status = static_cast<uint8_t>(OtaFlashStatus::OK);
+    p.reasonLen = static_cast<uint8_t>(sizeof(p.reason) + 1);
+
+    auto packets =
+        svc.generateOtaPacket(AstrOsPacketType::OTA_FLASH_RESULT, reinterpret_cast<const uint8_t *>(&p), sizeof(p));
+    ASSERT_EQ(1u, packets.size());
+    auto parsed = svc.parsePacket(packets[0].data);
+
+    auto r = AstrOsEspNowProtocol::parseOtaFlashResult(parsed);
+    EXPECT_FALSE(r.valid);
+
+    for (auto &pkt : packets)
+        free(pkt.data);
 }

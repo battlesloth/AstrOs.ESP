@@ -18,6 +18,7 @@ bool isOtaPacketType(AstrOsPacketType type)
     case AstrOsPacketType::OTA_DATA_NAK:
     case AstrOsPacketType::OTA_END:
     case AstrOsPacketType::OTA_END_ACK:
+    case AstrOsPacketType::OTA_FLASH_RESULT:
         return true;
     default:
         return false;
@@ -59,6 +60,7 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::OTA_DATA_NAK] = AstrOsENC::OTA_DATA_NAK;
     packetTypeMap[AstrOsPacketType::OTA_END] = AstrOsENC::OTA_END;
     packetTypeMap[AstrOsPacketType::OTA_END_ACK] = AstrOsENC::OTA_END_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_FLASH_RESULT] = AstrOsENC::OTA_FLASH_RESULT;
 }
 
 AstrOsEspNowMessageService::~AstrOsEspNowMessageService() {}
