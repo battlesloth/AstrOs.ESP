@@ -402,14 +402,17 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
     {
     case AstrOsBulkTransport::EndAckResult::Decision::DONE_OK:
         ESP_LOGI(TAG, "Transfer to %s verified; awaiting flash result", currentControllerId_.c_str());
+        // FLASHING fires on END_ACK OK arrival. The flash row stays visible
+        // for the duration of the padawan's pre-flash delay before
+        // OTA_FLASH_RESULT lands.
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "FLASHING", firmwareTotalSize_,
+                                               firmwareTotalSize_, "");
         // On OK, the padawan has verified but not yet committed. Enter the
         // AWAITING_FLASH_RESULT phase and wait for OTA_FLASH_RESULT to land.
         // kFlashResultTimeoutUs is the safety bound on padawan misbehavior
         // during the pre-flash delay window.
         phase_ = Phase::AWAITING_FLASH_RESULT;
         flashResultTimerStart();
-        // FW_PROGRESS FLASHING emission lands in Task 5; this commit just
-        // wires the phase transition.
         return;
     case AstrOsBulkTransport::EndAckResult::Decision::ABANDONED:
         ESP_LOGW(TAG, "Transfer to %s ABANDONED (status=%u)", currentControllerId_.c_str(), msg.end_ack.status);
@@ -683,11 +686,18 @@ void OtaForwarder::startNextPadawan()
         statsAnyAcked_ = false;
         statsNaksRecvCount_ = 0;
         statsSendFailCount_ = 0;
+        lastProgressBytesSent_ = 0;
 
         phase_ = Phase::AWAITING_BEGIN_ACK;
         emitOtaBeginFrame();
         beginAckTimerStart();
         statsTimerStart();
+
+        // SENDING at 0 bytes — announces this padawan has entered the transfer
+        // pipeline; the operator sees the row go live as soon as OTA_BEGIN is
+        // sent (before streaming starts in STREAMING phase).
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "SENDING",
+                                               /*bytesSent=*/0, /*totalBytes=*/firmwareTotalSize_, /*detail=*/"");
         // tickTimer is started only when entering STREAMING (see handleBeginAck);
         // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
         // queue with no-op messages and risks crowding out deadline sentinels.
@@ -846,7 +856,14 @@ void OtaForwarder::emitOtaEndFrame()
         statsSendFailCount_++;
         // Padawan never saw the frame — fail fast instead of waiting 5 s.
         postTimeoutSentinel(OTA_FWD_END_ACK, "emitOtaEndFrame");
+        return;
     }
+
+    // VERIFYING fires when OTA_END is sent (not when END_ACK arrives) so the
+    // verify row is already visible in the UI while the padawan runs its 3
+    // integrity gates and the 2 s pre-flash delay.
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERIFYING", firmwareTotalSize_,
+                                           firmwareTotalSize_, "");
 }
 void OtaForwarder::streamDrain(uint64_t nowMs)
 {
@@ -909,6 +926,25 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
             // recent retry).
             if (seq > statsLastSentSeq_)
                 statsLastSentSeq_ = seq;
+
+            // Emit SENDING FW_PROGRESS every >=5% of firmwareTotalSize_
+            // bytes-sent advance. The first-byte emission already fired in
+            // startNextPadawan; this picks up from there. Integer math only —
+            // no FP in the hot path.
+            {
+                uint32_t bytesSent = static_cast<uint32_t>(seq + 1) * static_cast<uint32_t>(kChunkSize);
+                if (bytesSent > firmwareTotalSize_)
+                    bytesSent = firmwareTotalSize_; // cap on last (short) chunk
+                uint32_t fivePct = firmwareTotalSize_ / 20;
+                if (fivePct == 0)
+                    fivePct = 1; // degenerate small-firmware safety
+                if (bytesSent >= lastProgressBytesSent_ + fivePct)
+                {
+                    lastProgressBytesSent_ = bytesSent;
+                    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "SENDING",
+                                                           bytesSent, firmwareTotalSize_, "");
+                }
+            }
             continue;
         }
 

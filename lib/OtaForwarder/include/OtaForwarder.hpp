@@ -227,6 +227,10 @@ private:
     bool statsAnyAcked_ = false; // disambiguates "0 acked" from "none acked yet"
     uint32_t statsNaksRecvCount_ = 0;
     uint32_t statsSendFailCount_ = 0;
+
+    // FW_PROGRESS SENDING throttle: emit on every >=5% byte advance.
+    // Reset to 0 in startNextPadawan; updated in streamDrain.
+    uint32_t lastProgressBytesSent_ = 0;
 };
 
 extern OtaForwarder AstrOs_OtaForwarder;
