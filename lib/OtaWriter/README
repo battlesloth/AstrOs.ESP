@@ -1,0 +1,15 @@
+OtaWriter (MIXED) — padawan-side ESP-NOW OTA receiver
+====================================================
+
+Padawan-only. Consumes OTA_BEGIN / OTA_DATA / OTA_END frames from the
+otaWriterQueue, writes incoming bytes to the inactive OTA partition,
+verifies via streaming AstrOsSha256 + post-write read-back-rehash.
+Does NOT change the boot partition (PR set 2).
+
+Pairs with: M3 OtaForwarder (master-side counterpart).
+Singleton: AstrOs_OtaWriter (defined in OtaWriter.cpp).
+
+MIXED — uses esp_ota_ops, esp_partition, esp_timer, FreeRTOS. Cannot link
+in [env:test]; native test coverage lives at the queue-message layer
+(test/test_native/astros_ota_writer_tests.cpp) and at the wrapped
+BulkReceiver layer (bulk_transport_tests.cpp).

@@ -43,7 +43,8 @@ extern "C"
         OTA_FWD_DATA_ACK = 3,
         OTA_FWD_DATA_NAK = 4,
         OTA_FWD_END_ACK = 5,
-        OTA_FWD_TICK = 6 // 50 ms tick from esp_timer
+        OTA_FWD_TICK = 6,      // 50 ms tick from esp_timer
+        OTA_FWD_STATS_FIRE = 7 // 2 s periodic stats emission while transfer active
     } ota_forwarder_msg_kind_t;
 
     typedef struct

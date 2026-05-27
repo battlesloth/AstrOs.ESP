@@ -30,6 +30,7 @@
 #include <OtaForwarder.hpp>
 #include <OtaQueueMessage.h>
 #include <OtaReceiver.hpp>
+#include <OtaWriter.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -80,6 +81,7 @@ static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
 static QueueHandle_t otaQueue;
 static QueueHandle_t otaForwarderQueue;
+static QueueHandle_t otaWriterQueue;
 
 /**********************************
  * UART
@@ -185,6 +187,7 @@ void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
 void otaReceiverTask(void *arg);
 void otaForwarderTask(void *arg);
+void otaWriterTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -230,10 +233,23 @@ void app_main()
 
     if (isMasterNode.load())
     {
-        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 4096, (void *)otaForwarderQueue, 6, NULL,
+        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 8192, (void *)otaForwarderQueue, 6, NULL,
                                     1) != pdPASS)
         {
             ESP_LOGE(TAG, "Failed to create otaForwarderTask — aborting init");
+            abort();
+        }
+    }
+
+    if (!isMasterNode.load())
+    {
+        // 8 KB stack (larger than the OTA receiver/forwarder family):
+        // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
+        // SHA-256 ctx and call frames; that does not fit in 4 KB.
+        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
+            pdPASS)
+        {
+            ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
             abort();
         }
     }
@@ -314,6 +330,20 @@ void init(void)
         }
     }
 
+    // otaWriterQueue is padawan-only: master never receives OTA_BEGIN /
+    // OTA_DATA / OTA_END (those are master→padawan directional frames).
+    // Keeping the queue padawan-only saves the queue's 16-slot * sizeof
+    // allocation on master nodes.
+    if (!isMasterNode.load())
+    {
+        otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
+        if (otaWriterQueue == NULL)
+        {
+            ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
+            abort();
+        }
+    }
+
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
     // otaForwarderQueue is nullptr on padawan; SerialMsgHandler's
@@ -327,6 +357,11 @@ void init(void)
     {
         AstrOs_OtaForwarder.Init(otaForwarderQueue);
         AstrOs_EspNow.setOtaForwarderQueue(otaForwarderQueue);
+    }
+    if (!isMasterNode.load())
+    {
+        AstrOs_OtaWriter.Init(otaWriterQueue);
+        AstrOs_EspNow.setOtaWriterQueue(otaWriterQueue);
     }
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
@@ -474,7 +509,15 @@ static void pollingTimerCallback(void *arg)
     // during OTA — bench measurements show the contention with otaReceiverTask
     // and astrosRxTask stalls inbound FW_CHUNK for 1-3 s per 2-s poll cycle,
     // halving wire throughput. Heartbeat log + display timeout stay unconditional.
-    const bool otaActive = AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isActive();
+    //
+    // Padawan-side OTA gate: writer is active while a transfer is in flight.
+    // Pause polling/discovery ESP-NOW traffic to keep SPI flash contention
+    // down (esp_ota_write erase+program latency degrades when other tasks hit
+    // the flash bus concurrently). OtaWriter::isActive() is safe to call on
+    // master too — AstrOs_OtaWriter is never Init'd on master, so active_
+    // stays false.
+    const bool otaActive =
+        AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isActive() || AstrOs_OtaWriter.isActive();
 
     // only send register requests during discovery mode
     if (master && !discovery && !otaActive)
@@ -1528,6 +1571,28 @@ void otaForwarderTask(void *arg)
         if (hwm < 500)
         {
             ESP_LOGW(TAG, "OTA Forwarder Stack HWM: %u", (unsigned int)hwm);
+        }
+    }
+}
+
+void otaWriterTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_writer_msg_t msg;
+
+    while (true)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY) == pdTRUE)
+        {
+            // process() internally calls freeOtaWriterMsg — do NOT free here.
+            // Matches otaReceiverTask + otaForwarderTask convention.
+            AstrOs_OtaWriter.process(msg);
+        }
+
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        if (hwm < 500)
+        {
+            ESP_LOGW(TAG, "OTA Writer Stack HWM: %u", (unsigned int)hwm);
         }
     }
 }

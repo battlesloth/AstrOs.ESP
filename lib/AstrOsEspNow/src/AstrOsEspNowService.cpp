@@ -4,6 +4,7 @@
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
 #include <OtaForwarderQueueMessage.h>
+#include <OtaWriterQueueMessage.h>
 
 #include <algorithm>
 #include <array>
@@ -400,13 +401,7 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
     case AstrOsPacketType::OTA_BEGIN:
     case AstrOsPacketType::OTA_DATA:
     case AstrOsPacketType::OTA_END:
-        // Master receives these only by mistake (wrong role per the
-        // protocol contract); padawan receives them legitimately but the
-        // M4 OtaWriter queue isn't wired yet. Drop with a warning so
-        // misrouted-master cases are distinguishable from missing-M4.
-        ESP_LOGW(TAG, "OTA master→padawan packet type=%d received on %s; dropping (M4 not wired)",
-                 (int)packet.packetType, this->isMasterNode ? "master" : "padawan");
-        return true;
+        return this->routeOtaToWriter(src, packet);
     default:
         ESP_LOGE(TAG, "Dispatcher returned UnsupportedType for packet type %d but no residual handler exists",
                  (int)packet.packetType);
@@ -417,6 +412,11 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
 void AstrOsEspNow::setOtaForwarderQueue(QueueHandle_t q)
 {
     this->otaForwarderQueue_ = q;
+}
+
+void AstrOsEspNow::setOtaWriterQueue(QueueHandle_t q)
+{
+    this->otaWriterQueue_ = q;
 }
 
 bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet)
@@ -524,6 +524,108 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
         // residual switch doesn't log "no residual handler exists" on top
         // of the queue-full ESP_LOGE. The dropped ACK/NAK will be
         // reconstructed by the next padawan retransmit or tick.
+        return true;
+    }
+    return true;
+}
+
+bool AstrOsEspNow::routeOtaToWriter(const uint8_t *src, const astros_packet_t &packet)
+{
+    if (this->isMasterNode)
+    {
+        // Master receiving a master→padawan OTA frame is a protocol error
+        // — log + drop. Returning true marks it handled so the residual
+        // switch doesn't escalate to "no residual handler exists".
+        ESP_LOGW(TAG, "OTA master→padawan packet type=%d received on master; dropping (wrong role)",
+                 (int)packet.packetType);
+        return true;
+    }
+    if (this->otaWriterQueue_ == nullptr)
+    {
+        ESP_LOGW(TAG, "OTA writer-bound packet type=%d received before otaWriterQueue_ set; dropping",
+                 (int)packet.packetType);
+        return true;
+    }
+
+    queue_ota_writer_msg_t m{};
+
+    switch (packet.packetType)
+    {
+    case AstrOsPacketType::OTA_BEGIN:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBegin(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_WR_BEGIN;
+        memcpy(m.begin.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.begin.xferId = rec.xferId;
+        m.begin.totalSize = rec.totalSize;
+        m.begin.chunkSize = rec.chunkSize;
+        m.begin.totalChunks = rec.totalChunks;
+        memcpy(m.begin.sha256Expected, rec.sha256Expected, sizeof(m.begin.sha256Expected));
+        m.begin.flags = rec.flags;
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaData(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA parse rejected (malformed wire bytes)");
+            return false;
+        }
+        // CRITICAL: rec.payload points INTO the packet buffer that the
+        // dispatcher returns from. We MUST copy the bytes before queueing,
+        // otherwise the consumer will read freed memory. freeOtaWriterMsg
+        // releases this malloc.
+        uint8_t *payloadCopy = static_cast<uint8_t *>(malloc(rec.payloadLen));
+        if (payloadCopy == nullptr)
+        {
+            ESP_LOGE(TAG, "OTA_DATA payload malloc(%u) failed — dropping chunk seq=%u", (unsigned)rec.payloadLen,
+                     (unsigned)rec.seq);
+            return true; // handled (dropped); master's tick-retransmit will re-send
+        }
+        memcpy(payloadCopy, rec.payload, rec.payloadLen);
+
+        m.kind = OTA_WR_DATA;
+        memcpy(m.data.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.data.xferId = rec.xferId;
+        m.data.seq = rec.seq;
+        m.data.payloadLen = rec.payloadLen;
+        m.data.crc16 = rec.crc16;
+        m.data.payload = payloadCopy;
+        break;
+    }
+    case AstrOsPacketType::OTA_END:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaEnd(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_END parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_WR_END;
+        memcpy(m.end.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.end.xferId = rec.xferId;
+        m.end.totalChunksSent = rec.totalChunksSent;
+        memcpy(m.end.sha256Final, rec.sha256Final, sizeof(m.end.sha256Final));
+        break;
+    }
+    default:
+        ESP_LOGE(TAG, "routeOtaToWriter: unexpected packet type %d", (int)packet.packetType);
+        return false;
+    }
+
+    if (xQueueSend(this->otaWriterQueue_, &m, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "otaWriterQueue full; dropping OTA packet type=%d", (int)packet.packetType);
+        freeOtaWriterMsg(&m);
+        // Return true (handled, dropped intentionally) so handleMessage's
+        // residual switch doesn't escalate. The dropped chunk will be
+        // reconstructed by the master's tick-driven retransmit.
         return true;
     }
     return true;
