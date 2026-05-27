@@ -397,6 +397,7 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
     case AstrOsPacketType::OTA_DATA_ACK:
     case AstrOsPacketType::OTA_DATA_NAK:
     case AstrOsPacketType::OTA_END_ACK:
+    case AstrOsPacketType::OTA_FLASH_RESULT:
         return this->routeOtaAckNakToForwarder(src, packet);
     case AstrOsPacketType::OTA_BEGIN:
     case AstrOsPacketType::OTA_DATA:
@@ -510,6 +511,42 @@ bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_pa
         m.end_ack.status = static_cast<uint8_t>(rec.status);
         memcpy(m.end_ack.sha256Computed, rec.sha256Computed, 32);
         break;
+    }
+    case AstrOsPacketType::OTA_FLASH_RESULT:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaFlashResult(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_FLASH_RESULT parse failed from " MACSTR, MAC2STR(src));
+            return false;
+        }
+        queue_ota_forwarder_msg_t fm{};
+        fm.kind = OTA_FWD_FLASH_RESULT;
+        memcpy(fm.flash_result.srcMac, src, ESP_NOW_ETH_ALEN);
+        fm.flash_result.xferId = rec.xferId;
+        fm.flash_result.status = static_cast<uint8_t>(rec.status);
+        if (!rec.reason.empty())
+        {
+            fm.flash_result.reasonLen = static_cast<uint8_t>(rec.reason.size());
+            fm.flash_result.reason = static_cast<char *>(malloc(rec.reason.size()));
+            if (fm.flash_result.reason == nullptr)
+            {
+                ESP_LOGE(TAG, "OTA_FLASH_RESULT: malloc reason copy failed; dropping");
+                return true;
+            }
+            memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
+        }
+        else
+        {
+            fm.flash_result.reasonLen = 0;
+            fm.flash_result.reason = nullptr;
+        }
+        if (xQueueSend(this->otaForwarderQueue_, &fm, pdMS_TO_TICKS(100)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "OTA_FLASH_RESULT: otaForwarderQueue full; dropping");
+            freeOtaForwarderMsg(&fm);
+        }
+        return true;
     }
     default:
         ESP_LOGE(TAG, "routeOtaAckNakToForwarder: unexpected packet type %d", (int)packet.packetType);

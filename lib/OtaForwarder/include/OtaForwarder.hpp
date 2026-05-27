@@ -55,7 +55,8 @@ private:
         AWAITING_BEGIN_ACK = 1, // emitted OTA_BEGIN, waiting on padawan
         STREAMING = 2,
         AWAITING_END_ACK = 3,
-        BETWEEN_PADAWANS = 4, // result recorded; pulling next from order list
+        AWAITING_FLASH_RESULT = 4, // END_ACK OK received; padawan verifying + committing
+        BETWEEN_PADAWANS = 5,      // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
@@ -89,7 +90,8 @@ private:
     void startNextPadawan();                             // open file, BulkSender.begin, emit OTA_BEGIN
     void abortCurrentPadawan(const std::string &reason); // record FAILED, advance
     void completeCurrentPadawan();                       // record OK, close file, advance
-    void emitDeployDoneAndReset();                       // FW_DEPLOY_DONE, return to IDLE
+    void finishCurrentPadawanAndAdvance(); // shared cleanup: stop all timers, close file, reset bulk, advance index
+    void emitDeployDoneAndReset();         // FW_DEPLOY_DONE, return to IDLE
 
     // Wire-emission helpers.
     void emitOtaBeginFrame();
@@ -123,12 +125,24 @@ private:
     // Stats periodic timer (2 s cadence) — fired while a transfer is live so
     // bench logs get a low-noise progress heartbeat. Started in
     // startNextPadawan after the first OTA_BEGIN is sent; stopped in
-    // completeCurrentPadawan + abortCurrentPadawan. First emission ~2 s after
-    // start, which naturally announces the session is running.
+    // finishCurrentPadawanAndAdvance (used by completeCurrentPadawan,
+    // handleFlashResult, handleFlashResultTimeout) and abortCurrentPadawan.
+    // First emission ~2 s after start, which naturally announces the session
+    // is running.
     void statsTimerStart();
     void statsTimerStop();
     static void statsTimerCb(void *arg);
     void handleStatsFire();
+
+    // Flash-result safety timer (10 s one-shot). Armed when END_ACK OK arrives;
+    // disarmed when OTA_FLASH_RESULT lands. Fire posts OTA_FWD_FLASH_RESULT_TIMEOUT
+    // so the deploy can't block forever on a padawan crash during the pre-flash delay.
+    void flashResultTimerStart();
+    void flashResultTimerStop();
+    static void flashResultTimerCb(void *arg);
+
+    void handleFlashResult(queue_ota_forwarder_msg_t &msg);
+    void handleFlashResultTimeout();
 
     // Resolves a controller-id (from FW_DEPLOY_BEGIN's order list) to a
     // MAC. Linear-scans AstrOs_EspNow.getPeers() — small list, cheap.
@@ -155,16 +169,18 @@ private:
     esp_timer_handle_t beginAckTimer_ = nullptr;
     esp_timer_handle_t endAckTimer_ = nullptr;
     esp_timer_handle_t statsTimer_ = nullptr;
+    esp_timer_handle_t flashResultTimer_ = nullptr;
 
     // Cadence: 50 ms tick, 5 s BEGIN_ACK timeout, 5 s END_ACK timeout,
-    // 2 s stats emission. BEGIN_ACK was 2 s but bench measurements showed
-    // padawan BEGIN_ACK round-trip lands around 2.5 s (esp_ota_begin +
-    // BulkReceiver::begin + ESP-NOW send back), causing spurious abandonments
-    // on healthy peers.
+    // 2 s stats emission, 10 s flash-result safety bound. BEGIN_ACK was 2 s
+    // but bench measurements showed padawan BEGIN_ACK round-trip lands around
+    // 2.5 s (esp_ota_begin + BulkReceiver::begin + ESP-NOW send back),
+    // causing spurious abandonments on healthy peers.
     static constexpr uint64_t kTickPeriodUs = 50ULL * 1000ULL;
     static constexpr uint64_t kBeginAckTimeoutUs = 5ULL * 1000ULL * 1000ULL;
     static constexpr uint64_t kEndAckTimeoutUs = 5ULL * 1000ULL * 1000ULL;
     static constexpr uint64_t kStatsPeriodUs = 2ULL * 1000ULL * 1000ULL;
+    static constexpr uint64_t kFlashResultTimeoutUs = 10ULL * 1000ULL * 1000ULL;
 
     // BulkSender params (from the frozen contract).
     static constexpr uint16_t kChunkSize = 128;

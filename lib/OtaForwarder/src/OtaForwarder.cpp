@@ -28,7 +28,7 @@ OtaForwarder::~OtaForwarder()
     // against the timer-leak hazard if a test fixture ever instantiates a
     // non-singleton OtaForwarder; mirrors the April 2026 code review's
     // concern about latent leaks in similar singletons.
-    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_})
+    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_, &flashResultTimer_})
     {
         if (*t)
         {
@@ -87,6 +87,15 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&statsArgs, &statsTimer_));
+
+    esp_timer_create_args_t flashResultArgs = {
+        .callback = &OtaForwarder::flashResultTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_flashres",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&flashResultArgs, &flashResultTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -116,6 +125,12 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_STATS_FIRE:
         handleStatsFire();
+        break;
+    case OTA_FWD_FLASH_RESULT:
+        handleFlashResult(msg);
+        break;
+    case OTA_FWD_FLASH_RESULT_TIMEOUT:
+        handleFlashResultTimeout();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -386,8 +401,15 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
     switch (endResult.decision)
     {
     case AstrOsBulkTransport::EndAckResult::Decision::DONE_OK:
-        ESP_LOGI(TAG, "Transfer to %s OK", currentControllerId_.c_str());
-        completeCurrentPadawan();
+        ESP_LOGI(TAG, "Transfer to %s verified; awaiting flash result", currentControllerId_.c_str());
+        // On OK, the padawan has verified but not yet committed. Enter the
+        // AWAITING_FLASH_RESULT phase and wait for OTA_FLASH_RESULT to land.
+        // kFlashResultTimeoutUs is the safety bound on padawan misbehavior
+        // during the pre-flash delay window.
+        phase_ = Phase::AWAITING_FLASH_RESULT;
+        flashResultTimerStart();
+        // FW_PROGRESS FLASHING emission lands in Task 5; this commit just
+        // wires the phase transition.
         return;
     case AstrOsBulkTransport::EndAckResult::Decision::ABANDONED:
         ESP_LOGW(TAG, "Transfer to %s ABANDONED (status=%u)", currentControllerId_.c_str(), msg.end_ack.status);
@@ -672,41 +694,41 @@ void OtaForwarder::startNextPadawan()
         return;
     }
 }
-void OtaForwarder::abortCurrentPadawan(const std::string &reason)
+void OtaForwarder::finishCurrentPadawanAndAdvance()
 {
+    // Defensive: stop every timer that could still be running. Some of
+    // these are no-ops in the normal flow (e.g., endAckTimer already
+    // stopped in handleEndAck), but centralizing avoids future drift
+    // when a new abort path forgets one.
     beginAckTimerStop();
     endAckTimerStop();
     tickTimerStop();
     statsTimerStop();
+    flashResultTimerStop();
+
     bulk_.reset();
+
     if (firmwareFile_)
     {
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
     }
-    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
+
     currentControllerId_.clear();
     phase_ = Phase::BETWEEN_PADAWANS;
     nextOrderIdx_++;
     startNextPadawan();
 }
+void OtaForwarder::abortCurrentPadawan(const std::string &reason)
+{
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
+    finishCurrentPadawanAndAdvance();
+}
 void OtaForwarder::completeCurrentPadawan()
 {
-    beginAckTimerStop();
-    endAckTimerStop();
-    tickTimerStop();
-    statsTimerStop();
-    bulk_.reset();
-    if (firmwareFile_)
-    {
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-    }
+    ESP_LOGI(TAG, "Transfer to " MACSTR " OK", MAC2STR(currentPadawanMac_));
     results_.push_back({currentControllerId_, PadawanStatus::OK, "", ""});
-    currentControllerId_.clear();
-    phase_ = Phase::BETWEEN_PADAWANS;
-    nextOrderIdx_++;
-    startNextPadawan();
+    finishCurrentPadawanAndAdvance();
 }
 void OtaForwarder::emitDeployDoneAndReset()
 {
@@ -1056,6 +1078,9 @@ void OtaForwarder::handleStatsFire()
     case Phase::AWAITING_END_ACK:
         phaseStr = "AWAITING_END_ACK";
         break;
+    case Phase::AWAITING_FLASH_RESULT:
+        phaseStr = "AWAITING_FLASH_RESULT";
+        break;
     case Phase::BETWEEN_PADAWANS:
         phaseStr = "BETWEEN_PADAWANS";
         break;
@@ -1064,6 +1089,103 @@ void OtaForwarder::handleStatsFire()
     ESP_LOGI(TAG, "OTA_STATS_TX: xferId=%u seq=%u/%u acked=%lld naks-rx=%u send-fail=%u phase=%s",
              (unsigned)currentXferId_, (unsigned)statsLastSentSeq_, (unsigned)firmwareTotalChunks_, acked,
              (unsigned)statsNaksRecvCount_, (unsigned)statsSendFailCount_, phaseStr);
+}
+
+void OtaForwarder::flashResultTimerStart()
+{
+    if (!flashResultTimer_)
+        return;
+    esp_timer_stop(flashResultTimer_);
+    esp_err_t err = esp_timer_start_once(flashResultTimer_, kFlashResultTimeoutUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG,
+                 "flashResultTimerStart: esp_timer_start_once failed: %s — "
+                 "no safety net; padawan crash during pre-flash delay would block deploy",
+                 esp_err_to_name(err));
+    }
+}
+
+void OtaForwarder::flashResultTimerStop()
+{
+    if (flashResultTimer_)
+    {
+        esp_timer_stop(flashResultTimer_);
+    }
+}
+
+void OtaForwarder::flashResultTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+        return;
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_FLASH_RESULT_TIMEOUT;
+    // Last-resort recovery for a padawan crash during the pre-flash
+    // delay. If this sentinel is dropped, the forwarder hangs in
+    // AWAITING_FLASH_RESULT forever — log loudly so the bench operator
+    // sees the cause.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "flashResultTimerCb: otaForwarderQueue full; sentinel dropped — "
+                      "forwarder may hang in AWAITING_FLASH_RESULT");
+    }
+}
+
+void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
+{
+    if (phase_ != Phase::AWAITING_FLASH_RESULT)
+    {
+        ESP_LOGW(TAG, "handleFlashResult: unexpected arrival in phase=%d; dropping", (int)phase_);
+        return;
+    }
+    if (msg.flash_result.xferId != currentXferId_)
+    {
+        ESP_LOGW(TAG, "handleFlashResult: xferId mismatch (got %u, expected %u); dropping",
+                 (unsigned)msg.flash_result.xferId, (unsigned)currentXferId_);
+        return;
+    }
+    flashResultTimerStop();
+
+    OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.flash_result.status);
+    std::string reason(msg.flash_result.reason ? msg.flash_result.reason : "", msg.flash_result.reasonLen);
+
+    PadawanStatus padawanStatus = PadawanStatus::FAILED;
+    std::string err = reason;
+    std::string finalVersion;
+    switch (status)
+    {
+    case OtaFlashStatus::OK:
+        padawanStatus = PadawanStatus::OK;
+        err = "";
+        break;
+    case OtaFlashStatus::FLASH_NOT_IMPLEMENTED:
+        padawanStatus = PadawanStatus::FAILED;
+        if (err.empty())
+            err = "flash_not_implemented";
+        break;
+    case OtaFlashStatus::FAILED:
+        padawanStatus = PadawanStatus::FAILED;
+        if (err.empty())
+            err = "flash_failed";
+        break;
+    }
+
+    ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status, err.c_str());
+    results_.push_back({currentControllerId_, padawanStatus, finalVersion, err});
+
+    finishCurrentPadawanAndAdvance();
+}
+
+void OtaForwarder::handleFlashResultTimeout()
+{
+    if (phase_ != Phase::AWAITING_FLASH_RESULT)
+    {
+        return; // stale fire after we already completed
+    }
+    ESP_LOGW(TAG, "Flash-result timeout for %s; recording FAILED", currentControllerId_.c_str());
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "flash_result_timeout"});
+    finishCurrentPadawanAndAdvance();
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

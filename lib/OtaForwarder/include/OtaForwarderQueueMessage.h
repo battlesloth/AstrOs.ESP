@@ -43,8 +43,10 @@ extern "C"
         OTA_FWD_DATA_ACK = 3,
         OTA_FWD_DATA_NAK = 4,
         OTA_FWD_END_ACK = 5,
-        OTA_FWD_TICK = 6,      // 50 ms tick from esp_timer
-        OTA_FWD_STATS_FIRE = 7 // 2 s periodic stats emission while transfer active
+        OTA_FWD_TICK = 6,                // 50 ms tick from esp_timer
+        OTA_FWD_STATS_FIRE = 7,          // 2 s periodic stats emission while transfer active
+        OTA_FWD_FLASH_RESULT = 8,        // padawan→master flash-commit outcome
+        OTA_FWD_FLASH_RESULT_TIMEOUT = 9 // safety timer fire — padawan never reported
     } ota_forwarder_msg_kind_t;
 
     typedef struct
@@ -107,7 +109,16 @@ extern "C"
                 uint8_t status; // OtaEndStatus value
                 uint8_t sha256Computed[32];
             } end_ack;
-            // OTA_FWD_TICK has no union arm.
+
+            struct
+            {
+                uint8_t srcMac[6];
+                uint8_t xferId;
+                uint8_t status;    // OtaFlashStatus value
+                uint8_t reasonLen; // 0..63
+                char *reason;      // malloc'd; freed in freeOtaForwarderMsg on this kind
+            } flash_result;
+            // OTA_FWD_TICK and OTA_FWD_FLASH_RESULT_TIMEOUT have no union arm.
         };
     } queue_ota_forwarder_msg_t;
 
@@ -127,8 +138,13 @@ extern "C"
             m->deploy.msgId = NULL;
             m->deploy.orderList = NULL;
         }
-        // ACK/NAK kinds and TICK have no malloc'd union arm members —
-        // nothing to free beyond transferId below.
+        if (m->kind == OTA_FWD_FLASH_RESULT && m->flash_result.reason != NULL)
+        {
+            free(m->flash_result.reason);
+            m->flash_result.reason = NULL;
+        }
+        // ACK/NAK, TICK, and FLASH_RESULT_TIMEOUT kinds have no other
+        // malloc'd union arm members — nothing to free beyond transferId below.
         free(m->transferId);
         m->transferId = NULL;
     }
