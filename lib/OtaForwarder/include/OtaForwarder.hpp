@@ -69,7 +69,7 @@ private:
         AWAITING_END_ACK = 3,
         AWAITING_FLASH_RESULT = 4,      // END_ACK OK received; padawan verifying + committing
         AWAITING_VERSION_CONFIRMED = 5, // FLASH_RESULT OK received; waiting on heartbeat-version match
-        MASTER_SELF_FLASHING = 6,       // Phase C — master local-flash in flight; OtaWriter is running
+        MASTER_SELF_FLASHING = 6,       // master local-flash in flight; OtaWriter is running
         BETWEEN_PADAWANS = 7,           // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
@@ -154,9 +154,13 @@ private:
     void handleFlashResult(queue_ota_forwarder_msg_t &msg);
     void handleFlashResultTimeout();
 
-    // Phase C — master self-flash machinery.
+    // Master self-flash machinery.
     void startMasterSelfFlash();
     void handleLocalFlashResult(queue_ota_forwarder_msg_t &msg);
+    static void masterSelfFlashTimerCb(void *arg);
+    bool masterSelfFlashTimerStart();
+    void masterSelfFlashTimerStop();
+    void handleMasterSelfFlashTimeout();
     // Insert the master row at masterRowOriginalIndex_ (clamped to
     // results_.size()) so FW_DEPLOY_DONE preserves the operator-submitted
     // order. Called from handleLocalFlashResult (OK and FAILED paths).
@@ -209,6 +213,7 @@ private:
     esp_timer_handle_t endAckTimer_ = nullptr;
     esp_timer_handle_t statsTimer_ = nullptr;
     esp_timer_handle_t flashResultTimer_ = nullptr;
+    esp_timer_handle_t masterSelfFlashTimer_ = nullptr;
 
     // Phase A: parsed once per padawan from the staged .bin's esp_app_desc_t
     // when entering AWAITING_BEGIN_ACK; consumed during AWAITING_VERSION_CONFIRMED
@@ -263,11 +268,10 @@ private:
     size_t nextOrderIdx_ = 0;
     std::vector<PadawanResult> results_;
 
-    // Phase C — master row deferral. Master always self-flashes last per
-    // the cross-milestone design; these track that the row was seen + at
-    // what index, so the result inserts at the original position when
-    // handleLocalFlashResult fires (preserves operator-submitted order in
-    // FW_DEPLOY_DONE).
+    // Master row deferral. Master always self-flashes last; these track that
+    // the row was seen + at what index, so the result inserts at the original
+    // position when handleLocalFlashResult fires (preserves operator-submitted
+    // order in FW_DEPLOY_DONE).
     bool masterRowDeferred_ = false;
     size_t masterRowOriginalIndex_ = 0;
 

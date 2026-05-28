@@ -47,12 +47,13 @@ extern "C"
         OTA_FWD_DATA_ACK = 3,
         OTA_FWD_DATA_NAK = 4,
         OTA_FWD_END_ACK = 5,
-        OTA_FWD_TICK = 6,                     // 50 ms tick from esp_timer
-        OTA_FWD_STATS_FIRE = 7,               // 2 s periodic stats emission while transfer active
-        OTA_FWD_FLASH_RESULT = 8,             // padawan→master flash-commit outcome
-        OTA_FWD_FLASH_RESULT_TIMEOUT = 9,     // safety timer fire — padawan never reported
-        OTA_FWD_VERSION_CONFIRM_TIMEOUT = 10, // 15 s safety bound — padawan never reported expected version
-        OTA_FWD_LOCAL_FLASH_RESULT = 11       // master self-flash: posted by OtaWriter with OK/FAILED + reason
+        OTA_FWD_TICK = 6,                      // 50 ms tick from esp_timer
+        OTA_FWD_STATS_FIRE = 7,                // 2 s periodic stats emission while transfer active
+        OTA_FWD_FLASH_RESULT = 8,              // padawan→master flash-commit outcome
+        OTA_FWD_FLASH_RESULT_TIMEOUT = 9,      // safety timer fire — padawan never reported
+        OTA_FWD_VERSION_CONFIRM_TIMEOUT = 10,  // 15 s safety bound — padawan never reported expected version
+        OTA_FWD_LOCAL_FLASH_RESULT = 11,       // master self-flash: posted by OtaWriter with OK/FAILED + reason
+        OTA_FWD_MASTER_SELF_FLASH_TIMEOUT = 12 // 60 s safety bound — OtaWriter hung or postResult queue-full
     } ota_forwarder_msg_kind_t;
 
     typedef struct
@@ -153,10 +154,10 @@ extern "C"
             m->deploy.orderList = NULL;
         }
         // ACK/NAK, TICK, FLASH_RESULT, FLASH_RESULT_TIMEOUT,
-        // VERSION_CONFIRM_TIMEOUT, and LOCAL_FLASH_RESULT kinds have no
-        // malloc'd union arm members — nothing to free beyond transferId below.
-        // flash_result.reason and local_flash_result.errorReason are inline
-        // buffers; no free needed.
+        // VERSION_CONFIRM_TIMEOUT, LOCAL_FLASH_RESULT, and
+        // MASTER_SELF_FLASH_TIMEOUT kinds have no malloc'd union arm members
+        // — nothing to free beyond transferId below. flash_result.reason and
+        // local_flash_result.errorReason are inline buffers; no free needed.
         free(m->transferId);
         m->transferId = NULL;
     }

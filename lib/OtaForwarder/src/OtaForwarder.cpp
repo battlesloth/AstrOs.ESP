@@ -33,7 +33,8 @@ OtaForwarder::~OtaForwarder()
     // against the timer-leak hazard if a test fixture ever instantiates a
     // non-singleton OtaForwarder; mirrors the April 2026 code review's
     // concern about latent leaks in similar singletons.
-    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_, &flashResultTimer_})
+    for (esp_timer_handle_t *t :
+         {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_, &flashResultTimer_, &masterSelfFlashTimer_})
     {
         if (*t)
         {
@@ -116,6 +117,15 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&versionConfirmArgs, &versionConfirmTimer_));
+
+    esp_timer_create_args_t masterSelfFlashArgs = {
+        .callback = &OtaForwarder::masterSelfFlashTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_masterflash",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&masterSelfFlashArgs, &masterSelfFlashTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -157,6 +167,9 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_LOCAL_FLASH_RESULT:
         handleLocalFlashResult(msg);
+        break;
+    case OTA_FWD_MASTER_SELF_FLASH_TIMEOUT:
+        handleMasterSelfFlashTimeout();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -816,6 +829,7 @@ void OtaForwarder::abortCurrentPadawan(const std::string &reason)
 }
 void OtaForwarder::emitDeployDoneAndReset()
 {
+    masterSelfFlashTimerStop();
     ESP_LOGI(TAG, "FW_DEPLOY_DONE: %zu targets, transferId=%s", results_.size(), deployTransferId_.c_str());
     // Mechanical PadawanResult -> astros_fw_deploy_result_t conversion at
     // the wire boundary; the two types deliberately mirror each other so
@@ -1417,6 +1431,59 @@ void OtaForwarder::handleVersionConfirmTimeout()
     finishCurrentPadawanAndAdvance();
 }
 
+void OtaForwarder::masterSelfFlashTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+        return;
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_MASTER_SELF_FLASH_TIMEOUT;
+    // Safety bound for master self-flash stuck or OtaWriter postResult queue-full.
+    // If this sentinel is dropped, the forwarder hangs in MASTER_SELF_FLASHING
+    // forever — log loudly so bench logs show cause.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "masterSelfFlashTimerCb: otaForwarderQueue full; sentinel dropped — "
+                      "forwarder may hang in MASTER_SELF_FLASHING");
+    }
+}
+
+bool OtaForwarder::masterSelfFlashTimerStart()
+{
+    if (masterSelfFlashTimer_ == nullptr)
+    {
+        ESP_LOGE(TAG, "masterSelfFlashTimerStart: timer handle is null");
+        return false;
+    }
+    esp_timer_stop(masterSelfFlashTimer_);
+    esp_err_t err = esp_timer_start_once(masterSelfFlashTimer_, 60ULL * 1000ULL * 1000ULL);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "masterSelfFlashTimerStart: esp_timer_start_once failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
+
+void OtaForwarder::masterSelfFlashTimerStop()
+{
+    if (masterSelfFlashTimer_ != nullptr)
+    {
+        esp_timer_stop(masterSelfFlashTimer_);
+    }
+}
+
+void OtaForwarder::handleMasterSelfFlashTimeout()
+{
+    if (phase_ != Phase::MASTER_SELF_FLASHING)
+    {
+        return; // stale fire after we already completed
+    }
+    ESP_LOGE(TAG, "Master self-flash timeout after 60s; recording FAILED");
+    insertMasterRow(PadawanStatus::FAILED, "", "self_flash_timeout");
+    emitDeployDoneAndReset();
+}
+
 void OtaForwarder::startMasterSelfFlash()
 {
     ESP_LOGI(TAG, "startMasterSelfFlash: beginning master self-flash");
@@ -1472,13 +1539,22 @@ void OtaForwarder::startMasterSelfFlash()
         return;
     }
 
-    phase_ = Phase::MASTER_SELF_FLASHING;
     currentControllerId_ = "00:00:00:00:00:00";
 
     if (xQueueSend(writerQueue, &req, 0) != pdTRUE)
     {
         ESP_LOGE(TAG, "startMasterSelfFlash: otaWriterQueue full — recording FAILED");
         insertMasterRow(PadawanStatus::FAILED, "", "writer_queue_full");
+        emitDeployDoneAndReset();
+        return;
+    }
+
+    phase_ = Phase::MASTER_SELF_FLASHING;
+
+    if (!masterSelfFlashTimerStart())
+    {
+        ESP_LOGE(TAG, "startMasterSelfFlash: masterSelfFlashTimerStart failed — aborting");
+        insertMasterRow(PadawanStatus::FAILED, "", "self_flash_timer_failed");
         phase_ = Phase::IDLE;
         emitDeployDoneAndReset();
         return;
@@ -1487,6 +1563,8 @@ void OtaForwarder::startMasterSelfFlash()
 
 void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
 {
+    masterSelfFlashTimerStop();
+
     if (phase_ != Phase::MASTER_SELF_FLASHING)
     {
         ESP_LOGW(TAG, "handleLocalFlashResult: ignored — phase=%d", (int)phase_);
@@ -1494,7 +1572,9 @@ void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
     }
 
     OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.local_flash_result.status);
-    std::string reason(msg.local_flash_result.errorReason, msg.local_flash_result.errorReasonLen);
+    std::string reason(msg.local_flash_result.errorReason,
+                       std::min(msg.local_flash_result.errorReasonLen,
+                                static_cast<uint8_t>(sizeof(msg.local_flash_result.errorReason))));
 
     if (status == OtaFlashStatus::OK)
     {
