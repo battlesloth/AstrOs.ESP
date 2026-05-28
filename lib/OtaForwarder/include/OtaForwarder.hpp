@@ -50,6 +50,15 @@ public:
         return wireBusy_;
     }
 
+    // Returns the otaForwarderQueue handle so OtaWriter can post
+    // OTA_FWD_LOCAL_FLASH_RESULT to it from the local-flash path. Returns
+    // nullptr before Init is called. Thread-safe (handle is set once at Init
+    // and never changes thereafter).
+    QueueHandle_t getForwarderQueue() const noexcept
+    {
+        return otaForwarderQueue_;
+    }
+
 private:
     // State machine (single in-flight transfer; sequential per-padawan).
     enum class Phase : uint8_t

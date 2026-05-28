@@ -57,6 +57,13 @@ private:
     void handleData(queue_ota_writer_msg_t &msg);
     void handleEnd(queue_ota_writer_msg_t &msg);
     void handleWatchdogFire();
+    // Phase C — master self-flash. Runs the full flash sequence inline on
+    // otaWriterTask: open file, esp_ota_begin, fread + esp_ota_write loop
+    // + streaming SHA, esp_ota_end, read-back verify, esp_ota_set_boot_partition.
+    // Posts OTA_FWD_LOCAL_FLASH_RESULT back to otaForwarderQueue. Does NOT
+    // call esp_restart — OtaForwarder handles the reboot after emitting
+    // FW_DEPLOY_DONE.
+    void handleLocalFlashReq(queue_ota_writer_msg_t &msg);
 
     // Idempotent cleanup. Calls esp_ota_abort if otaHandle_ != 0, drops
     // shaActive_, resets BulkReceiver, clears partition/size fields,
