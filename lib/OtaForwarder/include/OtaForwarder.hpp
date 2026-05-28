@@ -17,8 +17,9 @@
 #include <esp_timer.h>
 
 // Threading: all members are accessed only from otaForwarderTask via
-// `process(msg)`. The one exception is `active_` (atomic; read from the
-// pollingTimer's esp_timer dispatch task for polling-pause gating).
+// `process(msg)`. The exceptions are `active_` and `wireBusy_` (both
+// atomic; read from the pollingTimer's esp_timer dispatch task for
+// polling-pause gating).
 //
 // The tick timer fires from esp_timer's dispatch task, but its callback
 // only does xQueueSend(OTA_FWD_TICK) — state mutation runs on
@@ -43,9 +44,14 @@ public:
     void process(queue_ota_forwarder_msg_t &msg);
 
     // Safe to call from any task. Gates polling work during a forward.
+    // Returns wireBusy_: true when the wire is actively transferring chunks or
+    // awaiting an ACK; false during AWAITING_VERSION_CONFIRMED so the master
+    // can poll the rebooted padawan and observe its post-reboot POLL_ACK.
+    // active_ (a deploy is in flight; reject stray messages) remains true for
+    // the entire deploy and is NOT exposed here.
     bool isActive() const noexcept
     {
-        return active_;
+        return wireBusy_;
     }
 
 private:
@@ -160,8 +166,18 @@ private:
     // run BEFORE this check so the all-zero srcMac never reaches here.
     bool isFromCurrentPadawan(const uint8_t srcMac[6]) const;
 
-    // Active gate (read by pollingTimer's task).
+    // active_ — "a deploy is in flight"; guards against stray messages and
+    // prevents a second FW_DEPLOY_BEGIN from starting. Set true at deploy
+    // start, false only in emitDeployDoneAndReset. NOT used for polling gating.
     std::atomic<bool> active_{false};
+
+    // wireBusy_ — "the wire is currently busy with a transfer". This is what
+    // isActive() exposes to the polling gate in main.cpp. Goes false when
+    // entering AWAITING_VERSION_CONFIRMED (master must poll to observe the
+    // rebooted padawan's POLL_ACK) and true again when the next padawan enters
+    // AWAITING_BEGIN_ACK. Distinct from active_: we can be active without
+    // the wire being busy.
+    std::atomic<bool> wireBusy_{false};
 
     // Queue handle held so timer callbacks can post tick + deadline events
     // into the same queue otaForwarderTask drains.

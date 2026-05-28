@@ -228,6 +228,7 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
     results_.clear();
     results_.reserve(orderList_.size());
     active_.store(true);
+    wireBusy_.store(true);
 
     ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s targets=%zu", deployTransferId_.c_str(), orderList_.size());
 
@@ -758,6 +759,7 @@ void OtaForwarder::startNextPadawan()
         lastProgressBytesSent_ = 0;
 
         phase_ = Phase::AWAITING_BEGIN_ACK;
+        wireBusy_.store(true); // wire is active again for this padawan's transfer
         emitOtaBeginFrame();
         beginAckTimerStart();
         statsTimerStart();
@@ -846,6 +848,7 @@ void OtaForwarder::emitDeployDoneAndReset()
     results_.clear();
     phase_ = Phase::IDLE;
     active_.store(false);
+    wireBusy_.store(false);
 }
 
 void OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site)
@@ -1284,6 +1287,7 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
         AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
                                                firmwareTotalSize_, "");
 
+        wireBusy_.store(false); // wire idle during AWAITING_VERSION_CONFIRMED; master must poll to observe POLL_ACK
         phase_ = Phase::AWAITING_VERSION_CONFIRMED;
         versionConfirmTimerStart();
         tickTimerStart(); // re-arm the per-second tick (it was stopped after END_ACK)
