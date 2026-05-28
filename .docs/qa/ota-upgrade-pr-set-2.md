@@ -85,7 +85,7 @@ phase ships independently; this doc grows with the PR for each phase.
 1. Apply a temporary debug patch to the padawan to delay its first
    POLL_ACK send post-reboot:
    ```
-   // In AstrOsEspNow::sendPollAck, at the top:
+   // In AstrOsEspNow::handlePoll, at the top:
    static bool delayedOnce = false;
    if (!delayedOnce) {
        delayedOnce = true;
