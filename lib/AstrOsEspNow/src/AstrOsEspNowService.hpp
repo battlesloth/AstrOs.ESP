@@ -43,7 +43,7 @@ private:
     bool isMasterNode;
     std::string mac;
     AstrOsEspNowPeers::PeerList peers;
-    SemaphoreHandle_t peersMutex;
+    mutable SemaphoreHandle_t peersMutex;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
 
