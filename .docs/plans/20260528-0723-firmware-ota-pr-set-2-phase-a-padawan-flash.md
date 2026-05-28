@@ -774,7 +774,7 @@ Two changes in this task:
 1. In `startCurrentPadawan` (or wherever the padawan's BulkSender is begun), parse the .bin's app desc once and cache `expectedNewVersion_`.
 2. In the `OTA_FLASH_RESULT` handler, on `OtaFlashStatus::OK`, replace the current immediate result-record-and-advance with: emit `FW_PROGRESS REBOOTING`, start `versionConfirmTimer_`, transition to `Phase::AWAITING_VERSION_CONFIRMED`. The tick handler that polls for the version match lands in Task 7.
 
-- [ ] **Step 1: Add the EspAppDescParser include**
+- [x] **Step 1: Add the EspAppDescParser include**
 
 At the top of `lib/OtaForwarder/src/OtaForwarder.cpp` with the other `#include`s:
 
@@ -782,7 +782,7 @@ At the top of `lib/OtaForwarder/src/OtaForwarder.cpp` with the other `#include`s
 #include "AstrOsEspAppDescParser.hpp"
 ```
 
-- [ ] **Step 2: Parse expected version on deploy start**
+- [x] **Step 2: Parse expected version on deploy start**
 
 In `OtaForwarder::startCurrentPadawan` (or wherever `firmwareTotalSize_` is set from `stat()`, around line 609), after `firmwareTotalSize_` is established but before `bulk_.begin`, add the parse:
 
@@ -830,7 +830,7 @@ In `OtaForwarder::startCurrentPadawan` (or wherever `firmwareTotalSize_` is set 
 
 If the wrapping function is not a `while`-style loop, adapt the `continue` to whatever control-flow recovery already exists in `startCurrentPadawan` after a `firmware_*_failed` push (the file already handles `firmware_seek_failed` once at line 660 — match that pattern).
 
-- [ ] **Step 3: Transition to AWAITING_VERSION_CONFIRMED on FLASH_RESULT(OK)**
+- [x] **Step 3: Transition to AWAITING_VERSION_CONFIRMED on FLASH_RESULT(OK)**
 
 Locate `handleFlashResult` in `OtaForwarder.cpp` (around line 1180). The current OK path looks like:
 
@@ -883,19 +883,19 @@ Replace with:
 
 Note: `tickTimerStart()` is the existing 1-Hz tick. Confirm its declaration is visible at this call site; if it lives in a different access level, expose it (see the existing `statsTimerStart()` pattern for reference).
 
-- [ ] **Step 4: Build for both boards**
+- [x] **Step 4: Build for both boards**
 
 Run: `pio run -e lolin_d32_pro && pio run -e metro_s3`
 
 Expected: both builds succeed.
 
-- [ ] **Step 5: Native build sanity**
+- [x] **Step 5: Native build sanity**
 
 Run: `pio test -e test`
 
 Expected: existing native suite passes. (No new tests yet — those land in Task 9.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/OtaForwarder/src/OtaForwarder.cpp
