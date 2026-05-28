@@ -20,8 +20,9 @@
 
 namespace
 {
-    // Mirror of OtaReceiver's accessor surface. Production-side test is
-    // bench-only (see Task 8). This test pins the accessor's contract.
+    // Mirror of OtaReceiver's accessor surface. Full integration is verified
+    // on hardware via the bench QA plan; this test pins the accessor's mutex
+    // discipline and copy semantics.
     class LastFirmwarePathHolder
     {
     public:
@@ -169,8 +170,8 @@ TEST(OtaForwarderMsg, FreeIsIdempotent)
 // machine cannot be driven directly. The stand-in below mirrors the two
 // production methods verbatim:
 //
-//   checkPeerVersionForCurrentPadawan()   (OtaForwarder.cpp:1348)
-//   handleVersionConfirmTimeout()         (OtaForwarder.cpp:1335)
+//   OtaForwarder::checkPeerVersionForCurrentPadawan()
+//   OtaForwarder::handleVersionConfirmTimeout()
 //
 // A settable peerVersions_ map stands in for AstrOs_EspNow.getPeerVersion().
 // The result vector mimics OtaForwarder::results_ (PadawanResult shape).

@@ -43,13 +43,9 @@ public:
     // Single entry point from otaForwarderTask.
     void process(queue_ota_forwarder_msg_t &msg);
 
-    // Safe to call from any task. Gates polling work during a forward.
-    // Returns wireBusy_: true when the wire is actively transferring chunks or
-    // awaiting an ACK; false during AWAITING_VERSION_CONFIRMED so the master
-    // can poll the rebooted padawan and observe its post-reboot POLL_ACK.
-    // active_ (a deploy is in flight; reject stray messages) remains true for
-    // the entire deploy and is NOT exposed here.
-    bool isActive() const noexcept
+    // True when the OTA wire is currently busy with a transfer; gates polling
+    // work on the master. Safe to call from any task.
+    bool isWireBusy() const noexcept
     {
         return wireBusy_;
     }
@@ -149,10 +145,10 @@ private:
     void handleFlashResultTimeout();
 
     // Phase A — AWAITING_VERSION_CONFIRMED machinery.
-    void versionConfirmTimerStart();
+    bool versionConfirmTimerStart();
     void versionConfirmTimerStop();
     void handleVersionConfirmTimeout();
-    void checkPeerVersionForCurrentPadawan(); // called from the 1 s tick
+    void checkPeerVersionForCurrentPadawan(); // called from the 50 ms tick
 
     // Resolves a controller-id (from FW_DEPLOY_BEGIN's order list) to a
     // MAC. Linear-scans AstrOs_EspNow.getPeers() — small list, cheap.

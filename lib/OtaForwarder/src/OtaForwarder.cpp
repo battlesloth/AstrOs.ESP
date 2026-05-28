@@ -455,7 +455,7 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
 void OtaForwarder::handleTick()
 {
     // Phase A: drive AWAITING_VERSION_CONFIRMED polling first. handleTick
-    // fires every 1 s regardless of bulk_ state, but the STREAMING-only
+    // fires every 50 ms regardless of bulk_ state, but the STREAMING-only
     // logic below is the more restrictive caller. Run version-check before
     // the bulk_/STREAMING gates so it actually sees the tick.
     if (phase_ == Phase::AWAITING_VERSION_CONFIRMED)
@@ -1280,17 +1280,27 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
 
     if (status == OtaFlashStatus::OK)
     {
-        // Padawan reported flash success and is about to reboot. Don't record
-        // SUCCESS yet — wait until heartbeat shows the expected new version.
-        // The flash row already lit FLASHING when END_ACK OK landed; now
-        // signal the reboot transition for the UI.
+        // Padawan reported flash success and is about to reboot. Arm the
+        // version-confirm safety timer FIRST — if it fails there is no
+        // timeout net and the forwarder would hang, so abort immediately
+        // rather than entering AWAITING_VERSION_CONFIRMED.
+        if (!versionConfirmTimerStart())
+        {
+            ESP_LOGE(TAG, "handleFlashResult: versionConfirmTimerStart failed for %s — aborting padawan",
+                     currentControllerId_.c_str());
+            abortCurrentPadawan("version_confirm_timer_failed");
+            return;
+        }
+
+        // Don't record SUCCESS yet — wait until heartbeat shows the expected
+        // new version. The flash row already lit FLASHING when END_ACK OK
+        // landed; now signal the reboot transition for the UI.
         AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
                                                firmwareTotalSize_, "");
 
         wireBusy_.store(false); // wire idle during AWAITING_VERSION_CONFIRMED; master must poll to observe POLL_ACK
         phase_ = Phase::AWAITING_VERSION_CONFIRMED;
-        versionConfirmTimerStart();
-        tickTimerStart(); // re-arm the per-second tick (it was stopped after END_ACK)
+        tickTimerStart(); // re-arm the 50 ms tick (it was stopped after END_ACK)
         return;
     }
 
@@ -1310,21 +1320,21 @@ void OtaForwarder::handleFlashResultTimeout()
     finishCurrentPadawanAndAdvance();
 }
 
-void OtaForwarder::versionConfirmTimerStart()
+bool OtaForwarder::versionConfirmTimerStart()
 {
     if (versionConfirmTimer_ == nullptr)
     {
-        return;
+        ESP_LOGE(TAG, "versionConfirmTimerStart: timer handle is null");
+        return false;
     }
     esp_timer_stop(versionConfirmTimer_);
     esp_err_t err = esp_timer_start_once(versionConfirmTimer_, 15ULL * 1000ULL * 1000ULL);
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG,
-                 "versionConfirmTimerStart: esp_timer_start_once failed: %s — "
-                 "forwarder may hang in AWAITING_VERSION_CONFIRMED",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "versionConfirmTimerStart: esp_timer_start_once failed: %s", esp_err_to_name(err));
+        return false;
     }
+    return true;
 }
 
 void OtaForwarder::versionConfirmTimerStop()
