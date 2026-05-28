@@ -923,7 +923,7 @@ EOF
 
 The existing `tickTimer` already fires every 1 s during transfer (for stats logging). In `AWAITING_VERSION_CONFIRMED`, each tick polls `AstrOs_EspNow.getPeerVersion(currentControllerId_)` and compares to `expectedNewVersion_`. On match: emit `FW_PROGRESS VERSION_CONFIRMED`, stop the version-confirm timer, push SUCCESS to results with `finalVersion`, advance.
 
-- [ ] **Step 1: Implement checkPeerVersionForCurrentPadawan**
+- [x] **Step 1: Implement checkPeerVersionForCurrentPadawan**
 
 Replace the stub introduced in Task 5:
 
@@ -962,7 +962,7 @@ void OtaForwarder::checkPeerVersionForCurrentPadawan()
 }
 ```
 
-- [ ] **Step 2: Call checkPeerVersionForCurrentPadawan from handleTick**
+- [x] **Step 2: Call checkPeerVersionForCurrentPadawan from handleTick**
 
 The 1-second tick handler is `OtaForwarder::handleTick()` at `lib/OtaForwarder/src/OtaForwarder.cpp:439`. It currently early-returns when not in `Phase::STREAMING` so it can't be used as-is for `AWAITING_VERSION_CONFIRMED` work. Add a phase-specific branch at the very top of the function, before the existing STREAMING gate:
 

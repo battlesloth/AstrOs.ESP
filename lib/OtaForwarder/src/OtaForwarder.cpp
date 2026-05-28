@@ -453,6 +453,16 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
 }
 void OtaForwarder::handleTick()
 {
+    // Phase A: drive AWAITING_VERSION_CONFIRMED polling first. handleTick
+    // fires every 1 s regardless of bulk_ state, but the STREAMING-only
+    // logic below is the more restrictive caller. Run version-check before
+    // the bulk_/STREAMING gates so it actually sees the tick.
+    if (phase_ == Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        checkPeerVersionForCurrentPadawan();
+        return;
+    }
+
     // tick(count=0, abandon=false) is indistinguishable from "not streaming";
     // consult status() separately so we skip ticks while idle.
     auto status = bulk_.status();
@@ -1328,7 +1338,35 @@ void OtaForwarder::handleVersionConfirmTimeout()
 
 void OtaForwarder::checkPeerVersionForCurrentPadawan()
 {
-    // Stub; populated in Task 7.
+    if (phase_ != Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        return;
+    }
+    if (expectedNewVersion_.empty())
+    {
+        // Parse failed at deploy start — no comparison possible. The 15 s
+        // versionConfirmTimer will fire and record FAILED("version_unconfirmed").
+        return;
+    }
+
+    std::string reported = AstrOs_EspNow.getPeerVersion(currentControllerId_);
+    if (reported.empty() || reported != expectedNewVersion_)
+    {
+        // Still on old version (or no version reported yet); keep waiting
+        // until either match or timeout.
+        return;
+    }
+
+    ESP_LOGI(TAG, "Version confirmed for %s: '%s' == expected '%s'", currentControllerId_.c_str(), reported.c_str(),
+             expectedNewVersion_.c_str());
+
+    versionConfirmTimerStop();
+
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERSION_CONFIRMED",
+                                           firmwareTotalSize_, firmwareTotalSize_, expectedNewVersion_);
+
+    results_.push_back({currentControllerId_, PadawanStatus::OK, expectedNewVersion_, ""});
+    finishCurrentPadawanAndAdvance();
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const
