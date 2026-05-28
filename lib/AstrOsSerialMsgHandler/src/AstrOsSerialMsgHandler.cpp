@@ -397,9 +397,16 @@ void AstrOsSerialMsgHandler::sendFwProgress(std::string transferId, std::string 
     serialMsg.data[response.size()] = '\n';
     serialMsg.dataSize = response.size() + 1;
 
-    if (xQueueSend(serialQueue, &serialMsg, pdMS_TO_TICKS(500)) != pdTRUE)
+    // Best-effort: FW_PROGRESS is a heartbeat — missing one is harmless because
+    // the next 5%-throttle tick or stage transition will catch up. Use a 0-tick
+    // send so the OTA hot path (OtaForwarder::streamDrain, called ~20× per
+    // image) can't stall the forwarder task and miss ESP-NOW ACK/timeout windows
+    // when the serial queue backs up (serialCh1Queue length is 10, drained every
+    // 10 ms by the Pi consumer). Other sendFw* methods keep their 500 ms timeout
+    // because they carry contract messages.
+    if (xQueueSend(serialQueue, &serialMsg, 0) != pdTRUE)
     {
-        ESP_LOGW(TAG, "Send serial queue fail (FW_PROGRESS)");
+        ESP_LOGD(TAG, "FW_PROGRESS: serial queue full; dropping (best-effort heartbeat)");
         free(serialMsg.data);
     }
 }
