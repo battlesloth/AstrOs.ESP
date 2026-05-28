@@ -1143,3 +1143,64 @@ TEST(SerialMessages, ParseFwTransferEndRejectsLeadingWhitespaceTotalChunks)
     auto rec = parseFwTransferEnd(payload.str());
     EXPECT_FALSE(rec.valid);
 }
+
+//=================================================================================================
+// FW_PROGRESS builder
+//=================================================================================================
+
+TEST(AstrOsSerialMessageService, FwProgress_BuildsExpectedWireFormat)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto msg = msgSvc.getFwProgress("msg-1", "xfer-42", "pad1", "SENDING", 1024, 4096, "");
+
+    auto validation = msgSvc.validateSerialMsg(msg);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_PROGRESS, validation.type);
+    EXPECT_STREQ("msg-1", validation.msgId.c_str());
+
+    EXPECT_NE(msg.find("xfer-42"), std::string::npos);
+    EXPECT_NE(msg.find("pad1"), std::string::npos);
+    EXPECT_NE(msg.find("SENDING"), std::string::npos);
+    EXPECT_NE(msg.find("1024"), std::string::npos);
+    EXPECT_NE(msg.find("4096"), std::string::npos);
+
+    // Payload follows GROUP_SEPARATOR; split on UNIT_SEPARATOR for field ordering.
+    auto records = AstrOsStringUtils::splitString(msg, GROUP_SEPARATOR);
+    ASSERT_EQ(2u, records.size());
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+
+    // 6 fields: transferId, controllerId, stage, bytesSent, totalBytes, detail.
+    // AstrOsStringUtils::splitString strips trailing empty tokens, so the empty
+    // detail field reduces the visible count to 5. Pin on the non-empty fields.
+    ASSERT_GE(payloadParts.size(), 5u);
+    EXPECT_EQ("xfer-42", payloadParts[0]);
+    EXPECT_EQ("pad1", payloadParts[1]);
+    EXPECT_EQ("SENDING", payloadParts[2]);
+    EXPECT_EQ("1024", payloadParts[3]);
+    EXPECT_EQ("4096", payloadParts[4]);
+}
+
+TEST(AstrOsSerialMessageService, FwProgress_FlashingStageRoundTrip)
+{
+    auto msgSvc = AstrOsSerialMessageService();
+    auto msg = msgSvc.getFwProgress("msg-2", "xfer-7", "pad2", "FLASHING", 10000, 10000, "pr_set_1_placeholder");
+
+    auto validation = msgSvc.validateSerialMsg(msg);
+    ASSERT_TRUE(validation.valid);
+    EXPECT_EQ(AstrOsSerialMessageType::FW_PROGRESS, validation.type);
+
+    EXPECT_NE(msg.find("FLASHING"), std::string::npos);
+    EXPECT_NE(msg.find("pr_set_1_placeholder"), std::string::npos);
+
+    auto records = AstrOsStringUtils::splitString(msg, GROUP_SEPARATOR);
+    ASSERT_EQ(2u, records.size());
+    auto payloadParts = AstrOsStringUtils::splitString(records[1], UNIT_SEPARATOR);
+
+    ASSERT_EQ(6u, payloadParts.size());
+    EXPECT_EQ("xfer-7", payloadParts[0]);
+    EXPECT_EQ("pad2", payloadParts[1]);
+    EXPECT_EQ("FLASHING", payloadParts[2]);
+    EXPECT_EQ("10000", payloadParts[3]);
+    EXPECT_EQ("10000", payloadParts[4]);
+    EXPECT_EQ("pr_set_1_placeholder", payloadParts[5]);
+}

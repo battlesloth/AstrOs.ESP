@@ -28,7 +28,7 @@ OtaForwarder::~OtaForwarder()
     // against the timer-leak hazard if a test fixture ever instantiates a
     // non-singleton OtaForwarder; mirrors the April 2026 code review's
     // concern about latent leaks in similar singletons.
-    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_})
+    for (esp_timer_handle_t *t : {&tickTimer_, &beginAckTimer_, &endAckTimer_, &statsTimer_, &flashResultTimer_})
     {
         if (*t)
         {
@@ -87,6 +87,15 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&statsArgs, &statsTimer_));
+
+    esp_timer_create_args_t flashResultArgs = {
+        .callback = &OtaForwarder::flashResultTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_flashres",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&flashResultArgs, &flashResultTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -116,6 +125,12 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_STATS_FIRE:
         handleStatsFire();
+        break;
+    case OTA_FWD_FLASH_RESULT:
+        handleFlashResult(msg);
+        break;
+    case OTA_FWD_FLASH_RESULT_TIMEOUT:
+        handleFlashResultTimeout();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -386,8 +401,21 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
     switch (endResult.decision)
     {
     case AstrOsBulkTransport::EndAckResult::Decision::DONE_OK:
-        ESP_LOGI(TAG, "Transfer to %s OK", currentControllerId_.c_str());
-        completeCurrentPadawan();
+        ESP_LOGI(TAG, "Transfer to %s verified; awaiting flash result", currentControllerId_.c_str());
+        // FLASHING fires on END_ACK OK arrival. The flash row stays visible
+        // for the duration of the padawan's pre-flash delay before
+        // OTA_FLASH_RESULT lands.
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "FLASHING", firmwareTotalSize_,
+                                               firmwareTotalSize_, "");
+        // On OK, the padawan has verified but not yet committed. Enter the
+        // AWAITING_FLASH_RESULT phase and wait for OTA_FLASH_RESULT to land.
+        // kFlashResultTimeoutUs is the safety bound on padawan misbehavior
+        // during the pre-flash delay window.
+        // Stop stats timer — counters are frozen at this point; continued
+        // 2 s heartbeats with unchanged values would just be log noise.
+        statsTimerStop();
+        phase_ = Phase::AWAITING_FLASH_RESULT;
+        flashResultTimerStart();
         return;
     case AstrOsBulkTransport::EndAckResult::Decision::ABANDONED:
         ESP_LOGW(TAG, "Transfer to %s ABANDONED (status=%u)", currentControllerId_.c_str(), msg.end_ack.status);
@@ -661,52 +689,54 @@ void OtaForwarder::startNextPadawan()
         statsAnyAcked_ = false;
         statsNaksRecvCount_ = 0;
         statsSendFailCount_ = 0;
+        lastProgressBytesSent_ = 0;
 
         phase_ = Phase::AWAITING_BEGIN_ACK;
         emitOtaBeginFrame();
         beginAckTimerStart();
         statsTimerStart();
+
+        // SENDING at 0 bytes — announces this padawan has entered the transfer
+        // pipeline; the operator sees the row go live as soon as OTA_BEGIN is
+        // sent (before streaming starts in STREAMING phase).
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "SENDING",
+                                               /*bytesSent=*/0, /*totalBytes=*/firmwareTotalSize_, /*detail=*/"");
         // tickTimer is started only when entering STREAMING (see handleBeginAck);
         // running it during AWAITING_BEGIN_ACK / AWAITING_END_ACK just floods the
         // queue with no-op messages and risks crowding out deadline sentinels.
         return;
     }
 }
-void OtaForwarder::abortCurrentPadawan(const std::string &reason)
+void OtaForwarder::finishCurrentPadawanAndAdvance()
 {
+    // Defensive: stop every timer that could still be running. Some of
+    // these are no-ops in the normal flow (e.g., endAckTimer already
+    // stopped in handleEndAck), but centralizing avoids future drift
+    // when a new abort path forgets one.
     beginAckTimerStop();
     endAckTimerStop();
     tickTimerStop();
     statsTimerStop();
+    flashResultTimerStop();
+
     bulk_.reset();
+
     if (firmwareFile_)
     {
         std::fclose(firmwareFile_);
         firmwareFile_ = nullptr;
     }
-    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
+
     currentControllerId_.clear();
+    flashResultSpuriousDrops_ = 0;
     phase_ = Phase::BETWEEN_PADAWANS;
     nextOrderIdx_++;
     startNextPadawan();
 }
-void OtaForwarder::completeCurrentPadawan()
+void OtaForwarder::abortCurrentPadawan(const std::string &reason)
 {
-    beginAckTimerStop();
-    endAckTimerStop();
-    tickTimerStop();
-    statsTimerStop();
-    bulk_.reset();
-    if (firmwareFile_)
-    {
-        std::fclose(firmwareFile_);
-        firmwareFile_ = nullptr;
-    }
-    results_.push_back({currentControllerId_, PadawanStatus::OK, "", ""});
-    currentControllerId_.clear();
-    phase_ = Phase::BETWEEN_PADAWANS;
-    nextOrderIdx_++;
-    startNextPadawan();
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", reason});
+    finishCurrentPadawanAndAdvance();
 }
 void OtaForwarder::emitDeployDoneAndReset()
 {
@@ -824,7 +854,14 @@ void OtaForwarder::emitOtaEndFrame()
         statsSendFailCount_++;
         // Padawan never saw the frame — fail fast instead of waiting 5 s.
         postTimeoutSentinel(OTA_FWD_END_ACK, "emitOtaEndFrame");
+        return;
     }
+
+    // VERIFYING fires when OTA_END is sent (not when END_ACK arrives) so the
+    // verify row is already visible in the UI while the padawan runs its 3
+    // integrity gates and the 2 s pre-flash delay.
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERIFYING", firmwareTotalSize_,
+                                           firmwareTotalSize_, "");
 }
 void OtaForwarder::streamDrain(uint64_t nowMs)
 {
@@ -887,6 +924,25 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
             // recent retry).
             if (seq > statsLastSentSeq_)
                 statsLastSentSeq_ = seq;
+
+            // Emit SENDING FW_PROGRESS every >=5% of firmwareTotalSize_
+            // bytes-sent advance. The first-byte emission already fired in
+            // startNextPadawan; this picks up from there. Integer math only —
+            // no FP in the hot path.
+            {
+                uint32_t bytesSent = static_cast<uint32_t>(seq + 1) * static_cast<uint32_t>(kChunkSize);
+                if (bytesSent > firmwareTotalSize_)
+                    bytesSent = firmwareTotalSize_; // cap on last (short) chunk
+                uint32_t fivePct = firmwareTotalSize_ / 20;
+                if (fivePct == 0)
+                    fivePct = 1; // degenerate small-firmware safety
+                if (bytesSent >= lastProgressBytesSent_ + fivePct)
+                {
+                    lastProgressBytesSent_ = bytesSent;
+                    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "SENDING",
+                                                           bytesSent, firmwareTotalSize_, "");
+                }
+            }
             continue;
         }
 
@@ -1056,6 +1112,9 @@ void OtaForwarder::handleStatsFire()
     case Phase::AWAITING_END_ACK:
         phaseStr = "AWAITING_END_ACK";
         break;
+    case Phase::AWAITING_FLASH_RESULT:
+        phaseStr = "AWAITING_FLASH_RESULT";
+        break;
     case Phase::BETWEEN_PADAWANS:
         phaseStr = "BETWEEN_PADAWANS";
         break;
@@ -1064,6 +1123,102 @@ void OtaForwarder::handleStatsFire()
     ESP_LOGI(TAG, "OTA_STATS_TX: xferId=%u seq=%u/%u acked=%lld naks-rx=%u send-fail=%u phase=%s",
              (unsigned)currentXferId_, (unsigned)statsLastSentSeq_, (unsigned)firmwareTotalChunks_, acked,
              (unsigned)statsNaksRecvCount_, (unsigned)statsSendFailCount_, phaseStr);
+}
+
+void OtaForwarder::flashResultTimerStart()
+{
+    if (!flashResultTimer_)
+        return;
+    esp_timer_stop(flashResultTimer_);
+    esp_err_t err = esp_timer_start_once(flashResultTimer_, kFlashResultTimeoutUs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG,
+                 "flashResultTimerStart: esp_timer_start_once failed: %s — "
+                 "no safety net; padawan crash during pre-flash delay would block deploy",
+                 esp_err_to_name(err));
+    }
+}
+
+void OtaForwarder::flashResultTimerStop()
+{
+    if (flashResultTimer_)
+    {
+        esp_timer_stop(flashResultTimer_);
+    }
+}
+
+void OtaForwarder::flashResultTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+        return;
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_FLASH_RESULT_TIMEOUT;
+    // Last-resort recovery for a padawan crash during the pre-flash
+    // delay. If this sentinel is dropped, the forwarder hangs in
+    // AWAITING_FLASH_RESULT forever — log loudly so the bench operator
+    // sees the cause.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "flashResultTimerCb: otaForwarderQueue full; sentinel dropped — "
+                      "forwarder may hang in AWAITING_FLASH_RESULT");
+    }
+}
+
+void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
+{
+    // Rate-limited drop logger: emits on first occurrence and every 10th
+    // thereafter. Prevents log saturation under mesh spam.
+    auto logSpurious = [this](const char *reason, unsigned xferId)
+    {
+        if (flashResultSpuriousDrops_ == 0 || flashResultSpuriousDrops_ % 10 == 0)
+        {
+            ESP_LOGW(TAG, "handleFlashResult: %s (xferId=%u) — dropping (spurious count=%u)", reason, xferId,
+                     (unsigned)(flashResultSpuriousDrops_ + 1));
+        }
+        flashResultSpuriousDrops_++;
+    };
+
+    if (phase_ != Phase::AWAITING_FLASH_RESULT)
+    {
+        logSpurious("phase mismatch", (unsigned)msg.flash_result.xferId);
+        return;
+    }
+    if (msg.flash_result.xferId != currentXferId_)
+    {
+        logSpurious("xferId mismatch", (unsigned)msg.flash_result.xferId);
+        return;
+    }
+    if (!isFromCurrentPadawan(msg.flash_result.srcMac))
+    {
+        logSpurious("unexpected peer", (unsigned)msg.flash_result.xferId);
+        return;
+    }
+    flashResultTimerStop();
+
+    OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.flash_result.status);
+    std::string wireReason(msg.flash_result.reason, msg.flash_result.reasonLen);
+
+    auto mapped = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(status, wireReason);
+    std::string finalVersion;
+
+    ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status,
+             mapped.errorReason.c_str());
+    results_.push_back({currentControllerId_, mapped.padawanStatus, finalVersion, mapped.errorReason});
+
+    finishCurrentPadawanAndAdvance();
+}
+
+void OtaForwarder::handleFlashResultTimeout()
+{
+    if (phase_ != Phase::AWAITING_FLASH_RESULT)
+    {
+        return; // stale fire after we already completed
+    }
+    ESP_LOGW(TAG, "Flash-result timeout for %s; recording FAILED", currentControllerId_.c_str());
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "flash_result_timeout"});
+    finishCurrentPadawanAndAdvance();
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

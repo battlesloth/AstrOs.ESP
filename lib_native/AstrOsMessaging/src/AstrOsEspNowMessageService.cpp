@@ -18,6 +18,7 @@ bool isOtaPacketType(AstrOsPacketType type)
     case AstrOsPacketType::OTA_DATA_NAK:
     case AstrOsPacketType::OTA_END:
     case AstrOsPacketType::OTA_END_ACK:
+    case AstrOsPacketType::OTA_FLASH_RESULT:
         return true;
     default:
         return false;
@@ -59,6 +60,7 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::OTA_DATA_NAK] = AstrOsENC::OTA_DATA_NAK;
     packetTypeMap[AstrOsPacketType::OTA_END] = AstrOsENC::OTA_END;
     packetTypeMap[AstrOsPacketType::OTA_END_ACK] = AstrOsENC::OTA_END_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_FLASH_RESULT] = AstrOsENC::OTA_FLASH_RESULT;
 }
 
 AstrOsEspNowMessageService::~AstrOsEspNowMessageService() {}
@@ -124,7 +126,8 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(As
         offset += 1;
         memcpy(packet + offset, &totalPackets, 1);
         offset += 1;
-        memcpy(packet + offset, &type, 1);
+        uint8_t typeByte = static_cast<uint8_t>(type);
+        memcpy(packet + offset, &typeByte, sizeof(typeByte));
         offset += 1;
         memcpy(packet + offset, &actualPayloadSize, 1);
         offset += 1;
@@ -191,7 +194,7 @@ astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
     memcpy(parsedPacket.id, packet, 16);
     parsedPacket.packetNumber = packet[16];
     parsedPacket.totalPackets = packet[17];
-    parsedPacket.packetType = (AstrOsPacketType)packet[18];
+    parsedPacket.packetType = static_cast<AstrOsPacketType>(packet[18]);
     parsedPacket.payloadSize = packet[19];
     parsedPacket.payload = packet + 20;
 

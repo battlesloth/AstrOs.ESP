@@ -47,6 +47,8 @@ public:
     void sendFwTransferEndAck(std::string msgId, std::string transferId, std::string status,
                               std::string computedSha256Hex);
     void sendFwDeployDone(std::string msgId, std::string transferId, std::vector<astros_fw_deploy_result_t> results);
+    void sendFwProgress(std::string transferId, std::string controllerId, std::string stage, uint32_t bytesSent,
+                        uint32_t totalBytes, std::string detail);
 };
 
 extern AstrOsSerialMsgHandler AstrOs_SerialMsgHandler;

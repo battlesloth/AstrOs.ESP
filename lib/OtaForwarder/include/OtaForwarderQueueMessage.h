@@ -11,11 +11,11 @@ extern "C"
 
     // Discriminated union for otaForwarderQueue.
     //
-    // Memory ownership: producer mallocs every pointer for the kind it sends
-    // and on xQueueSend failure calls freeOtaForwarderMsg() to release its
-    // own allocations. Consumer (otaForwarderTask) calls freeOtaForwarderMsg()
-    // after dispatching to the matching handler. Mixing kinds across the
-    // free path will leak or double-free.
+    // Memory ownership: any malloc'd pointer in the active union arm is
+    // owned by the producer until xQueueSend succeeds; thereafter the
+    // consumer (otaForwarderTask) takes ownership and calls
+    // freeOtaForwarderMsg() after dispatch. Most kinds use inline buffers
+    // and own nothing beyond transferId — see per-arm notes below.
     //
     // ACK/NAK kinds carry their decoded record fields inline — no pointers,
     // no malloc on the hot path. DEPLOY_BEGIN carries three malloc'd strings
@@ -24,6 +24,10 @@ extern "C"
     // sha256Computed (END_ACK only) is a 32-byte inline buffer; the binary
     // ESP-NOW frame already carries it byte-for-byte and the consumer
     // typically just logs it — no malloc needed.
+    //
+    // flash_result.reason is a 63-byte inline buffer matching the wire payload's
+    // fixed 63 B cap. No malloc needed; producer memcpys reasonLen bytes from
+    // the parsed record directly into this buffer.
     //
     // srcMac (ACK/NAK kinds) is a 6-byte inline buffer. Used for forensic
     // logging and to cross-check against the current padawan's MAC.
@@ -43,8 +47,10 @@ extern "C"
         OTA_FWD_DATA_ACK = 3,
         OTA_FWD_DATA_NAK = 4,
         OTA_FWD_END_ACK = 5,
-        OTA_FWD_TICK = 6,      // 50 ms tick from esp_timer
-        OTA_FWD_STATS_FIRE = 7 // 2 s periodic stats emission while transfer active
+        OTA_FWD_TICK = 6,                // 50 ms tick from esp_timer
+        OTA_FWD_STATS_FIRE = 7,          // 2 s periodic stats emission while transfer active
+        OTA_FWD_FLASH_RESULT = 8,        // padawan→master flash-commit outcome
+        OTA_FWD_FLASH_RESULT_TIMEOUT = 9 // safety timer fire — padawan never reported
     } ota_forwarder_msg_kind_t;
 
     typedef struct
@@ -107,7 +113,16 @@ extern "C"
                 uint8_t status; // OtaEndStatus value
                 uint8_t sha256Computed[32];
             } end_ack;
-            // OTA_FWD_TICK has no union arm.
+
+            struct
+            {
+                uint8_t srcMac[6];
+                uint8_t xferId;
+                uint8_t status;    // OtaFlashStatus value
+                uint8_t reasonLen; // 0..63
+                char reason[63];   // inline — matches the wire payload's fixed 63 B; no malloc needed
+            } flash_result;
+            // OTA_FWD_TICK and OTA_FWD_FLASH_RESULT_TIMEOUT have no union arm.
         };
     } queue_ota_forwarder_msg_t;
 
@@ -127,8 +142,9 @@ extern "C"
             m->deploy.msgId = NULL;
             m->deploy.orderList = NULL;
         }
-        // ACK/NAK kinds and TICK have no malloc'd union arm members —
-        // nothing to free beyond transferId below.
+        // ACK/NAK, TICK, FLASH_RESULT, and FLASH_RESULT_TIMEOUT kinds have no
+        // malloc'd union arm members — nothing to free beyond transferId below.
+        // flash_result.reason is an inline buffer; no free needed.
         free(m->transferId);
         m->transferId = NULL;
     }

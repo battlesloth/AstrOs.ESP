@@ -374,6 +374,43 @@ void AstrOsSerialMsgHandler::sendFwDeployDone(std::string msgId, std::string tra
     }
 }
 
+void AstrOsSerialMsgHandler::sendFwProgress(std::string transferId, std::string controllerId, std::string stage,
+                                            uint32_t bytesSent, uint32_t totalBytes, std::string detail)
+{
+    // msgId is "na" for unsolicited push events — matches FW_CHUNK_ACK,
+    // FW_CHUNK_NAK, POLL_ACK precedent.
+    auto response =
+        this->msgService.getFwProgress("na", transferId, controllerId, stage, bytesSent, totalBytes, detail);
+
+    if (response.empty())
+    {
+        ESP_LOGE(TAG, "FW_PROGRESS build returned empty — transferId=%s controllerId=%s stage=%s", transferId.c_str(),
+                 controllerId.c_str(), stage.c_str());
+        return;
+    }
+
+    queue_serial_msg_t serialMsg;
+    serialMsg.baudrate = 115200;
+    serialMsg.message_id = 1;
+    serialMsg.data = (uint8_t *)malloc(response.size() + 1);
+    memcpy(serialMsg.data, response.c_str(), response.size());
+    serialMsg.data[response.size()] = '\n';
+    serialMsg.dataSize = response.size() + 1;
+
+    // Best-effort: FW_PROGRESS is a heartbeat — missing one is harmless because
+    // the next 5%-throttle tick or stage transition will catch up. Use a 0-tick
+    // send so the OTA hot path (OtaForwarder::streamDrain, called ~20× per
+    // image) can't stall the forwarder task and miss ESP-NOW ACK/timeout windows
+    // when the serial queue backs up (serialCh1Queue length is 10, drained every
+    // 10 ms by the Pi consumer). Other sendFw* methods keep their 500 ms timeout
+    // because they carry contract messages.
+    if (xQueueSend(serialQueue, &serialMsg, 0) != pdTRUE)
+    {
+        ESP_LOGD(TAG, "FW_PROGRESS: serial queue full; dropping (best-effort heartbeat)");
+        free(serialMsg.data);
+    }
+}
+
 /************************************
  * FW_* inbound dispatch helpers
  *************************************/

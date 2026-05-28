@@ -34,8 +34,19 @@ When extending either enum, **append** — never reorder existing entries. Both 
 Master emits these in `FW_PROGRESS.stage` (table A). Server forwards them to the UI via `flashControllerUpdate`. Both sides must agree on the spelling.
 
 ```
-QUEUED | UPLOADING_TO_MASTER | SENDING | VERIFYING | REBOOTING | VERSION_CONFIRMED | FAILED
+QUEUED | UPLOADING_TO_MASTER | SENDING | VERIFYING | FLASHING | REBOOTING | VERSION_CONFIRMED | FAILED
 ```
+
+**Stage definitions:**
+
+- **QUEUED** — Job enqueued by server, awaiting master dispatch.
+- **UPLOADING_TO_MASTER** — Master receiving chunks from server over serial.
+- **SENDING** — Master pushing image to padawan via ESP-NOW.
+- **VERIFYING** — Padawan has written all chunks; awaiting `esp_ota_end` hash verification.
+- **FLASHING** — Padawan has completed verification and is in the pre-flash delay window. PR set 2: padawan calls `esp_ota_set_boot_partition`. M4: padawan reports `FLASH_NOT_IMPLEMENTED` placeholder via the new `OTA_FLASH_RESULT` message (firmware-side wire format, separate from this serial protocol).
+- **REBOOTING** — Padawan rebooting; master polling for version heartbeat.
+- **VERSION_CONFIRMED** — Padawan heartbeat received with new version; flash successful.
+- **FAILED** — Transfer, write, hash, or reboot failure.
 
 ## A. Server ↔ Master (serial)
 
@@ -138,6 +149,7 @@ Constraint: 250-byte ESP-NOW frame. Existing per-frame overhead leaves ≈150 by
 | `OTA_END_ACK` | padawan → master | `OK` / `HASH_MISMATCH` / `WRITE_ERROR` + computed hash. |
 | `OTA_COMMIT` | master → padawan | `esp_ota_set_boot_partition` + reboot. |
 | `OTA_COMMIT_ACK` | padawan → master | About to reboot. (No post-reboot message; heartbeat carries the new version.) |
+| `OTA_FLASH_RESULT` | padawan → master | Emitted after `OTA_END_ACK OK` during the FLASHING stage delay. Status of `esp_ota_set_boot_partition`. (M4: placeholder `FLASH_NOT_IMPLEMENTED`; PR set 2: real boot-partition semantics.) |
 
 ### Frame layouts
 
@@ -170,6 +182,13 @@ OTA_END payload:                { uint8 transfer-id; uint32 total-chunks-sent; u
 OTA_END_ACK payload:            { uint8 transfer-id; uint8 status; uint8[32] sha256-computed; }
 OTA_COMMIT payload:             { uint8 transfer-id; }
 OTA_COMMIT_ACK payload:         { uint8 transfer-id; uint8 rebooting; }   // rebooting = 1
+
+OTA_FLASH_RESULT payload (66 bytes):
+  uint8  transfer-id
+  uint8  status                  // 0=OK, 1=FLASH_NOT_IMPLEMENTED (M4), 2=FAILED
+  uint8  reason-len              // [0, 63]
+  uint8  reason[63]              // snake_case reason string, NOT NUL-terminated;
+                                 //   readers must consume exactly reason-len bytes
 ```
 
 ### Timing
@@ -182,6 +201,8 @@ OTA_COMMIT_ACK payload:         { uint8 transfer-id; uint8 rebooting; }   // reb
 
 ### Happy path (one padawan)
 
+**M4 variant (with OTA_FLASH_RESULT placeholder):**
+
 ```
 Master                                 Padawan
   |--OTA_BEGIN--------------------------->|   esp_ota_begin(inactive_part)
@@ -190,10 +211,26 @@ Master                                 Padawan
   |<-OTA_DATA_ACK next=8 win=8------------|
   |     ... (sliding window) ...          |
   |--OTA_END------------------------------>|   esp_ota_end + sha256 verify
-  |<-OTA_END_ACK OK------------------------|
-  |--OTA_COMMIT---------------------------->|   esp_ota_set_boot_partition
-  |<-OTA_COMMIT_ACK rebooting=1-------------|
-  |  (silent: padawan reboots)              |
+  |<-OTA_END_ACK OK------------------------|   (FLASHING stage: 2s delay)
+  |<-OTA_FLASH_RESULT status=1------------|   FLASH_NOT_IMPLEMENTED (M4 placeholder)
+  |  (no OTA_COMMIT in M4)                 |
+  |<-(POLL_ACK heartbeat)-----------------|   Version unchanged; flash marked FAILED
+  master records FAILED, moves to next padawan
+```
+
+**PR set 2 variant (with real boot-partition semantics):**
+
+```
+Master                                 Padawan
+  |--OTA_BEGIN--------------------------->|   esp_ota_begin(inactive_part)
+  |<-OTA_BEGIN_ACK------------------------|
+  |--OTA_DATA seq=0..7------------------->|   esp_ota_write each
+  |<-OTA_DATA_ACK next=8 win=8------------|
+  |     ... (sliding window) ...          |
+  |--OTA_END------------------------------>|   esp_ota_end + sha256 verify
+  |<-OTA_END_ACK OK------------------------|   (FLASHING stage: 2s delay)
+  |<-OTA_FLASH_RESULT status=0------------|   OK (esp_ota_set_boot_partition succeeded)
+  |  (master will poll for reboot)         |
   |<-(POLL_ACK heartbeat: version=target)---|
   master records VERSION_CONFIRMED, moves to next padawan
 ```
