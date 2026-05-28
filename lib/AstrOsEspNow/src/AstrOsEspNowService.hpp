@@ -138,6 +138,18 @@ public:
     // if peer unknown, has never been polled, or is running older firmware that
     // omits the uptime field. Thread-safe (acquires peersMutex internally).
     int64_t getPeerUptimeUs(const std::string &macString) const;
+    // Atomic snapshot of a peer's last-reported version + uptime, captured
+    // under a single peersMutex acquisition. Use this in any code path that
+    // needs to consider both values together (e.g., the OTA version-confirm
+    // gate must not mix a stale uptime with a fresh version observed across
+    // two separate accessor calls — that race lets a pre-reboot POLL_ACK
+    // false-match in same-version deploys).
+    struct PeerVersionSnapshot
+    {
+        std::string version;  // empty if peer unknown or not yet polled
+        int64_t uptimeUs = 0; // 0 if peer unknown / not yet polled / legacy firmware
+    };
+    PeerVersionSnapshot getPeerVersionSnapshot(const std::string &macString) const;
     void sendRegistrationRequest();
     bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();

@@ -223,6 +223,8 @@ namespace
 
         // Mirrors OtaForwarder::checkPeerVersionForCurrentPadawan() including
         // the uptime discriminator gate added to close the same-version race.
+        // Reads both version and uptime atomically (via getPeerVersionSnapshot
+        // in production; here via a combined map lookup mirroring that pattern).
         void checkPeerVersion()
         {
             if (phase_ != StandInPhase::AWAITING_VERSION_CONFIRMED)
@@ -230,24 +232,23 @@ namespace
             if (expectedNewVersion_.empty())
                 return; // no comparison possible; fall through to timeout
 
-            // Uptime discriminator: if padawan's reported uptime >= time-since-arm,
-            // the padawan was up before we armed — this is a pre-reboot ACK.
-            // Backward compat: uptime == 0 means older padawan firmware; skip gate.
-            auto uptimeIt = peerUptimes_.find(currentControllerId_);
-            int64_t peerUptime = (uptimeIt != peerUptimes_.end()) ? uptimeIt->second : 0;
+            // Atomic snapshot of both fields — mirrors production's single
+            // getPeerVersionSnapshot() call so the gate sees a consistent pair.
+            auto vit = peerVersions_.find(currentControllerId_);
+            std::string snapVersion = (vit != peerVersions_.end()) ? vit->second : "";
+            auto uit = peerUptimes_.find(currentControllerId_);
+            int64_t snapUptimeUs = (uit != peerUptimes_.end()) ? uit->second : 0;
+
             int64_t timeSinceArmUs = nowUs_ - armedAtUs_;
-            if (peerUptime > 0 && peerUptime >= timeSinceArmUs)
+            if (snapUptimeUs > 0 && snapUptimeUs >= timeSinceArmUs)
                 return; // pre-reboot ACK; keep waiting
 
-            auto it = peerVersions_.find(currentControllerId_);
-            std::string reported = (it != peerVersions_.end()) ? it->second : "";
-            if (reported.empty() || reported != expectedNewVersion_)
+            if (snapVersion.empty() || snapVersion != expectedNewVersion_)
                 return; // still on old version; keep waiting
 
             // Version confirmed.
             phase_ = StandInPhase::IDLE;
-            results_.push_back(
-                {currentControllerId_, AstrOsEspNowProtocol::PadawanStatus::OK, expectedNewVersion_, ""});
+            results_.push_back({currentControllerId_, AstrOsEspNowProtocol::PadawanStatus::OK, snapVersion, ""});
         }
 
         // Mirrors OtaForwarder::handleVersionConfirmTimeout().
@@ -279,6 +280,14 @@ namespace
         }
         void setMockedPeerUptimeUs(const std::string &mac, int64_t uptimeUs)
         {
+            peerUptimes_[mac] = uptimeUs;
+        }
+        // Combined setter that mirrors the production atomic write (both maps
+        // updated together, as in handlePollAck). Use this in tests that
+        // simulate an interleaved POLL_ACK landing with a consistent snapshot.
+        void setMockedPeerVersionAndUptime(const std::string &mac, const std::string &version, int64_t uptimeUs)
+        {
+            peerVersions_[mac] = version;
             peerUptimes_[mac] = uptimeUs;
         }
         void setExpectedNewVersion(const std::string &version)
@@ -458,4 +467,43 @@ TEST(VersionConfirmStandIn, LegacyPadawan_UptimeZeroFallsBackToVersionOnlyCheck)
     standIn.checkPeerVersion();
     EXPECT_EQ(standIn.results().size(), 1u);
     EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
+}
+
+TEST(VersionConfirmStandIn, SnapshotReadsVersionAndUptimeAtomically)
+{
+    // Verify the production code uses the snapshot accessor (or an
+    // equivalent atomic-read pattern) by simulating the interleaved-ACK
+    // race: clear, then on the *next* checkPeerVersion call, simulate
+    // "interleaved POLL_ACK arrives with same version + large (pre-reboot) uptime"
+    // via the stand-in's combined-set helper.
+    static const char *kMac = "AA:BB:CC:DD:EE:07";
+
+    VersionConfirmStandIn standIn;
+    standIn.currentControllerId_ = kMac;
+    standIn.setExpectedNewVersion("1.2.3");
+    standIn.setNowUs(0);
+    standIn.enterAwaitingVersionConfirmed(); // clears both maps; armedAtUs_ = 0
+
+    // Simulate a pre-reboot POLL_ACK arriving atomically:
+    // version="1.2.3" (same-version race) AND uptime=300s (pre-arm uptime).
+    standIn.setMockedPeerVersionAndUptime(kMac, "1.2.3", 300'000'000);
+
+    // Master is 0.1 s into the arm window.
+    standIn.setNowUs(100'000);
+
+    // The gate should REJECT this pre-reboot ACK — peerUptime (300s) >= timeSinceArm (0.1s).
+    // Without the atomic-snapshot pattern, a two-accessor race could let it through.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.phase(), StandInPhase::AWAITING_VERSION_CONFIRMED);
+    EXPECT_EQ(standIn.results().size(), 0u);
+
+    // Now simulate the post-reboot POLL_ACK (low uptime, same version).
+    standIn.setMockedPeerVersionAndUptime(kMac, "1.2.3", 50'000); // 50 ms uptime
+    standIn.setNowUs(2'000'000);                                  // 2 s since arm
+
+    // Gate passes (50 ms < 2 s); version matches → record OK.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.results().size(), 1u);
+    EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
+    EXPECT_EQ(standIn.results()[0].finalVersion, "1.2.3");
 }

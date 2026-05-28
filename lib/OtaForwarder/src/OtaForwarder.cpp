@@ -1421,32 +1421,39 @@ void OtaForwarder::checkPeerVersionForCurrentPadawan()
     // uptime >= time-since-arm, the padawan was up before we armed and this ACK
     // is pre-reboot. Backward compat: uptime == 0 means older padawan firmware
     // that omits the field; fall through to version-only check.
-    int64_t peerUptime = AstrOs_EspNow.getPeerUptimeUs(currentControllerId_);
+    //
+    // Both fields are read under one peersMutex acquisition via getPeerVersionSnapshot
+    // so the gate can't be defeated by an interleaved POLL_ACK writing a fresh
+    // version after we read a stale (cleared) uptime.
+    auto snap = AstrOs_EspNow.getPeerVersionSnapshot(currentControllerId_);
     int64_t timeSinceArmUs = esp_timer_get_time() - versionConfirmArmedAtUs_;
-    if (peerUptime > 0 && peerUptime >= timeSinceArmUs)
+
+    // Atomic snapshot — both fields captured under one peersMutex acquisition
+    // so the gate can't be defeated by an interleaved POLL_ACK writing a fresh
+    // version after we read a stale (cleared) uptime.
+    if (snap.uptimeUs > 0 && snap.uptimeUs >= timeSinceArmUs)
     {
         // Pre-reboot ACK — padawan's uptime reaches back before we armed.
         // Keep waiting for the post-reboot POLL_ACK with a lower uptime.
         return;
     }
 
-    std::string reported = AstrOs_EspNow.getPeerVersion(currentControllerId_);
-    if (reported.empty() || reported != expectedNewVersion_)
+    if (snap.version.empty() || snap.version != expectedNewVersion_)
     {
         // Still on old version (or no version reported yet); keep waiting
         // until either match or timeout.
         return;
     }
 
-    ESP_LOGI(TAG, "Version confirmed for %s: '%s' == expected '%s'", currentControllerId_.c_str(), reported.c_str(),
+    ESP_LOGI(TAG, "Version confirmed for %s: '%s' == expected '%s'", currentControllerId_.c_str(), snap.version.c_str(),
              expectedNewVersion_.c_str());
 
     versionConfirmTimerStop();
 
     AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERSION_CONFIRMED",
-                                           firmwareTotalSize_, firmwareTotalSize_, expectedNewVersion_);
+                                           firmwareTotalSize_, firmwareTotalSize_, snap.version);
 
-    results_.push_back({currentControllerId_, PadawanStatus::OK, expectedNewVersion_, ""});
+    results_.push_back({currentControllerId_, PadawanStatus::OK, snap.version, ""});
     finishCurrentPadawanAndAdvance();
 }
 

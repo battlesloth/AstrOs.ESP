@@ -362,6 +362,28 @@ int64_t AstrOsEspNow::getPeerUptimeUs(const std::string &macString) const
     return out;
 }
 
+AstrOsEspNow::PeerVersionSnapshot AstrOsEspNow::getPeerVersionSnapshot(const std::string &macString) const
+{
+    PeerVersionSnapshot snap;
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersionSnapshot: failed to acquire peersMutex within 1s");
+        return snap;
+    }
+    auto vit = this->peerVersions_.find(macString);
+    if (vit != this->peerVersions_.end())
+    {
+        snap.version = vit->second;
+    }
+    auto uit = this->peerUptimes_.find(macString);
+    if (uit != this->peerUptimes_.end())
+    {
+        snap.uptimeUs = uit->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return snap;
+}
+
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
