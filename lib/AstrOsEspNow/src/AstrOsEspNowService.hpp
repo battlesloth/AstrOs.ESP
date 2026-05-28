@@ -66,6 +66,13 @@ private:
     // version is runtime-only (refreshed every POLL_ACK).
     std::unordered_map<std::string, std::string> peerVersions_;
 
+    // Per-peer last-reported uptime (esp_timer_get_time() snapshot from the
+    // padawan at the moment it built the POLL_ACK). 0 = unknown (older
+    // padawan firmware that omits the 6th field). Used by OtaForwarder to
+    // discriminate pre-reboot POLL_ACKs from post-reboot ones in same-version
+    // deploys. Kept in sync with peerVersions_ via clearPeerVersion/handlePollAck.
+    std::unordered_map<std::string, int64_t> peerUptimes_;
+
     // Routes an OTA ACK/NAK packet (master-side receive) into
     // otaForwarderQueue_. Parses via M1's parseOta* free functions.
     // Returns false ONLY for wire-malformed payload (parse rejection);
@@ -123,8 +130,14 @@ public:
     // Drops any cached version string for the given peer. Called by OtaForwarder
     // when arming AWAITING_VERSION_CONFIRMED so the pre-flash cached version
     // can't false-match against the expected new version before the rebooted
-    // padawan has actually sent a POLL_ACK. Thread-safe (acquires peersMutex).
+    // padawan has actually sent a POLL_ACK. Also clears the uptime entry to
+    // keep peerVersions_ and peerUptimes_ in sync. Thread-safe (acquires peersMutex).
     void clearPeerVersion(const std::string &macString);
+    // Returns the last-reported uptime (esp_timer_get_time() microseconds since
+    // padawan boot) from the most recent POLL_ACK for the given peer. Returns 0
+    // if peer unknown, has never been polled, or is running older firmware that
+    // omits the uptime field. Thread-safe (acquires peersMutex internally).
+    int64_t getPeerUptimeUs(const std::string &macString) const;
     void sendRegistrationRequest();
     bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();

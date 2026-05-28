@@ -1317,6 +1317,10 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
         // silently corrupted the image will fail to mark_app_valid post-reboot,
         // and the bootloader will revert.
         AstrOs_EspNow.clearPeerVersion(currentControllerId_);
+        // Capture the arm timestamp BEFORE entering the phase so
+        // checkPeerVersionForCurrentPadawan can compute timeSinceArm correctly
+        // even if the first tick fires almost immediately.
+        versionConfirmArmedAtUs_ = esp_timer_get_time();
 
         // Padawan reported flash success and is about to reboot. Arm the
         // version-confirm safety timer FIRST — if it fails there is no
@@ -1407,6 +1411,22 @@ void OtaForwarder::checkPeerVersionForCurrentPadawan()
     {
         // Parse failed at deploy start — no comparison possible. The 15 s
         // versionConfirmTimer will fire and record FAILED("version_unconfirmed").
+        return;
+    }
+
+    // Uptime discriminator: reject pre-reboot POLL_ACKs in same-version deploys.
+    // After clearPeerVersion + wireBusy_ = false, master can poll the padawan
+    // during its 200 ms pre-reboot vTaskDelay and receive a pre-reboot POLL_ACK
+    // with the same version. The padawan's reported uptime disambiguates: if
+    // uptime >= time-since-arm, the padawan was up before we armed and this ACK
+    // is pre-reboot. Backward compat: uptime == 0 means older padawan firmware
+    // that omits the field; fall through to version-only check.
+    int64_t peerUptime = AstrOs_EspNow.getPeerUptimeUs(currentControllerId_);
+    int64_t timeSinceArmUs = esp_timer_get_time() - versionConfirmArmedAtUs_;
+    if (peerUptime > 0 && peerUptime >= timeSinceArmUs)
+    {
+        // Pre-reboot ACK — padawan's uptime reaches back before we armed.
+        // Keep waiting for the post-reboot POLL_ACK with a lower uptime.
         return;
     }
 

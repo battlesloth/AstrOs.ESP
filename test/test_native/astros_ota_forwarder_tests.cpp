@@ -212,13 +212,32 @@ namespace
         // Fake AstrOs_EspNow.getPeerVersion() backing store.
         std::unordered_map<std::string, std::string> peerVersions_;
 
-        // Mirrors OtaForwarder::checkPeerVersionForCurrentPadawan().
+        // Fake AstrOs_EspNow.getPeerUptimeUs() backing store. 0 = legacy/unknown.
+        std::unordered_map<std::string, int64_t> peerUptimes_;
+
+        // Fake esp_timer_get_time() for testing the uptime gate.
+        int64_t nowUs_ = 0;
+
+        // Records the arm timestamp (mirrors versionConfirmArmedAtUs_).
+        int64_t armedAtUs_ = 0;
+
+        // Mirrors OtaForwarder::checkPeerVersionForCurrentPadawan() including
+        // the uptime discriminator gate added to close the same-version race.
         void checkPeerVersion()
         {
             if (phase_ != StandInPhase::AWAITING_VERSION_CONFIRMED)
                 return;
             if (expectedNewVersion_.empty())
                 return; // no comparison possible; fall through to timeout
+
+            // Uptime discriminator: if padawan's reported uptime >= time-since-arm,
+            // the padawan was up before we armed — this is a pre-reboot ACK.
+            // Backward compat: uptime == 0 means older padawan firmware; skip gate.
+            auto uptimeIt = peerUptimes_.find(currentControllerId_);
+            int64_t peerUptime = (uptimeIt != peerUptimes_.end()) ? uptimeIt->second : 0;
+            int64_t timeSinceArmUs = nowUs_ - armedAtUs_;
+            if (peerUptime > 0 && peerUptime >= timeSinceArmUs)
+                return; // pre-reboot ACK; keep waiting
 
             auto it = peerVersions_.find(currentControllerId_);
             std::string reported = (it != peerVersions_.end()) ? it->second : "";
@@ -242,11 +261,14 @@ namespace
         }
 
         // Mirrors the production sequence in handleFlashResult OK path:
-        // clears the cached peer version before arming AWAITING_VERSION_CONFIRMED
-        // so a pre-flash POLL_ACK can't false-match on the first tick.
+        // clears the cached peer version and uptime before arming
+        // AWAITING_VERSION_CONFIRMED so a pre-flash POLL_ACK can't false-match
+        // on the first tick. Captures armedAtUs_ from nowUs_ (test-controlled clock).
         void enterAwaitingVersionConfirmed()
         {
             peerVersions_.erase(currentControllerId_);
+            peerUptimes_.erase(currentControllerId_);
+            armedAtUs_ = nowUs_;
             phase_ = StandInPhase::AWAITING_VERSION_CONFIRMED;
         }
 
@@ -255,9 +277,21 @@ namespace
         {
             peerVersions_[mac] = version;
         }
+        void setMockedPeerUptimeUs(const std::string &mac, int64_t uptimeUs)
+        {
+            peerUptimes_[mac] = uptimeUs;
+        }
         void setExpectedNewVersion(const std::string &version)
         {
             expectedNewVersion_ = version;
+        }
+        void setNowUs(int64_t nowUs)
+        {
+            nowUs_ = nowUs;
+        }
+        int64_t armedAtUs() const
+        {
+            return armedAtUs_;
         }
         StandInPhase phase() const
         {
@@ -361,4 +395,67 @@ TEST(VersionConfirmStandIn, SameVersionDeploy_DoesNotFalseMatchOnPreFlashCachedV
     EXPECT_EQ(standIn.results().size(), 1u);
     EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
     EXPECT_EQ(standIn.results()[0].finalVersion, "1.2.3");
+}
+
+TEST(VersionConfirmStandIn, SameVersionDeploy_PreRebootPollAckDoesNotFalseMatch)
+{
+    // Same-version deploy with a pre-reboot POLL_ACK arriving during the
+    // 200 ms pre-reboot delay window. Padawan reports a large uptime (it
+    // hasn't rebooted yet), so the uptime discriminator gate should reject the
+    // ACK even though the version matches.
+    static const char *kMac = "AA:BB:CC:DD:EE:05";
+
+    VersionConfirmStandIn standIn;
+    standIn.currentControllerId_ = kMac;
+    standIn.setExpectedNewVersion("1.2.3");
+
+    // Arm at t=0.
+    standIn.setNowUs(0);
+    standIn.enterAwaitingVersionConfirmed(); // armedAtUs_ = 0
+
+    // Simulate a pre-reboot POLL_ACK landing 100 ms after arm.
+    // Padawan's uptime is 5 minutes — well beyond time-since-arm (100 ms).
+    standIn.setMockedPeerVersion(kMac, "1.2.3");
+    standIn.setMockedPeerUptimeUs(kMac, 300'000'000); // 5 minutes in us
+    standIn.setNowUs(100'000);                        // 100 ms since arm
+
+    // Gate should reject — peerUptime (300s) >= timeSinceArm (0.1s).
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.phase(), StandInPhase::AWAITING_VERSION_CONFIRMED);
+    EXPECT_EQ(standIn.results().size(), 0u);
+
+    // Now the padawan actually reboots. Fresh POLL_ACK with low uptime (50 ms).
+    // 2 s have passed since arm (timeSinceArm = 2 000 000 us).
+    standIn.setMockedPeerUptimeUs(kMac, 50'000); // 50 ms — clearly post-reboot
+    standIn.setNowUs(2'000'000);                 // 2 s since arm
+
+    // Gate passes (50 ms < 2 s); version matches → record OK.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.results().size(), 1u);
+    EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
+}
+
+TEST(VersionConfirmStandIn, LegacyPadawan_UptimeZeroFallsBackToVersionOnlyCheck)
+{
+    // Older padawan firmware omits the uptime field; master receives uptime=0.
+    // The gate must be skipped and the version-only check applied, ensuring
+    // legacy peers can still complete a deploy.
+    static const char *kMac = "AA:BB:CC:DD:EE:06";
+
+    VersionConfirmStandIn standIn;
+    standIn.currentControllerId_ = kMac;
+    standIn.setExpectedNewVersion("1.2.3");
+
+    standIn.setNowUs(1'000'000); // 1 s notional now at arm time
+    standIn.enterAwaitingVersionConfirmed();
+
+    // Legacy padawan: uptime = 0 (field absent in wire format).
+    standIn.setMockedPeerVersion(kMac, "1.2.3");
+    standIn.setMockedPeerUptimeUs(kMac, 0);
+    standIn.setNowUs(3'000'000); // 2 s since arm
+
+    // Gate skipped (uptime == 0); version matches → record OK immediately.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.results().size(), 1u);
+    EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
 }

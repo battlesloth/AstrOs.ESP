@@ -341,7 +341,25 @@ void AstrOsEspNow::clearPeerVersion(const std::string &macString)
         return;
     }
     this->peerVersions_.erase(macString);
+    this->peerUptimes_.erase(macString); // keep in sync with peerVersions_
     xSemaphoreGive(this->peersMutex);
+}
+
+int64_t AstrOsEspNow::getPeerUptimeUs(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerUptimeUs: failed to acquire peersMutex within 1s");
+        return 0;
+    }
+    int64_t out = 0;
+    auto it = this->peerUptimes_.find(macString);
+    if (it != this->peerUptimes_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
 }
 
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
@@ -968,12 +986,17 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
-    // Padawan-side POLL_ACK payload: `name<US>fingerprint<US>version<US>variant`.
+    // Padawan-side POLL_ACK payload:
+    //   name<US>fingerprint<US>version<US>variant<US>uptime_us
     // Variant is the PlatformIO env name; the server uses it to pick the
-    // correct firmware asset at OTA flash time.
+    // correct firmware asset at OTA flash time. uptime_us is the padawan's
+    // esp_timer_get_time() snapshot (microseconds since boot); master uses it
+    // as a post-reboot discriminator in same-version deploys. Older masters
+    // receiving a 6-field payload ignore the extra field; older padawans omit
+    // it (master parses missing field as 0 = "uptime unknown").
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version
-       << UNIT_SEPARATOR << AstrOsConstants::Variant;
+       << UNIT_SEPARATOR << AstrOsConstants::Variant << UNIT_SEPARATOR << std::to_string(esp_timer_get_time());
 
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
@@ -1035,6 +1058,14 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     // "unknown" rather than silently picking the wrong firmware asset.
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
     auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
+    // 6th field: padawan's esp_timer_get_time() at POLL_ACK build time (us since
+    // boot). Missing in older firmware; parsed as 0 = "uptime unknown". Master
+    // uses this as a post-reboot discriminator in same-version OTA deploys.
+    int64_t peerUptimeUs = 0;
+    if (parts.size() >= 6 && !parts[5].empty())
+    {
+        peerUptimeUs = std::strtoll(parts[5].c_str(), nullptr, 10);
+    }
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
@@ -1048,6 +1079,12 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         // during AWAITING_VERSION_CONFIRMED. Overwrite is intentional —
         // newer ACKs win.
         this->peerVersions_[padawanMac] = peerVersion;
+    }
+    // Always record uptime (even 0 = "unknown") to keep it in sync with
+    // peerVersions_. OtaForwarder treats 0 as "legacy peer; skip uptime gate".
+    if (known)
+    {
+        this->peerUptimes_[padawanMac] = peerUptimeUs;
     }
     xSemaphoreGive(this->peersMutex);
 

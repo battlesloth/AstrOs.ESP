@@ -193,6 +193,13 @@ private:
     // to decide when the heartbeat-reported version matches.
     std::string expectedNewVersion_;
 
+    // esp_timer_get_time() snapshot captured when AWAITING_VERSION_CONFIRMED is
+    // armed (in handleFlashResult OK path). Used alongside the padawan's uptime
+    // field from POLL_ACK to reject pre-reboot ACKs in same-version deploys:
+    // if the padawan's reported uptime >= (now - armedAtUs_), the padawan was
+    // already running before we armed, so the ACK is pre-reboot and ignored.
+    int64_t versionConfirmArmedAtUs_ = 0;
+
     // 15 s safety bound on AWAITING_VERSION_CONFIRMED. Fires
     // versionConfirmTimerCallback if the padawan never reports the expected
     // version (silent brick or wrong-image flash).
