@@ -47,11 +47,13 @@ extern "C"
         OTA_FWD_DATA_ACK = 3,
         OTA_FWD_DATA_NAK = 4,
         OTA_FWD_END_ACK = 5,
-        OTA_FWD_TICK = 6,                    // 50 ms tick from esp_timer
-        OTA_FWD_STATS_FIRE = 7,              // 2 s periodic stats emission while transfer active
-        OTA_FWD_FLASH_RESULT = 8,            // padawan→master flash-commit outcome
-        OTA_FWD_FLASH_RESULT_TIMEOUT = 9,    // safety timer fire — padawan never reported
-        OTA_FWD_VERSION_CONFIRM_TIMEOUT = 10 // 15 s safety bound — padawan never reported expected version
+        OTA_FWD_TICK = 6,                      // 50 ms tick from esp_timer
+        OTA_FWD_STATS_FIRE = 7,                // 2 s periodic stats emission while transfer active
+        OTA_FWD_FLASH_RESULT = 8,              // padawan→master flash-commit outcome
+        OTA_FWD_FLASH_RESULT_TIMEOUT = 9,      // safety timer fire — padawan never reported
+        OTA_FWD_VERSION_CONFIRM_TIMEOUT = 10,  // 15 s safety bound — padawan never reported expected version
+        OTA_FWD_LOCAL_FLASH_RESULT = 11,       // master self-flash: posted by OtaWriter with OK/FAILED + reason
+        OTA_FWD_MASTER_SELF_FLASH_TIMEOUT = 12 // 60 s safety bound — OtaWriter hung or postResult queue-full
     } ota_forwarder_msg_kind_t;
 
     typedef struct
@@ -123,7 +125,16 @@ extern "C"
                 uint8_t reasonLen; // 0..63
                 char reason[63];   // inline — matches the wire payload's fixed 63 B; no malloc needed
             } flash_result;
-            // OTA_FWD_TICK and OTA_FWD_FLASH_RESULT_TIMEOUT have no union arm.
+
+            struct
+            {
+                uint8_t status;         // 0 = OK, non-zero = FAILED
+                uint8_t errorReasonLen; // 0..63
+                char errorReason[63];   // inline — no malloc needed
+            } local_flash_result;
+            // OTA_FWD_TICK, OTA_FWD_FLASH_RESULT_TIMEOUT,
+            // OTA_FWD_VERSION_CONFIRM_TIMEOUT, and
+            // OTA_FWD_MASTER_SELF_FLASH_TIMEOUT have no union arm.
         };
     } queue_ota_forwarder_msg_t;
 
@@ -143,10 +154,11 @@ extern "C"
             m->deploy.msgId = NULL;
             m->deploy.orderList = NULL;
         }
-        // ACK/NAK, TICK, FLASH_RESULT, FLASH_RESULT_TIMEOUT, and
-        // VERSION_CONFIRM_TIMEOUT kinds have no malloc'd union arm members —
-        // nothing to free beyond transferId below.
-        // flash_result.reason is an inline buffer; no free needed.
+        // ACK/NAK, TICK, FLASH_RESULT, FLASH_RESULT_TIMEOUT,
+        // VERSION_CONFIRM_TIMEOUT, LOCAL_FLASH_RESULT, and
+        // MASTER_SELF_FLASH_TIMEOUT kinds have no malloc'd union arm members
+        // — nothing to free beyond transferId below. flash_result.reason and
+        // local_flash_result.errorReason are inline buffers; no free needed.
         free(m->transferId);
         m->transferId = NULL;
     }

@@ -241,17 +241,14 @@ void app_main()
         }
     }
 
-    if (!isMasterNode.load())
+    // 8 KB stack (larger than the OTA receiver/forwarder family):
+    // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
+    // SHA-256 ctx and call frames; that does not fit in 4 KB.
+    // Task runs on both master (self-flash loopback) and padawan (wire OTA).
+    if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) != pdPASS)
     {
-        // 8 KB stack (larger than the OTA receiver/forwarder family):
-        // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
-        // SHA-256 ctx and call frames; that does not fit in 4 KB.
-        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
-            pdPASS)
-        {
-            ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
-            abort();
-        }
+        ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
+        abort();
     }
 
     // core 0
@@ -330,18 +327,16 @@ void init(void)
         }
     }
 
-    // otaWriterQueue is padawan-only: master never receives OTA_BEGIN /
-    // OTA_DATA / OTA_END (those are master→padawan directional frames).
-    // Keeping the queue padawan-only saves the queue's 16-slot * sizeof
-    // allocation on master nodes.
-    if (!isMasterNode.load())
+    // OtaWriter queue is needed on BOTH master (for self-flash via
+    // OTA_WR_LOCAL_FLASH_REQ from OtaForwarder) and padawan (for
+    // wire-driven OTA_BEGIN/OTA_DATA/OTA_END). The dispatch into this
+    // queue from incoming ESP-NOW frames is gated separately via
+    // setOtaWriterQueue (padawan-only).
+    otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
+    if (otaWriterQueue == NULL)
     {
-        otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
-        if (otaWriterQueue == NULL)
-        {
-            ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
-            abort();
-        }
+        ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
+        abort();
     }
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
@@ -358,9 +353,12 @@ void init(void)
         AstrOs_OtaForwarder.Init(otaForwarderQueue);
         AstrOs_EspNow.setOtaForwarderQueue(otaForwarderQueue);
     }
+    AstrOs_OtaWriter.Init(otaWriterQueue);
     if (!isMasterNode.load())
     {
-        AstrOs_OtaWriter.Init(otaWriterQueue);
+        // Padawan-only: route incoming wire OTA frames (OTA_BEGIN/DATA/END)
+        // into OtaWriter. Master uses the loopback (OTA_WR_LOCAL_FLASH_REQ
+        // posted by OtaForwarder) instead.
         AstrOs_EspNow.setOtaWriterQueue(otaWriterQueue);
     }
     ESP_LOGI(TAG, "AstrOs Interface initiated");
@@ -513,9 +511,11 @@ static void pollingTimerCallback(void *arg)
     // Padawan-side OTA gate: writer is active while a transfer is in flight.
     // Pause polling/discovery ESP-NOW traffic to keep SPI flash contention
     // down (esp_ota_write erase+program latency degrades when other tasks hit
-    // the flash bus concurrently). OtaWriter::isActive() is safe to call on
-    // master too — AstrOs_OtaWriter is never Init'd on master, so active_
-    // stays false.
+    // the flash bus concurrently).
+    //
+    // Safe to call on master too: OtaWriter::Init runs on both roles, and
+    // active_ stays false until OtaForwarder::startMasterSelfFlash posts a
+    // local-flash request — so this gate is inert during normal master polling.
     const bool otaActive =
         AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isWireBusy() || AstrOs_OtaWriter.isActive();
 
@@ -540,8 +540,34 @@ static void pollingTimerCallback(void *arg)
             }
             // Master self-POLL_ACK: report own build variant so the server can
             // pick the right firmware asset at flash time.
-            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
-                                                   AstrOsConstants::Version, AstrOsConstants::Variant, true);
+            static std::atomic<bool> firstSelfPollAckSent_{false};
+            bool serialQueued =
+                AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
+                                                       AstrOsConstants::Version, AstrOsConstants::Variant, true);
+
+            if (serialQueued)
+            {
+                // First successful self-POLL_ACK queue post post-reboot proves:
+                // NVS read worked (fingerprint), serial queue alive, message-
+                // service serialization alive, FreeRTOS scheduler healthy.
+                // Enough evidence to cancel auto-rollback for a freshly-flashed
+                // master image. mark_valid is documented as safe to call
+                // unconditionally; returns ESP_ERR_NOT_FOUND if no rollback was
+                // pending (the normal subsequent-boot case).
+                bool expected = false;
+                if (firstSelfPollAckSent_.compare_exchange_strong(expected, true))
+                {
+                    esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+                    if (markErr == ESP_OK)
+                    {
+                        ESP_LOGI(TAG, "Master OTA rollback cancelled — running image is now valid");
+                    }
+                    else if (markErr != ESP_ERR_NOT_FOUND)
+                    {
+                        ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback returned %s", esp_err_to_name(markErr));
+                    }
+                }
+            }
         }
         else
         {

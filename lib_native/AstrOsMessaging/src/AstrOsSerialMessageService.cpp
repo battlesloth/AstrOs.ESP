@@ -267,8 +267,11 @@ std::string AstrOsSerialMessageService::getFwDeployDone(std::string msgId, std::
     }
     for (const auto &r : results)
     {
-        // Enforced: status must be exactly "OK" or "FAILED".
-        if (r.status != "OK" && r.status != "FAILED")
+        // Enforced: status must be exactly "OK", "FAILED", or "PENDING".
+        // "PENDING" is produced exclusively by OtaForwarder for the master
+        // self-flash row; the server resolves it via the post-reboot
+        // self-POLL_ACK version match (or 90s timeout).
+        if (r.status != "OK" && r.status != "FAILED" && r.status != "PENDING")
         {
             return "";
         }

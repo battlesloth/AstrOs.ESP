@@ -172,7 +172,7 @@ void AstrOsSerialMsgHandler::sendRegistraionAck(std::string msgId, std::vector<a
     }
 }
 
-void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint,
+bool AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, std::string fingerprint,
                                             std::string firmwareVersion, std::string variant, bool isAck)
 {
     std::string response;
@@ -202,7 +202,9 @@ void AstrOsSerialMsgHandler::sendPollAckNak(std::string mac, std::string name, s
     {
         ESP_LOGW(TAG, "Send serial queue fail");
         free(serialMsg.data);
+        return false;
     }
+    return true;
 }
 
 void AstrOsSerialMsgHandler::sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac,

@@ -50,6 +50,15 @@ public:
         return wireBusy_;
     }
 
+    // Returns the otaForwarderQueue handle so OtaWriter can post
+    // OTA_FWD_LOCAL_FLASH_RESULT to it from the local-flash path. Returns
+    // nullptr before Init is called. Thread-safe (handle is set once at Init
+    // and never changes thereafter).
+    QueueHandle_t getForwarderQueue() const noexcept
+    {
+        return otaForwarderQueue_;
+    }
+
 private:
     // State machine (single in-flight transfer; sequential per-padawan).
     enum class Phase : uint8_t
@@ -60,7 +69,8 @@ private:
         AWAITING_END_ACK = 3,
         AWAITING_FLASH_RESULT = 4,      // END_ACK OK received; padawan verifying + committing
         AWAITING_VERSION_CONFIRMED = 5, // FLASH_RESULT OK received; waiting on heartbeat-version match
-        BETWEEN_PADAWANS = 6,           // result recorded; pulling next from order list
+        MASTER_SELF_FLASHING = 6,       // master local-flash in flight; OtaWriter is running
+        BETWEEN_PADAWANS = 7,           // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
@@ -144,6 +154,22 @@ private:
     void handleFlashResult(queue_ota_forwarder_msg_t &msg);
     void handleFlashResultTimeout();
 
+    // Master self-flash machinery.
+    void startMasterSelfFlash();
+    void handleLocalFlashResult(queue_ota_forwarder_msg_t &msg);
+    static void masterSelfFlashTimerCb(void *arg);
+    bool masterSelfFlashTimerStart();
+    void masterSelfFlashTimerStop();
+    void handleMasterSelfFlashTimeout();
+    // Insert the master row at masterRowOriginalIndex_ (clamped to
+    // results_.size()) so FW_DEPLOY_DONE preserves the operator-submitted
+    // order. Called from handleLocalFlashResult (OK and FAILED paths).
+    void insertMasterRow(PadawanStatus status, const std::string &finalVersion, const std::string &errorReason);
+    // Computes SHA-256 of a file on disk. Returns false on fopen/fread
+    // failure. Used by startNextPadawan (for padawan deploy) and
+    // startMasterSelfFlash (for master self-flash).
+    bool computeFileSha256(const std::string &path, uint8_t outSha[32]) const;
+
     // Phase A — AWAITING_VERSION_CONFIRMED machinery.
     bool versionConfirmTimerStart();
     void versionConfirmTimerStop();
@@ -187,6 +213,7 @@ private:
     esp_timer_handle_t endAckTimer_ = nullptr;
     esp_timer_handle_t statsTimer_ = nullptr;
     esp_timer_handle_t flashResultTimer_ = nullptr;
+    esp_timer_handle_t masterSelfFlashTimer_ = nullptr;
 
     // Phase A: parsed once per padawan from the staged .bin's esp_app_desc_t
     // when entering AWAITING_BEGIN_ACK; consumed during AWAITING_VERSION_CONFIRMED
@@ -240,6 +267,13 @@ private:
     std::vector<std::string> orderList_;
     size_t nextOrderIdx_ = 0;
     std::vector<PadawanResult> results_;
+
+    // Master row deferral. Master always self-flashes last; these track that
+    // the row was seen + at what index, so the result inserts at the original
+    // position when handleLocalFlashResult fires (preserves operator-submitted
+    // order in FW_DEPLOY_DONE).
+    bool masterRowDeferred_ = false;
+    size_t masterRowOriginalIndex_ = 0;
 
     // Per-padawan state (lives across one padawan's transfer; reset on
     // advance).

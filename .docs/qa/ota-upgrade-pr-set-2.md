@@ -127,3 +127,134 @@ phase ships independently; this doc grows with the PR for each phase.
 
 If any test case bricks a padawan (image won't boot AND auto-rollback
 also fails), follow `.docs/qa/ota-upgrade-recovery-via-usb.md`.
+
+## Phase C — Master self-flash + `PadawanStatus::PENDING`
+
+### Pre-merge gate
+
+Before this Phase C firmware merges, confirm the AstrOs.Server's
+`FW_DEPLOY_DONE` parser handles `status="PENDING"` without crashing.
+Three possible server behaviors:
+
+| Server behavior | Phase C firmware ship status |
+|---|---|
+| Permissive: renders as "unknown row" or similar | OK to ship firmware first |
+| Strict but defaults to FAILED | OK to ship; master row shows "Failed" until server PR lands |
+| Crashes / rejects the whole DEPLOY_DONE | **BLOCKING** — sequence the server PR first |
+
+The server-side Phase C follow-up (`Finalizing` deploy state +
+self-POLL_ACK version watcher + 90 s timeout + UI spinner on PENDING
+rows) is a separate PR.
+
+### Preconditions
+
+- A **spare** master-role board with USB tether. **Do not test on the
+  production master** — use a reconfigured spare so a brick doesn't take
+  down the fleet. Either lolin_d32_pro or metro_s3 can be reconfigured as
+  a master via the existing serial-driven `isMasterNode` toggle (see
+  `main.cpp:1711-1717`).
+- At least one padawan board on the previous firmware (so C.1's deploy
+  exercises both the padawan loop and master self-flash).
+- The padawan and spare-master boards have already been re-flashed once
+  via USB to install the rollback-enabled bootloader from Phase A's
+  `862503b` (per Phase A precondition).
+- Pi connected to master via USB serial at 115200 baud.
+- AstrOs.Server running.
+- A "next" firmware build with a bumped `VERSION` so the .bin's
+  `esp_app_desc_t.version` differs from what the boards are currently
+  running.
+
+### Test case C.1 — Master self-flash happy path
+
+1. From the server UI, upload the next .bin to the master.
+2. Trigger a deploy targeting `["00:00:00:00:00:00", "<padawan_mac>"]`
+   (master + 1 padawan; order list with master first to also verify
+   ordering preservation).
+3. **Expected serial-log progression on the spare master**:
+   - Padawan loop runs first (master row deferred, no log noise yet).
+   - Padawan completes: `Version confirmed for <mac>: '<new_version>' ...`
+   - Master starts self-flash: `startMasterSelfFlash: beginning master self-flash`.
+   - OtaWriter logs the flash sequence: `handleLocalFlashReq: ...` →
+     `handleLocalFlashReq: success — boot partition flipped`.
+   - OtaForwarder: `Master self-flash complete; rebooting in 500ms`.
+   - DEPLOY_DONE emitted: master row = PENDING (at index 0), padawan row = OK (at index 1).
+   - Master reboots; comes up on new firmware.
+   - First self-POLL_ACK (~2 s post-boot): `Master OTA rollback cancelled — running image is now valid`.
+4. **Server-side verification** (with server-side Phase C PR landed): deploy
+   record initially shows master as PENDING; resolves to OK after the
+   post-reboot self-POLL_ACK lands.
+5. **Without server-side Phase C PR**: master row stays PENDING in the
+   UI indefinitely — this is the documented operational state for the
+   firmware-first ship window.
+
+### Test case C.2 — Master flash failure injection
+
+1. Apply temporary debug patch in `OtaWriter::handleLocalFlashReq` just
+   before `esp_ota_set_boot_partition`:
+   ```cpp
+   err = ESP_FAIL;  // FORCED FAILURE
+   goto failed;  // adapt to local control flow — see existing failure pattern
+   ```
+   (or simply replace the next `if (err != ESP_OK)` branch with an
+   unconditional FAILED post.)
+2. Build and flash the spare master with the patched firmware.
+3. From the server, trigger a deploy targeting `["00:00:00:00:00:00"]`
+   (master-only — minimizes test surface).
+4. **Expected**:
+   - OtaWriter never calls `esp_ota_set_boot_partition`.
+   - OtaWriter posts FAILED result with reason `"ESP_FAIL"`.
+   - OtaForwarder logs `Master self-flash failed: ESP_FAIL`.
+   - DEPLOY_DONE emitted with master row = FAILED.
+   - Master does NOT reboot; still running the old firmware.
+5. Revert the debug patch.
+
+### Test case C.3 — Master boot-crash + auto-rollback
+
+The highest-stakes test. Validates that the rollback safety net (active
+since Phase A's `862503b`) actually catches a bad master image.
+
+1. Apply temporary debug patch in `app_main`:
+   ```cpp
+   void app_main() {
+       abort();  // FORCED CRASH
+       // ... rest unchanged
+   }
+   ```
+2. Build with a bumped VERSION so the .bin is identifiable.
+3. Stage on the spare master via the server; deploy targeting
+   `["00:00:00:00:00:00"]` (master-only).
+4. **Expected**:
+   - Master self-flash succeeds locally; DEPLOY_DONE emitted with
+     master row = PENDING; master reboots.
+   - New image immediately aborts.
+   - Bootloader detects PENDING_VERIFY image crashed → reverts to old
+     partition on next boot.
+   - Master comes up running OLD firmware (verify via serial banner
+     version).
+   - Self-POLL_ACK starts firing again reporting OLD version.
+   - Server-side (with Phase C server PR): PENDING resolves to FAILED on
+     90 s `post_reboot_timeout`.
+   - Master is still functional, just on the old image.
+5. **If the master DOES NOT come up on old firmware** (rollback failed —
+   shouldn't happen with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`), the
+   spare master is bricked. Recover via
+   `.docs/qa/ota-upgrade-recovery-via-usb.md`. File a bug; this is a
+   regression of Phase A's `862503b`.
+6. Revert the debug patch.
+
+### Test case C.4 — `firstSelfPollAckSent_` fires exactly once
+
+Validates the mark_valid wiring.
+
+1. Normal boot of the spare master (no flash). Observe serial log.
+2. **Expected**: exactly one `Master OTA rollback cancelled — running image is now valid`
+   log message — OR silent (no message) if the boot was not from a
+   PENDING_VERIFY state (subsequent boots after C.1 success path).
+3. Wait through 5 poll cycles (~10 s). **Expected**: NO additional
+   rollback-path log messages.
+
+### Recovery
+
+If C.3 or any other test bricks the spare master AND auto-rollback also
+fails, USB-recover via `.docs/qa/ota-upgrade-recovery-via-usb.md`. The
+procedure already covers both supported boards.

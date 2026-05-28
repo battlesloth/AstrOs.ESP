@@ -1,10 +1,13 @@
 #include <OtaWriter.hpp>
 
 #include <AstrOsEspNowService.hpp>
+#include <OtaForwarder.hpp>
 #include <esp_log.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 
 static const char *TAG = "OtaWriter";
 
@@ -223,6 +226,9 @@ void OtaWriter::process(queue_ota_writer_msg_t &msg)
         break;
     case OTA_WR_STATS_FIRE:
         handleStatsFire();
+        break;
+    case OTA_WR_LOCAL_FLASH_REQ:
+        handleLocalFlashReq(msg);
         break;
     default:
         ESP_LOGE(TAG, "process: unknown msg.kind=%d", (int)msg.kind);
@@ -636,6 +642,208 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     resetOtaHandleAndSha();
     esp_restart();
     // not reached
+}
+
+void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
+{
+    const char *path = msg.local_flash_req.firmwarePath;
+    uint32_t expectedSize = msg.local_flash_req.expectedSize;
+    const uint8_t *expectedSha = msg.local_flash_req.expectedSha256;
+
+    ESP_LOGI(TAG, "handleLocalFlashReq: path=%s expectedSize=%u", path, expectedSize);
+
+    // Helper to post the result back to otaForwarderQueue. Declared as a
+    // lambda so the failure paths can call it before returning. We look up
+    // the forwarder queue via the global singleton — OtaWriter doesn't hold
+    // a direct handle (would create a circular dependency at construction).
+    auto postResult = [](OtaFlashStatus status, const std::string &reason)
+    {
+        queue_ota_forwarder_msg_t out{};
+        out.kind = OTA_FWD_LOCAL_FLASH_RESULT;
+        out.local_flash_result.status = static_cast<uint8_t>(status);
+        std::size_t n = std::min(reason.size(), sizeof(out.local_flash_result.errorReason));
+        out.local_flash_result.errorReasonLen = static_cast<uint8_t>(n);
+        std::memcpy(out.local_flash_result.errorReason, reason.data(), n);
+        // AstrOs_OtaForwarder is the global singleton; its queue is exposed via getForwarderQueue().
+        QueueHandle_t q = AstrOs_OtaForwarder.getForwarderQueue();
+        if (q == nullptr)
+        {
+            ESP_LOGE(TAG, "handleLocalFlashReq: otaForwarderQueue null; result dropped");
+            return;
+        }
+        if (xQueueSend(q, &out, 0) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "handleLocalFlashReq: otaForwarderQueue full; result dropped");
+        }
+    };
+
+    active_.store(true);
+
+    // ─── Step 1: open + size-check the firmware file ─────────────────
+    FILE *f = std::fopen(path, "rb");
+    if (f == nullptr)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: fopen(%s) failed", path);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "firmware_open_failed");
+        return;
+    }
+    struct stat st
+    {
+    };
+    if (stat(path, &st) != 0)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: stat(%s) failed", path);
+        std::fclose(f);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "firmware_stat_failed");
+        return;
+    }
+    if (static_cast<uint32_t>(st.st_size) != expectedSize)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: size mismatch (stat=%ld expected=%u)", (long)st.st_size, expectedSize);
+        std::fclose(f);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "firmware_size_mismatch");
+        return;
+    }
+
+    // ─── Step 2: open the inactive OTA partition ──────────────────────
+    inactivePartition_ = esp_ota_get_next_update_partition(NULL);
+    if (inactivePartition_ == nullptr)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: esp_ota_get_next_update_partition returned null");
+        std::fclose(f);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "no_update_partition");
+        return;
+    }
+
+    esp_err_t err = esp_ota_begin(inactivePartition_, OTA_SIZE_UNKNOWN, &otaHandle_);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: esp_ota_begin failed: %s", esp_err_to_name(err));
+        std::fclose(f);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
+        return;
+    }
+
+    // ─── Step 3: stream the file in 4 KB chunks ──────────────────────
+    AstrOsSha256_init(&shaCtx_);
+    shaActive_ = true;
+    constexpr size_t kChunkBytes = 4096;
+    uint8_t buf[kChunkBytes];
+    size_t totalRead = 0;
+    while (totalRead < expectedSize)
+    {
+        size_t want = std::min(kChunkBytes, static_cast<size_t>(expectedSize - totalRead));
+        size_t got = std::fread(buf, 1, want, f);
+        if (got != want)
+        {
+            ESP_LOGE(TAG, "handleLocalFlashReq: fread short (%zu of %zu) at offset %zu", got, want, totalRead);
+            std::fclose(f);
+            esp_ota_abort(otaHandle_);
+            otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
+            resetOtaHandleAndSha();
+            active_.store(false);
+            postResult(OtaFlashStatus::FAILED, "firmware_read_short");
+            return;
+        }
+        err = esp_ota_write(otaHandle_, buf, got);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "handleLocalFlashReq: esp_ota_write failed at offset %zu: %s", totalRead,
+                     esp_err_to_name(err));
+            std::fclose(f);
+            esp_ota_abort(otaHandle_);
+            otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
+            resetOtaHandleAndSha();
+            active_.store(false);
+            postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
+            return;
+        }
+        AstrOsSha256_update(&shaCtx_, buf, got);
+        totalRead += got;
+    }
+    std::fclose(f);
+
+    // ─── Step 4: finalize streaming SHA, compare to expected ─────────
+    uint8_t streamedDigest[32];
+    AstrOsSha256_final(&shaCtx_, streamedDigest);
+    shaActive_ = false;
+    if (std::memcmp(streamedDigest, expectedSha, 32) != 0)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: streaming SHA mismatch");
+        esp_ota_abort(otaHandle_);
+        otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
+        resetOtaHandleAndSha();
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "sha_mismatch");
+        return;
+    }
+
+    // ─── Step 5: esp_ota_end (commits the writes; partition pointer not yet flipped) ──
+    err = esp_ota_end(otaHandle_);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: esp_ota_end failed: %s", esp_err_to_name(err));
+        // esp_ota_end releases the handle internally even on failure.
+        otaHandle_ = 0;
+        resetOtaHandleAndSha();
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
+        return;
+    }
+    otaHandle_ = 0;
+
+    // ─── Step 6: read-back-rehash verify ─────────────────────────────
+    AstrOsSha256Ctx rbCtx;
+    AstrOsSha256_init(&rbCtx);
+    constexpr size_t kRbBufSize = 4096;
+    uint8_t rbBuf[kRbBufSize];
+    for (size_t off = 0; off < expectedSize;)
+    {
+        size_t chunk = std::min(kRbBufSize, static_cast<size_t>(expectedSize - off));
+        err = esp_partition_read(inactivePartition_, off, rbBuf, chunk);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "handleLocalFlashReq: esp_partition_read at off=%zu failed: %s", off, esp_err_to_name(err));
+            resetOtaHandleAndSha();
+            active_.store(false);
+            postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
+            return;
+        }
+        AstrOsSha256_update(&rbCtx, rbBuf, chunk);
+        off += chunk;
+    }
+    uint8_t readbackDigest[32];
+    AstrOsSha256_final(&rbCtx, readbackDigest);
+    if (std::memcmp(readbackDigest, expectedSha, 32) != 0)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: read-back SHA mismatch");
+        resetOtaHandleAndSha();
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "readback_mismatch");
+        return;
+    }
+
+    // ─── Step 7: flip the boot partition pointer ─────────────────────
+    err = esp_ota_set_boot_partition(inactivePartition_);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        resetOtaHandleAndSha();
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
+        return;
+    }
+
+    // ─── Step 8: success ─────────────────────────────────────────────
+    ESP_LOGI(TAG, "handleLocalFlashReq: success — boot partition flipped");
+    resetOtaHandleAndSha();
+    active_.store(false);
+    postResult(OtaFlashStatus::OK, "");
 }
 
 void OtaWriter::handleWatchdogFire()
