@@ -1,5 +1,6 @@
 #include "OtaForwarder.hpp"
 
+#include <AstrOsEspAppDescParser.hpp>
 #include <AstrOsEspNow.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
@@ -676,6 +677,47 @@ void OtaForwarder::startNextPadawan()
             continue;
         }
 
+        // Phase A: read the staged .bin's esp_app_desc_t to learn the expected
+        // post-reboot version string. The 80-byte prefix is plenty — the
+        // parser only reads bytes 0..79. fseek back to 0 afterward so the
+        // streaming send loop starts at the beginning.
+        expectedNewVersion_.clear();
+        {
+            uint8_t prefix[80] = {0};
+            if (std::fread(prefix, 1, sizeof(prefix), firmwareFile_) != sizeof(prefix))
+            {
+                ESP_LOGW(TAG,
+                         "Could not read 80-byte prefix from staged .bin (%s); "
+                         "version-confirm will fall back to timeout",
+                         firmwarePath.c_str());
+            }
+            else
+            {
+                auto desc = AstrOsEspAppDescParser::parse(prefix, sizeof(prefix));
+                if (desc.ok)
+                {
+                    expectedNewVersion_ = desc.version;
+                    ESP_LOGI(TAG, "Parsed expected new version '%s' from staged .bin", expectedNewVersion_.c_str());
+                }
+                else
+                {
+                    ESP_LOGW(TAG,
+                             "esp_app_desc parse failed (%s); version-confirm will "
+                             "fall back to timeout",
+                             desc.error.c_str());
+                }
+            }
+            if (std::fseek(firmwareFile_, 0, SEEK_SET) != 0)
+            {
+                ESP_LOGE(TAG, "fseek(0) failed on firmware file");
+                std::fclose(firmwareFile_);
+                firmwareFile_ = nullptr;
+                results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_seek_failed"});
+                nextOrderIdx_++;
+                continue;
+            }
+        }
+
         // Safe because handleDeployBegin caps orderList_.size() at
         // kMaxOrderListSize (< 0xFE per the static_assert in the header).
         // Yields xferIds 1..kMaxOrderListSize — never 0 ("no xfer") or
@@ -1218,12 +1260,27 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
     std::string wireReason(msg.flash_result.reason, msg.flash_result.reasonLen);
 
     auto mapped = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(status, wireReason);
-    std::string finalVersion;
 
     ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status,
              mapped.errorReason.c_str());
-    results_.push_back({currentControllerId_, mapped.padawanStatus, finalVersion, mapped.errorReason});
 
+    if (status == OtaFlashStatus::OK)
+    {
+        // Padawan reported flash success and is about to reboot. Don't record
+        // SUCCESS yet — wait until heartbeat shows the expected new version.
+        // The flash row already lit FLASHING when END_ACK OK landed; now
+        // signal the reboot transition for the UI.
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
+                                               firmwareTotalSize_, "");
+
+        phase_ = Phase::AWAITING_VERSION_CONFIRMED;
+        versionConfirmTimerStart();
+        tickTimerStart(); // re-arm the per-second tick (it was stopped after END_ACK)
+        return;
+    }
+
+    // FAILED or FLASH_NOT_IMPLEMENTED (legacy) — record immediately and advance.
+    results_.push_back({currentControllerId_, mapped.padawanStatus, "", mapped.errorReason});
     finishCurrentPadawanAndAdvance();
 }
 
