@@ -776,6 +776,7 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
     {
         ESP_LOGE(TAG, "handleLocalFlashReq: streaming SHA mismatch");
         esp_ota_abort(otaHandle_);
+        otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
         resetOtaHandleAndSha();
         active_.store(false);
         postResult(OtaFlashStatus::FAILED, "sha_mismatch");
