@@ -18,13 +18,14 @@ extern "C"
     // will leak or double-free.
     //
     // Per-kind owned pointers:
-    //   OTA_WR_BEGIN          none (all inline fixed-size fields)
-    //   OTA_WR_DATA           payload (malloc'd by dispatcher because
-    //                         parseOtaData returns a pointer INTO the
-    //                         packet buffer, which is freed when the
-    //                         dispatcher returns)
-    //   OTA_WR_END            none (all inline fixed-size fields)
-    //   OTA_WR_WATCHDOG_FIRE  none
+    //   OTA_WR_BEGIN              none (all inline fixed-size fields)
+    //   OTA_WR_DATA               payload (malloc'd by dispatcher because
+    //                             parseOtaData returns a pointer INTO the
+    //                             packet buffer, which is freed when the
+    //                             dispatcher returns)
+    //   OTA_WR_END                none (all inline fixed-size fields)
+    //   OTA_WR_WATCHDOG_FIRE      none
+    //   OTA_WR_LOCAL_FLASH_REQ    none (all inline fixed-size fields)
     //
     // srcMac (BEGIN/DATA/END) is the source MAC of the inbound packet;
     // the consumer uses it as the reply target for ACK/NAK. Inline (not
@@ -42,7 +43,8 @@ extern "C"
         OTA_WR_DATA = 1,
         OTA_WR_END = 2,
         OTA_WR_WATCHDOG_FIRE = 3,
-        OTA_WR_STATS_FIRE = 4 // 2 s periodic stats emission while transfer active
+        OTA_WR_STATS_FIRE = 4,     // 2 s periodic stats emission while transfer active
+        OTA_WR_LOCAL_FLASH_REQ = 5 // master self-flash: posted by OtaForwarder with firmware path + expected size + SHA
     } ota_writer_msg_kind_t;
 
     typedef struct
@@ -79,7 +81,14 @@ extern "C"
                 uint32_t totalChunksSent;
                 uint8_t sha256Final[32];
             } end;
-            // OTA_WR_WATCHDOG_FIRE has no union arm.
+
+            struct
+            {
+                char firmwarePath[64];
+                uint32_t expectedSize;
+                uint8_t expectedSha256[32];
+            } local_flash_req;
+            // OTA_WR_WATCHDOG_FIRE and OTA_WR_STATS_FIRE have no union arm.
         };
     } queue_ota_writer_msg_t;
 
@@ -97,7 +106,7 @@ extern "C"
             free(m->data.payload);
             m->data.payload = NULL;
         }
-        // BEGIN / END / WATCHDOG_FIRE / STATS_FIRE own no heap pointers.
+        // BEGIN / END / WATCHDOG_FIRE / STATS_FIRE / LOCAL_FLASH_REQ own no heap pointers.
     }
 
 #ifdef __cplusplus
