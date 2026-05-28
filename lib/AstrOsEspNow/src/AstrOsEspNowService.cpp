@@ -316,6 +316,23 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
     return result;
 }
 
+std::string AstrOsEspNow::getPeerVersion(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersion: failed to acquire peersMutex within 1s");
+        return "";
+    }
+    std::string out;
+    auto it = this->peerVersions_.find(macString);
+    if (it != this->peerVersions_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
+}
+
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
@@ -1014,6 +1031,13 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
     bool known = this->peers.markPollAckReceived(padawanMac);
+    if (known && !peerVersion.empty())
+    {
+        // Record the reported firmware version for OtaForwarder to consult
+        // during AWAITING_VERSION_CONFIRMED. Overwrite is intentional —
+        // newer ACKs win.
+        this->peerVersions_[padawanMac] = peerVersion;
+    }
     xSemaphoreGive(this->peersMutex);
 
     if (!known)

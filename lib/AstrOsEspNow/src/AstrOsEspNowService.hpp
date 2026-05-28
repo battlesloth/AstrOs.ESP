@@ -7,6 +7,7 @@
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <atomic>
 #include <esp_err.h>
+#include <unordered_map>
 
 // needed for QueueHandle_t and SemaphoreHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
@@ -60,6 +61,11 @@ private:
     // next boot.
     std::atomic<bool> firstPollAckSent_{false};
 
+    // Parallel storage for per-peer last-known firmware version. Not in
+    // espnow_peer_t because that struct is NVS-persisted byte-for-byte;
+    // version is runtime-only (refreshed every POLL_ACK).
+    std::unordered_map<std::string, std::string> peerVersions_;
+
     // Routes an OTA ACK/NAK packet (master-side receive) into
     // otaForwarderQueue_. Parses via M1's parseOta* free functions.
     // Returns false ONLY for wire-malformed payload (parse rejection);
@@ -108,6 +114,12 @@ public:
     ~AstrOsEspNow();
     esp_err_t init(astros_espnow_config_t config);
     std::vector<espnow_peer_t> getPeers();
+    // Returns the last-known firmware version string reported by the given
+    // peer in its most recent POLL_ACK, or an empty string if the peer is
+    // unknown or has never been polled successfully. Thread-safe (acquires
+    // peersMutex internally). MAC is the canonical "XX:XX:XX:XX:XX:XX"
+    // uppercase string used elsewhere in AstrOsEspNow.
+    std::string getPeerVersion(const std::string &macString) const;
     void sendRegistrationRequest();
     bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();
