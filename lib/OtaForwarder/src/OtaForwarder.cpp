@@ -7,10 +7,14 @@
 #include <AstrOsSha256.h>
 #include <AstrOsStringUtils.hpp>
 #include <OtaReceiver.hpp>
+#include <OtaWriter.hpp>
 #include <esp_log.h>
+#include <esp_system.h>
+#include <freertos/task.h>
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
 
@@ -667,30 +671,16 @@ void OtaForwarder::startNextPadawan()
 
         // Compute SHA-256 of the file (forensic-grade defensive check; the
         // padawan also verifies). One-shot at file open; ships in the
-        // OTA_BEGIN frame's sha256Expected field. 512 B buffer keeps stack
-        // pressure low on the 4096 B task stack — SHA-256 throughput is
-        // dominated by the 64 B per-block transform, not the I/O buffer.
-        AstrOsSha256Ctx shaCtx;
-        AstrOsSha256_init(&shaCtx);
-        uint8_t buf[512];
-        while (size_t r = std::fread(buf, 1, sizeof(buf), firmwareFile_))
-        {
-            AstrOsSha256_update(&shaCtx, buf, r);
-        }
-        // fread returning 0 ambiguates EOF vs error; check ferror so a short
-        // SD read doesn't ship a SHA computed over a truncated file (which
-        // the padawan would report as HASH_MISMATCH for what is really a
-        // master-side I/O fault).
-        if (std::ferror(firmwareFile_))
+        // OTA_BEGIN frame's sha256Expected field.
+        if (!computeFileSha256(firmwarePath, firmwareSha256_))
         {
             ESP_LOGE(TAG, "fread error during SHA pass; abandoning padawan");
             std::fclose(firmwareFile_);
             firmwareFile_ = nullptr;
-            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_read_failed"});
+            results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_sha_failed"});
             nextOrderIdx_++;
             continue;
         }
-        AstrOsSha256_final(&shaCtx, firmwareSha256_);
 
         // fseek(SEEK_SET) over rewind(): rewind silently swallows errors. A
         // bad seek here would burn the full chunk budget shipping wrong
@@ -1429,13 +1419,132 @@ void OtaForwarder::handleVersionConfirmTimeout()
 
 void OtaForwarder::startMasterSelfFlash()
 {
-    // Stub; populated in Task 6.
+    ESP_LOGI(TAG, "startMasterSelfFlash: beginning master self-flash");
+
+    // ─── Resolve staged firmware path ───────────────────────────────
+    auto firmwarePathOpt = AstrOs_OtaReceiver.getLastFirmwarePath();
+    if (!firmwarePathOpt.has_value())
+    {
+        ESP_LOGW(TAG, "startMasterSelfFlash: no staged firmware; recording FAILED");
+        insertMasterRow(PadawanStatus::FAILED, "", "no_firmware");
+        emitDeployDoneAndReset();
+        return;
+    }
+    const std::string &firmwarePath = *firmwarePathOpt;
+
+    // ─── stat() for size ────────────────────────────────────────────
+    struct stat st
+    {
+    };
+    if (stat(firmwarePath.c_str(), &st) != 0)
+    {
+        ESP_LOGE(TAG, "startMasterSelfFlash: stat(%s) failed", firmwarePath.c_str());
+        insertMasterRow(PadawanStatus::FAILED, "", "firmware_stat_failed");
+        emitDeployDoneAndReset();
+        return;
+    }
+    uint32_t expectedSize = static_cast<uint32_t>(st.st_size);
+
+    // ─── Compute SHA-256 ────────────────────────────────────────────
+    uint8_t expectedSha[32];
+    if (!computeFileSha256(firmwarePath, expectedSha))
+    {
+        ESP_LOGE(TAG, "startMasterSelfFlash: SHA computation failed");
+        insertMasterRow(PadawanStatus::FAILED, "", "firmware_sha_failed");
+        emitDeployDoneAndReset();
+        return;
+    }
+
+    // ─── Build request + post to otaWriterQueue ─────────────────────
+    queue_ota_writer_msg_t req{};
+    req.kind = OTA_WR_LOCAL_FLASH_REQ;
+    std::strncpy(req.local_flash_req.firmwarePath, firmwarePath.c_str(), sizeof(req.local_flash_req.firmwarePath) - 1);
+    req.local_flash_req.firmwarePath[sizeof(req.local_flash_req.firmwarePath) - 1] = '\0';
+    req.local_flash_req.expectedSize = expectedSize;
+    std::memcpy(req.local_flash_req.expectedSha256, expectedSha, 32);
+
+    QueueHandle_t writerQueue = AstrOs_OtaWriter.getWriterQueue();
+    if (writerQueue == nullptr)
+    {
+        ESP_LOGE(TAG, "startMasterSelfFlash: AstrOs_OtaWriter queue null — not init on master?");
+        insertMasterRow(PadawanStatus::FAILED, "", "writer_queue_null");
+        emitDeployDoneAndReset();
+        return;
+    }
+
+    phase_ = Phase::MASTER_SELF_FLASHING;
+    currentControllerId_ = "00:00:00:00:00:00";
+
+    if (xQueueSend(writerQueue, &req, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "startMasterSelfFlash: otaWriterQueue full — recording FAILED");
+        insertMasterRow(PadawanStatus::FAILED, "", "writer_queue_full");
+        phase_ = Phase::IDLE;
+        emitDeployDoneAndReset();
+        return;
+    }
 }
 
 void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
 {
-    // Stub; populated in Task 6.
-    (void)msg;
+    if (phase_ != Phase::MASTER_SELF_FLASHING)
+    {
+        ESP_LOGW(TAG, "handleLocalFlashResult: ignored — phase=%d", (int)phase_);
+        return;
+    }
+
+    OtaFlashStatus status = static_cast<OtaFlashStatus>(msg.local_flash_result.status);
+    std::string reason(msg.local_flash_result.errorReason, msg.local_flash_result.errorReasonLen);
+
+    if (status == OtaFlashStatus::OK)
+    {
+        insertMasterRow(PadawanStatus::PENDING, "", "awaiting_post_reboot_version");
+        emitDeployDoneAndReset();
+
+        ESP_LOGI(TAG, "Master self-flash complete; rebooting in 500ms");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        // not reached
+    }
+
+    // FAILED: master partition was NOT switched; bootloader still points
+    // at the running image. Record + emit DEPLOY_DONE; no reboot.
+    ESP_LOGE(TAG, "Master self-flash failed: %s", reason.c_str());
+    insertMasterRow(PadawanStatus::FAILED, "", reason);
+    emitDeployDoneAndReset();
+}
+
+void OtaForwarder::insertMasterRow(PadawanStatus status, const std::string &finalVersion,
+                                   const std::string &errorReason)
+{
+    size_t idx = std::min(masterRowOriginalIndex_, results_.size());
+    results_.insert(results_.begin() + idx, {"00:00:00:00:00:00", status, finalVersion, errorReason});
+}
+
+bool OtaForwarder::computeFileSha256(const std::string &path, uint8_t outSha[32]) const
+{
+    FILE *f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr)
+    {
+        return false;
+    }
+    AstrOsSha256Ctx ctx;
+    AstrOsSha256_init(&ctx);
+    constexpr size_t kBufSize = 512;
+    uint8_t buf[kBufSize];
+    size_t got;
+    while ((got = std::fread(buf, 1, kBufSize, f)) > 0)
+    {
+        AstrOsSha256_update(&ctx, buf, got);
+    }
+    bool readOk = !std::ferror(f);
+    std::fclose(f);
+    if (!readOk)
+    {
+        return false;
+    }
+    AstrOsSha256_final(&ctx, outSha);
+    return true;
 }
 
 void OtaForwarder::checkPeerVersionForCurrentPadawan()

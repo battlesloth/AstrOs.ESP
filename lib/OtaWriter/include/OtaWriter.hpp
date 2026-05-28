@@ -51,6 +51,15 @@ public:
         return active_;
     }
 
+    // Returns the otaWriterQueue handle so OtaForwarder can post
+    // OTA_WR_LOCAL_FLASH_REQ to it from the master self-flash path. Returns
+    // nullptr before Init is called (e.g., on a node where OtaWriter wasn't
+    // initialized). Thread-safe (handle is set once at Init).
+    QueueHandle_t getWriterQueue() const noexcept
+    {
+        return otaWriterQueue_;
+    }
+
 private:
     // Per-handler entry points. All run on otaWriterTask.
     void handleBegin(queue_ota_writer_msg_t &msg);

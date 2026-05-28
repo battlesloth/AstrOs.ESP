@@ -157,6 +157,14 @@ private:
     // Phase C — master self-flash machinery.
     void startMasterSelfFlash();
     void handleLocalFlashResult(queue_ota_forwarder_msg_t &msg);
+    // Insert the master row at masterRowOriginalIndex_ (clamped to
+    // results_.size()) so FW_DEPLOY_DONE preserves the operator-submitted
+    // order. Called from handleLocalFlashResult (OK and FAILED paths).
+    void insertMasterRow(PadawanStatus status, const std::string &finalVersion, const std::string &errorReason);
+    // Computes SHA-256 of a file on disk. Returns false on fopen/fread
+    // failure. Used by startNextPadawan (for padawan deploy) and
+    // startMasterSelfFlash (for master self-flash).
+    bool computeFileSha256(const std::string &path, uint8_t outSha[32]) const;
 
     // Phase A — AWAITING_VERSION_CONFIRMED machinery.
     bool versionConfirmTimerStart();

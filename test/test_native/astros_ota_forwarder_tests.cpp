@@ -507,3 +507,175 @@ TEST(VersionConfirmStandIn, SnapshotReadsVersionAndUptimeAtomically)
     EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
     EXPECT_EQ(standIn.results()[0].finalVersion, "1.2.3");
 }
+
+// ─── MasterRowDeferral stand-in ───────────────────────────────────────────────
+//
+// Mirrors OtaForwarder::startNextPadawan's master-row-deferral block and
+// OtaForwarder::handleLocalFlashResult + insertMasterRow. Mirror code; if
+// production drifts, this stand-in must be updated too. Documented as
+// known limitation; bench QA in .docs/qa/ota-upgrade-pr-set-2.md is the
+// on-target backstop.
+
+namespace
+{
+    class MasterRowDeferralStandIn
+    {
+    public:
+        struct Result
+        {
+            std::string controllerId;
+            AstrOsEspNowProtocol::PadawanStatus status;
+            std::string finalVersion;
+            std::string errorReason;
+        };
+
+        void deployOrder(std::vector<std::string> order)
+        {
+            orderList_ = std::move(order);
+            nextOrderIdx_ = 0;
+            results_.clear();
+            masterRowDeferred_ = false;
+            masterRowOriginalIndex_ = 0;
+            deployActive_ = true;
+        }
+
+        // Advance one position through the order list (mirrors the loop inside
+        // startNextPadawan; padawan rows are simulated as immediately-OK for
+        // test brevity, since we're only testing the master-row mechanics).
+        bool stepOnce()
+        {
+            if (!deployActive_ || nextOrderIdx_ >= orderList_.size())
+            {
+                return false;
+            }
+            if (orderList_[nextOrderIdx_] == "00:00:00:00:00:00")
+            {
+                masterRowDeferred_ = true;
+                masterRowOriginalIndex_ = nextOrderIdx_;
+                nextOrderIdx_++;
+                return true;
+            }
+            // Simulate padawan row completing OK.
+            results_.push_back({orderList_[nextOrderIdx_], AstrOsEspNowProtocol::PadawanStatus::OK, "1.2.3", ""});
+            nextOrderIdx_++;
+            return true;
+        }
+
+        bool padawanLoopExhausted() const
+        {
+            return nextOrderIdx_ >= orderList_.size();
+        }
+
+        bool masterDeferred() const
+        {
+            return masterRowDeferred_;
+        }
+
+        // Mirrors insertMasterRow + handleLocalFlashResult OK path.
+        void completeMasterFlashOK()
+        {
+            insertMasterRow(AstrOsEspNowProtocol::PadawanStatus::PENDING, "", "awaiting_post_reboot_version");
+            deployActive_ = false;
+        }
+
+        // Mirrors insertMasterRow + handleLocalFlashResult FAILED path.
+        void completeMasterFlashFailed(const std::string &reason)
+        {
+            insertMasterRow(AstrOsEspNowProtocol::PadawanStatus::FAILED, "", reason);
+            deployActive_ = false;
+        }
+
+        const std::vector<Result> &results() const
+        {
+            return results_;
+        }
+
+    private:
+        void insertMasterRow(AstrOsEspNowProtocol::PadawanStatus status, const std::string &finalVersion,
+                             const std::string &errorReason)
+        {
+            size_t idx = std::min(masterRowOriginalIndex_, results_.size());
+            results_.insert(results_.begin() + idx, {"00:00:00:00:00:00", status, finalVersion, errorReason});
+        }
+
+        std::vector<std::string> orderList_;
+        size_t nextOrderIdx_ = 0;
+        std::vector<Result> results_;
+        bool masterRowDeferred_ = false;
+        size_t masterRowOriginalIndex_ = 0;
+        bool deployActive_ = false;
+    };
+} // namespace
+
+// ─── Phase C master-row-deferral tests ───────────────────────────────────────
+
+TEST(MasterRowDeferral, MasterFirst_InsertsAtIndex0)
+{
+    MasterRowDeferralStandIn s;
+    s.deployOrder({"00:00:00:00:00:00", "AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"});
+
+    while (s.stepOnce())
+    {
+    }
+    EXPECT_TRUE(s.padawanLoopExhausted());
+    EXPECT_TRUE(s.masterDeferred());
+    EXPECT_EQ(s.results().size(), 2u);
+
+    s.completeMasterFlashOK();
+
+    ASSERT_EQ(s.results().size(), 3u);
+    EXPECT_EQ(s.results()[0].controllerId, "00:00:00:00:00:00");
+    EXPECT_EQ(s.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::PENDING);
+    EXPECT_EQ(s.results()[1].controllerId, "AA:BB:CC:DD:EE:01");
+    EXPECT_EQ(s.results()[2].controllerId, "AA:BB:CC:DD:EE:02");
+}
+
+TEST(MasterRowDeferral, MasterMiddle_InsertsAtOriginalIndex)
+{
+    MasterRowDeferralStandIn s;
+    s.deployOrder({"AA:BB:CC:DD:EE:01", "00:00:00:00:00:00", "AA:BB:CC:DD:EE:02"});
+
+    while (s.stepOnce())
+    {
+    }
+    s.completeMasterFlashOK();
+
+    ASSERT_EQ(s.results().size(), 3u);
+    EXPECT_EQ(s.results()[0].controllerId, "AA:BB:CC:DD:EE:01");
+    EXPECT_EQ(s.results()[1].controllerId, "00:00:00:00:00:00");
+    EXPECT_EQ(s.results()[1].status, AstrOsEspNowProtocol::PadawanStatus::PENDING);
+    EXPECT_EQ(s.results()[2].controllerId, "AA:BB:CC:DD:EE:02");
+}
+
+TEST(MasterRowDeferral, MasterLast_AppendsAtEnd)
+{
+    MasterRowDeferralStandIn s;
+    s.deployOrder({"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02", "00:00:00:00:00:00"});
+
+    while (s.stepOnce())
+    {
+    }
+    s.completeMasterFlashOK();
+
+    ASSERT_EQ(s.results().size(), 3u);
+    EXPECT_EQ(s.results()[0].controllerId, "AA:BB:CC:DD:EE:01");
+    EXPECT_EQ(s.results()[1].controllerId, "AA:BB:CC:DD:EE:02");
+    EXPECT_EQ(s.results()[2].controllerId, "00:00:00:00:00:00");
+    EXPECT_EQ(s.results()[2].status, AstrOsEspNowProtocol::PadawanStatus::PENDING);
+}
+
+TEST(MasterRowDeferral, MasterFlashFailed_InsertsFAILEDAtOriginalIndex)
+{
+    MasterRowDeferralStandIn s;
+    s.deployOrder({"AA:BB:CC:DD:EE:01", "00:00:00:00:00:00"});
+
+    while (s.stepOnce())
+    {
+    }
+    s.completeMasterFlashFailed("ESP_FAIL");
+
+    ASSERT_EQ(s.results().size(), 2u);
+    EXPECT_EQ(s.results()[1].controllerId, "00:00:00:00:00:00");
+    EXPECT_EQ(s.results()[1].status, AstrOsEspNowProtocol::PadawanStatus::FAILED);
+    EXPECT_EQ(s.results()[1].errorReason, "ESP_FAIL");
+}
