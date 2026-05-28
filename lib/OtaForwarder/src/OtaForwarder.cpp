@@ -1540,21 +1540,33 @@ void OtaForwarder::startMasterSelfFlash()
 
     currentControllerId_ = "00:00:00:00:00:00";
 
-    if (xQueueSend(writerQueue, &req, 0) != pdTRUE)
+    // Start the timer FIRST — before posting the request. If the timer fails
+    // to start AFTER the request was posted, OtaWriter would already be
+    // executing the full flash sequence (including the irreversible
+    // esp_ota_set_boot_partition), and our "abort + record FAILED" path would
+    // diverge from reality: operator sees FAILED while the partition pointer
+    // actually got flipped. Starting the timer first means a start-failure
+    // aborts cleanly before any flash work begins.
+    if (!masterSelfFlashTimerStart())
     {
-        ESP_LOGE(TAG, "startMasterSelfFlash: otaWriterQueue full — recording FAILED");
-        insertMasterRow(PadawanStatus::FAILED, "", "writer_queue_full");
+        ESP_LOGE(TAG, "startMasterSelfFlash: masterSelfFlashTimerStart failed — aborting before flash");
+        insertMasterRow(PadawanStatus::FAILED, "", "self_flash_timer_failed");
         emitDeployDoneAndReset();
         return;
     }
 
+    // Move into the new phase BEFORE the xQueueSend so handleLocalFlashResult's
+    // phase guard accepts the result when OtaWriter posts it back.
     phase_ = Phase::MASTER_SELF_FLASHING;
 
-    if (!masterSelfFlashTimerStart())
+    if (xQueueSend(writerQueue, &req, 0) != pdTRUE)
     {
-        ESP_LOGE(TAG, "startMasterSelfFlash: masterSelfFlashTimerStart failed — aborting");
-        insertMasterRow(PadawanStatus::FAILED, "", "self_flash_timer_failed");
+        ESP_LOGE(TAG, "startMasterSelfFlash: otaWriterQueue full — recording FAILED");
+        // Stop the timer we just started; no flash will happen and no result
+        // will arrive, so the 60s safety bound is moot.
+        masterSelfFlashTimerStop();
         phase_ = Phase::IDLE;
+        insertMasterRow(PadawanStatus::FAILED, "", "writer_queue_full");
         emitDeployDoneAndReset();
         return;
     }
