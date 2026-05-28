@@ -2,24 +2,30 @@
 
 If a Phase A bench case (or worse, a production OTA) leaves a board
 unable to boot AND the auto-rollback safety net also fails, this is the
-recovery procedure. Both supported boards expose USB; the procedure is
-identical except for the chip flag.
+recovery procedure. Both supported boards expose USB; the procedure
+uses PlatformIO so chip-specific bootloader offsets are handled
+automatically.
 
 ## Preconditions
 
 - Physical access to the bricked board.
 - USB cable.
-- A workstation with `esptool.py` installed (`pip install esptool` or via
-  PlatformIO's bundled toolchain).
-- A known-good firmware .bin for the board's environment. Easiest source:
-  download the latest RC artifact from the AstrOs.ESP GitHub Releases
-  page (`https://github.com/<owner>/AstrOs.ESP/releases`). Pick the
-  matching environment (`firmware-lolin_d32_pro-*.bin` or
-  `firmware-metro_s3-*.bin`).
+- A workstation set up to build this repo with PlatformIO (the same
+  setup used for normal development — see `README.md`).
+- The git tag of a known-good firmware version. Find it on the AstrOs.ESP
+  GitHub Releases page or in `git tag`.
 
 ## Procedure
 
-### Step 1 — Identify the USB serial port
+### Step 1 — Check out the known-good version
+
+```bash
+cd <path-to-AstrOs.ESP>
+git fetch --tags
+git checkout <vX.Y.Z>      # e.g., v1.0.0 — the version you want to recover to
+```
+
+### Step 2 — Identify the USB serial port
 
 Plug the board in. On Linux:
 
@@ -33,64 +39,65 @@ On macOS:
 ls /dev/cu.usbserial-* /dev/cu.usbmodem-*
 ```
 
-Note the device path (e.g. `/dev/ttyUSB0`).
+Note the device path (e.g. `/dev/ttyUSB0` or `/dev/cu.usbserial-XXXX`).
 
-### Step 2 — Hold the board in download mode
+### Step 3 — Put the board in download mode
 
-- `lolin_d32_pro`: press and hold the `BOOT` (or `IO0`) button while
-  pressing/releasing `RESET`, then release `BOOT`. The board is now in
-  bootloader mode.
-- `metro_s3`: double-tap the `RESET` button — the board enters native USB
-  bootloader mode (it appears as a USB mass-storage device).
+- **`lolin_d32_pro` (classic ESP32)**: hold the `BOOT` (or `IO0`) button
+  while pressing-and-releasing `RESET`, then release `BOOT`. The chip is
+  now in the UART download bootloader and PlatformIO can flash it.
+- **`metro_s3` (Adafruit Metro ESP32-S3)**: the ESP32-S3 has a built-in
+  USB serial/JTAG controller; under normal operation PlatformIO's
+  `esptool` invocation triggers download mode over USB automatically.
+  If automatic entry fails (e.g., the running app is in a tight crash
+  loop on boot), hold the `BOOT` button while pressing-and-releasing
+  `RESET`, then release `BOOT` — same sequence as the classic ESP32.
+  **Do NOT use double-tap-RESET** — that activates the UF2 bootloader,
+  which esptool cannot talk to.
 
-### Step 3 — Erase flash
-
-```bash
-esptool.py --port /dev/ttyUSB0 --chip esp32 erase_flash         # lolin_d32_pro
-esptool.py --port /dev/ttyUSB0 --chip esp32s3 erase_flash       # metro_s3
-```
-
-**Expected output**: `Chip erase completed successfully in <N>s. Hard
-resetting via RTS pin...`
-
-### Step 4 — Write the known-good firmware
+### Step 4 — Flash via PlatformIO
 
 ```bash
-esptool.py --port /dev/ttyUSB0 --chip esp32 write_flash \
-    --flash_mode dio --flash_size detect 0x1000 firmware-lolin_d32_pro-<version>.bin
+~/.platformio/penv/bin/pio run -e lolin_d32_pro -t upload --upload-port /dev/ttyUSB0
+# or
+~/.platformio/penv/bin/pio run -e metro_s3      -t upload --upload-port /dev/ttyUSB0
 ```
 
-For `metro_s3` adjust `--chip` to `esp32s3`. The base address `0x1000` is
-where the second-stage bootloader sits — this is the standard PlatformIO
-partition layout for both boards.
+PlatformIO will build the firmware for the target version, invoke
+`esptool` with the correct chip flag (`esp32` or `esp32s3`) and the
+correct bootloader/partition/app offsets, and reset the board.
 
-**Expected output**: `Hash of data verified. Leaving... Hard resetting
-via RTS pin...`
+**Expected output** ends with:
+
+```
+========================= [SUCCESS] Took N seconds =========================
+```
 
 ### Step 5 — Confirm recovery
 
 Open a serial monitor:
 
 ```bash
-pio device monitor -p /dev/ttyUSB0 -b 115200
+~/.platformio/penv/bin/pio device monitor -e <env> -p /dev/ttyUSB0
 ```
 
-**Expected first lines**:
+**Expected first lines** after the board boots:
 
 ```
 I (nnn) AstrOs.ESP: AstrOs.ESP version <V> (sha: <SHA>)
 ```
 
-If you see the version banner, the board is recovered. Re-pair it with
-the master if applicable.
+The version banner confirms the board is recovered. Re-pair it with the
+master if applicable.
 
 ## Common failures
 
-- **`esptool.py: command not found`** — install esptool: `pip install
-  esptool`.
+- **`pio: command not found`** — install PlatformIO Core (see
+  `README.md`) or use `~/.platformio/penv/bin/pio` directly.
 - **`A fatal error occurred: Failed to connect to ESP32: Timed out
   waiting for packet header`** — the board is not in download mode.
-  Repeat Step 2 carefully.
-- **Erase succeeds but write fails partway** — the .bin may be for the
-  wrong environment (variant mismatch between `lolin_d32_pro` and
-  `metro_s3`). Double-check the .bin filename against the board.
+  Repeat Step 3 carefully. For `metro_s3`, prefer the BOOT+RESET
+  sequence over relying on automatic entry.
+- **Upload starts but partial-writes before failing** — check the cable
+  and the USB-port quality. Some USB-C extension cables degrade the
+  signal enough to break esptool's framing.
