@@ -240,6 +240,33 @@ namespace
                 {currentControllerId_, AstrOsEspNowProtocol::PadawanStatus::FAILED, "", "version_unconfirmed"});
             phase_ = StandInPhase::IDLE;
         }
+
+        // Mirrors the production sequence in handleFlashResult OK path:
+        // clears the cached peer version before arming AWAITING_VERSION_CONFIRMED
+        // so a pre-flash POLL_ACK can't false-match on the first tick.
+        void enterAwaitingVersionConfirmed()
+        {
+            peerVersions_.erase(currentControllerId_);
+            phase_ = StandInPhase::AWAITING_VERSION_CONFIRMED;
+        }
+
+        // Convenience setters used by test bodies.
+        void setMockedPeerVersion(const std::string &mac, const std::string &version)
+        {
+            peerVersions_[mac] = version;
+        }
+        void setExpectedNewVersion(const std::string &version)
+        {
+            expectedNewVersion_ = version;
+        }
+        StandInPhase phase() const
+        {
+            return phase_;
+        }
+        const std::vector<StandInResult> &results() const
+        {
+            return results_;
+        }
     };
 } // namespace
 
@@ -305,4 +332,33 @@ TEST(VersionConfirmStandIn, ParseFailure_EmptyExpectedIsNoOpUntilTimeout)
     ASSERT_EQ(sm.results_.size(), 1u);
     EXPECT_EQ(sm.results_[0].status, AstrOsEspNowProtocol::PadawanStatus::FAILED);
     EXPECT_EQ(sm.results_[0].errorOrEmpty, "version_unconfirmed");
+}
+
+TEST(VersionConfirmStandIn, SameVersionDeploy_DoesNotFalseMatchOnPreFlashCachedVersion)
+{
+    // Simulate same-version re-deploy: cache pre-populated with v1.2.3,
+    // expected new version also v1.2.3, padawan hasn't yet sent a fresh
+    // POLL_ACK after the arm.
+    static const char *kMac = "AA:BB:CC:DD:EE:04";
+
+    VersionConfirmStandIn standIn;
+    standIn.currentControllerId_ = kMac;
+    standIn.setMockedPeerVersion(kMac, "1.2.3");
+    standIn.setExpectedNewVersion("1.2.3");
+    standIn.enterAwaitingVersionConfirmed(); // production now calls clearPeerVersion here
+
+    // First tick should NOT match — cache should have been cleared.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.phase(), StandInPhase::AWAITING_VERSION_CONFIRMED);
+    EXPECT_EQ(standIn.results().size(), 0u);
+
+    // Now simulate a post-arm POLL_ACK landing with the same version (genuine
+    // post-reboot heartbeat).
+    standIn.setMockedPeerVersion(kMac, "1.2.3");
+
+    // Next tick should match and record OK.
+    standIn.checkPeerVersion();
+    EXPECT_EQ(standIn.results().size(), 1u);
+    EXPECT_EQ(standIn.results()[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
+    EXPECT_EQ(standIn.results()[0].finalVersion, "1.2.3");
 }

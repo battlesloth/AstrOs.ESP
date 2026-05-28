@@ -333,6 +333,17 @@ std::string AstrOsEspNow::getPeerVersion(const std::string &macString) const
     return out;
 }
 
+void AstrOsEspNow::clearPeerVersion(const std::string &macString)
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "clearPeerVersion: failed to acquire peersMutex within 1s");
+        return;
+    }
+    this->peerVersions_.erase(macString);
+    xSemaphoreGive(this->peersMutex);
+}
+
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)

@@ -120,6 +120,11 @@ public:
     // peersMutex internally). MAC is the canonical "XX:XX:XX:XX:XX:XX"
     // uppercase string used elsewhere in AstrOsEspNow.
     std::string getPeerVersion(const std::string &macString) const;
+    // Drops any cached version string for the given peer. Called by OtaForwarder
+    // when arming AWAITING_VERSION_CONFIRMED so the pre-flash cached version
+    // can't false-match against the expected new version before the rebooted
+    // padawan has actually sent a POLL_ACK. Thread-safe (acquires peersMutex).
+    void clearPeerVersion(const std::string &macString);
     void sendRegistrationRequest();
     bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();

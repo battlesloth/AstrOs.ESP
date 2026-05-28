@@ -1301,6 +1301,23 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
 
     if (status == OtaFlashStatus::OK)
     {
+        // Clear any pre-flash cached version for this peer. Without this,
+        // a same-version re-deploy (or a retry whose cache was already populated)
+        // would match immediately on the first version-confirm tick — recording
+        // SUCCESS before the padawan has actually rebooted and sent a fresh
+        // POLL_ACK. After clearing, getPeerVersion returns empty until the next
+        // handlePollAck repopulates it from a post-arm POLL_ACK.
+        //
+        // NOTE: residual narrow race in same-version deploys — if master polls
+        // the padawan during its 200ms pre-reboot vTaskDelay window, a
+        // pre-reboot POLL_ACK with the (same) old version can still land and
+        // match. Fully closing this requires an uptime / generation field in
+        // POLL_ACK (deferred to Phase B/C). For now, the auto-rollback safety
+        // net catches the practical failure mode: a same-version flash that
+        // silently corrupted the image will fail to mark_app_valid post-reboot,
+        // and the bootloader will revert.
+        AstrOs_EspNow.clearPeerVersion(currentControllerId_);
+
         // Padawan reported flash success and is about to reboot. Arm the
         // version-confirm safety timer FIRST — if it fails there is no
         // timeout net and the forwarder would hang, so abort immediately
