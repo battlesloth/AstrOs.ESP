@@ -127,7 +127,7 @@ Three changes:
      - Emit `FW_PROGRESS REBOOTING (firmwareTotalSize_, firmwareTotalSize_, "")`.
      - Start `versionConfirmTimer` (15 s).
      - Enter `AWAITING_VERSION_CONFIRMED` phase.
-     - Restart `tickTimer` at 1 s cadence.
+     - Restart `tickTimer` at 50 ms cadence.
    - Each tick: call `AstrOs_EspNow.getPeerVersion(currentPadawanMac_)`.
      - Match against `expectedNewVersion_`: emit `FW_PROGRESS VERSION_CONFIRMED
        (..., expectedNewVersion_)`, push `{controllerId, PadawanStatus::OK,
