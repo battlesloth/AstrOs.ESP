@@ -108,7 +108,7 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         args.callback = [](void *self) { static_cast<OtaForwarder *>(self)->handleVersionConfirmTimeout(); };
         args.arg = this;
         args.name = "otaVersionConfirm";
-        esp_timer_create(&args, &versionConfirmTimer_);
+        ESP_ERROR_CHECK(esp_timer_create(&args, &versionConfirmTimer_));
     }
 }
 
@@ -1245,7 +1245,14 @@ void OtaForwarder::versionConfirmTimerStart()
         return;
     }
     esp_timer_stop(versionConfirmTimer_);
-    esp_timer_start_once(versionConfirmTimer_, 15ULL * 1000ULL * 1000ULL);
+    esp_err_t err = esp_timer_start_once(versionConfirmTimer_, 15ULL * 1000ULL * 1000ULL);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG,
+                 "versionConfirmTimerStart: esp_timer_start_once failed: %s — "
+                 "forwarder may hang in AWAITING_VERSION_CONFIRMED",
+                 esp_err_to_name(err));
+    }
 }
 
 void OtaForwarder::versionConfirmTimerStop()
