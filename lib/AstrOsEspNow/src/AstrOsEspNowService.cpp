@@ -23,6 +23,7 @@
 #include <esp_crc.h>
 #include <esp_netif.h>
 #include <esp_now.h>
+#include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_wifi_types.h>
@@ -949,10 +950,36 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
-    if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+    esp_err_t sendErr = esp_now_send(destMac, data.data, data.size);
+    if (sendErr != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending poll ack");
         result = false;
+    }
+    else
+    {
+        // First successful POLL_ACK send post-reboot proves: NVS read worked
+        // (fingerprint), ESP-NOW peer table is valid, version + variant
+        // strings are reachable, and the send queue accepted the frame. That's
+        // enough evidence to cancel the auto-rollback for a freshly-flashed
+        // image. The mark_valid call is a no-op when the running image isn't
+        // in PENDING_VERIFY, so no extra guard is needed.
+        bool expected = false;
+        if (firstPollAckSent_.compare_exchange_strong(expected, true))
+        {
+            esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+            if (markErr == ESP_OK)
+            {
+                ESP_LOGI(TAG, "OTA rollback cancelled — running image is now valid");
+            }
+            else
+            {
+                ESP_LOGW(TAG,
+                         "esp_ota_mark_app_valid_cancel_rollback returned %s "
+                         "(safe to ignore if image was not in PENDING_VERIFY)",
+                         esp_err_to_name(markErr));
+            }
+        }
     }
 
     free(data.data);

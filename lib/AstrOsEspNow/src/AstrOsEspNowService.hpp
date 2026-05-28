@@ -5,6 +5,7 @@
 #include "AstrOsMessaging.hpp"
 #include <AstrOsEspNowPeers.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
+#include <atomic>
 #include <esp_err.h>
 
 // needed for QueueHandle_t and SemaphoreHandle_t, must be in this order
@@ -51,6 +52,13 @@ private:
 
     QueueHandle_t otaForwarderQueue_ = nullptr;
     QueueHandle_t otaWriterQueue_ = nullptr;
+
+    // Rollback safety net: on the first successful POLL_ACK send post-reboot,
+    // call esp_ota_mark_app_valid_cancel_rollback so a newly-flashed image
+    // only commits itself after proving it can talk back. If the new image
+    // crashes before reaching this point, the bootloader auto-reverts on
+    // next boot.
+    std::atomic<bool> firstPollAckSent_{false};
 
     // Routes an OTA ACK/NAK packet (master-side receive) into
     // otaForwarderQueue_. Parses via M1's parseOta* free functions.
