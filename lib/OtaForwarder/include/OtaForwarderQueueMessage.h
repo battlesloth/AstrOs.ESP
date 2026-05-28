@@ -132,8 +132,9 @@ extern "C"
                 uint8_t errorReasonLen; // 0..63
                 char errorReason[63];   // inline — no malloc needed
             } local_flash_result;
-            // OTA_FWD_TICK, OTA_FWD_FLASH_RESULT_TIMEOUT, and
-            // OTA_FWD_VERSION_CONFIRM_TIMEOUT have no union arm.
+            // OTA_FWD_TICK, OTA_FWD_FLASH_RESULT_TIMEOUT,
+            // OTA_FWD_VERSION_CONFIRM_TIMEOUT, and
+            // OTA_FWD_MASTER_SELF_FLASH_TIMEOUT have no union arm.
         };
     } queue_ota_forwarder_msg_t;
 
