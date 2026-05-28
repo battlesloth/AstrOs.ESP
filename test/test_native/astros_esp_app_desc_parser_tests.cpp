@@ -1,4 +1,5 @@
 #include "AstrOsEspAppDescParser.hpp"
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -21,7 +22,8 @@ namespace
         buf[34] = 0xCD;
         buf[35] = 0xAB;
         // version[32] starts at offset 32 + 4 (magic) + 4 (secure_ver) + 8 (reserved) = 48
-        std::memcpy(buf.data() + 48, version, std::strlen(version));
+        const std::size_t versionLen = std::min(std::strlen(version), std::size_t{32});
+        std::memcpy(buf.data() + 48, version, versionLen);
         return buf;
     }
 } // namespace
@@ -68,4 +70,12 @@ TEST(EspAppDescParser, HandlesEmptyVersionString)
     auto result = AstrOsEspAppDescParser::parse(buf.data(), buf.size());
     EXPECT_TRUE(result.ok);
     EXPECT_EQ(result.version, "");
+}
+
+TEST(EspAppDescParser, HandlesNullPointer)
+{
+    auto result = AstrOsEspAppDescParser::parse(nullptr, 80);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.version.empty());
+    EXPECT_NE(result.error.find("truncated"), std::string::npos);
 }
