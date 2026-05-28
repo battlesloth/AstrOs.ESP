@@ -1308,14 +1308,19 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
         // POLL_ACK. After clearing, getPeerVersion returns empty until the next
         // handlePollAck repopulates it from a post-arm POLL_ACK.
         //
-        // NOTE: residual narrow race in same-version deploys — if master polls
-        // the padawan during its 200ms pre-reboot vTaskDelay window, a
-        // pre-reboot POLL_ACK with the (same) old version can still land and
-        // match. Fully closing this requires an uptime / generation field in
-        // POLL_ACK (deferred to Phase B/C). For now, the auto-rollback safety
-        // net catches the practical failure mode: a same-version flash that
-        // silently corrupted the image will fail to mark_app_valid post-reboot,
-        // and the bootloader will revert.
+        // The version-confirm path now also uses the POLL_ACK uptime
+        // discriminator, so a same-version match is only accepted once the
+        // observed heartbeat is attributable to the post-arm boot rather than
+        // stale pre-reboot state. That closes the main race where a poll lands
+        // during the padawan's pre-reboot delay window and returns the old
+        // version string again.
+        //
+        // Remaining limitation: legacy or otherwise uptime-unknown POLL_ACKs
+        // cannot be gated this way, so a narrow same-version ambiguity remains
+        // for those peers. The auto-rollback safety net still covers the main
+        // practical failure mode: a same-version flash that silently corrupted
+        // the image will fail to mark_app_valid post-reboot, and the bootloader
+        // will revert.
         AstrOs_EspNow.clearPeerVersion(currentControllerId_);
         // Capture the arm timestamp BEFORE entering the phase so
         // checkPeerVersionForCurrentPadawan can compute timeSinceArm correctly
