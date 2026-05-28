@@ -511,9 +511,12 @@ static void pollingTimerCallback(void *arg)
     // Padawan-side OTA gate: writer is active while a transfer is in flight.
     // Pause polling/discovery ESP-NOW traffic to keep SPI flash contention
     // down (esp_ota_write erase+program latency degrades when other tasks hit
-    // the flash bus concurrently). OtaWriter::isActive() is safe to call on
-    // master too — AstrOs_OtaWriter is never Init'd on master, so active_
-    // stays false.
+    // the flash bus concurrently).
+    //
+    // Safe to call on master too: OtaWriter::Init now runs on both roles
+    // (Phase C added master self-flash via OTA_WR_LOCAL_FLASH_REQ loopback),
+    // but active_ stays false until OtaForwarder::startMasterSelfFlash posts
+    // a request — so this gate is inert during normal master polling.
     const bool otaActive =
         AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isWireBusy() || AstrOs_OtaWriter.isActive();
 
