@@ -35,7 +35,11 @@ public:
               QueueHandle_t otaForwarderQueue);
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
-    void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
+    // Returns true if the serial-queue post succeeded; false if the queue was
+    // full and the message was dropped. Most callers discard the return (the
+    // self-POLL_ACK message is best-effort). main.cpp's master polling code
+    // checks the return to gate firstSelfPollAckSent_ for OTA rollback.
+    bool sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
                         std::string variant, bool isAck);
     void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name,
                                  std::string payload);
