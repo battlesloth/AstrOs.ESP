@@ -89,6 +89,7 @@ TEST(LastFirmwarePathHolder, ClearReturnsEmpty)
 }
 
 #include "../../lib/OtaForwarder/include/OtaForwarderQueueMessage.h"
+#include "AstrOsEspNowProtocol.hpp"
 
 #include <cstring>
 
@@ -187,16 +188,10 @@ namespace
         IDLE = 0,
     };
 
-    enum class StandInStatus : uint8_t
-    {
-        OK,
-        FAILED,
-    };
-
     struct StandInResult
     {
         std::string controllerId;
-        StandInStatus status;
+        AstrOsEspNowProtocol::PadawanStatus status;
         std::string finalVersion;
         std::string errorOrEmpty;
     };
@@ -231,7 +226,8 @@ namespace
 
             // Version confirmed.
             phase_ = StandInPhase::IDLE;
-            results_.push_back({currentControllerId_, StandInStatus::OK, expectedNewVersion_, ""});
+            results_.push_back(
+                {currentControllerId_, AstrOsEspNowProtocol::PadawanStatus::OK, expectedNewVersion_, ""});
         }
 
         // Mirrors OtaForwarder::handleVersionConfirmTimeout().
@@ -239,7 +235,8 @@ namespace
         {
             if (phase_ != StandInPhase::AWAITING_VERSION_CONFIRMED)
                 return; // stale fire
-            results_.push_back({currentControllerId_, StandInStatus::FAILED, "", "version_unconfirmed"});
+            results_.push_back(
+                {currentControllerId_, AstrOsEspNowProtocol::PadawanStatus::FAILED, "", "version_unconfirmed"});
             phase_ = StandInPhase::IDLE;
         }
     };
@@ -258,7 +255,7 @@ TEST(VersionConfirmStandIn, HappyPath_MatchAdvancesToOK)
 
     EXPECT_EQ(sm.phase_, StandInPhase::IDLE);
     ASSERT_EQ(sm.results_.size(), 1u);
-    EXPECT_EQ(sm.results_[0].status, StandInStatus::OK);
+    EXPECT_EQ(sm.results_[0].status, AstrOsEspNowProtocol::PadawanStatus::OK);
     EXPECT_EQ(sm.results_[0].finalVersion, "1.2.3");
     EXPECT_EQ(sm.results_[0].errorOrEmpty, "");
 }
@@ -282,7 +279,7 @@ TEST(VersionConfirmStandIn, Timeout_NoMatchRecordsFailed)
     sm.fireVersionConfirmTimeout();
 
     ASSERT_EQ(sm.results_.size(), 1u);
-    EXPECT_EQ(sm.results_[0].status, StandInStatus::FAILED);
+    EXPECT_EQ(sm.results_[0].status, AstrOsEspNowProtocol::PadawanStatus::FAILED);
     EXPECT_EQ(sm.results_[0].errorOrEmpty, "version_unconfirmed");
     EXPECT_EQ(sm.results_[0].finalVersion, "");
 }
@@ -305,6 +302,6 @@ TEST(VersionConfirmStandIn, ParseFailure_EmptyExpectedIsNoOpUntilTimeout)
     sm.fireVersionConfirmTimeout();
 
     ASSERT_EQ(sm.results_.size(), 1u);
-    EXPECT_EQ(sm.results_[0].status, StandInStatus::FAILED);
+    EXPECT_EQ(sm.results_[0].status, AstrOsEspNowProtocol::PadawanStatus::FAILED);
     EXPECT_EQ(sm.results_[0].errorOrEmpty, "version_unconfirmed");
 }
