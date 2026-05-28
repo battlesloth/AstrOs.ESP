@@ -15,6 +15,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -158,4 +160,151 @@ TEST(OtaForwarderMsg, FreeIsIdempotent)
 
     freeOtaForwarderMsg(&m); // first free
     freeOtaForwarderMsg(&m); // second free — no-op because pointers nulled
+}
+
+// ─── AWAITING_VERSION_CONFIRMED stand-in ─────────────────────────────────────
+//
+// OtaForwarder is MIXED (lib_ignore'd in [env:test]) so the Phase A state
+// machine cannot be driven directly. The stand-in below mirrors the two
+// production methods verbatim:
+//
+//   checkPeerVersionForCurrentPadawan()   (OtaForwarder.cpp:1348)
+//   handleVersionConfirmTimeout()         (OtaForwarder.cpp:1335)
+//
+// A settable peerVersions_ map stands in for AstrOs_EspNow.getPeerVersion().
+// The result vector mimics OtaForwarder::results_ (PadawanResult shape).
+// Phase is an enum class that mirrors the production Phase values exactly.
+// Timer expiry is simulated by calling handleVersionConfirmTimeout() directly.
+//
+// The stand-in is intentionally minimal: only what is needed to exercise the
+// three Phase A behaviours (match, timeout, parse-failure no-op).
+
+namespace
+{
+    enum class StandInPhase : uint8_t
+    {
+        AWAITING_VERSION_CONFIRMED = 5,
+        IDLE = 0,
+    };
+
+    enum class StandInStatus : uint8_t
+    {
+        OK,
+        FAILED,
+    };
+
+    struct StandInResult
+    {
+        std::string controllerId;
+        StandInStatus status;
+        std::string finalVersion;
+        std::string errorOrEmpty;
+    };
+
+    // Mirror of OtaForwarder's AWAITING_VERSION_CONFIRMED logic.
+    // No FreeRTOS / ESP-IDF dependencies; suitable for [env:test].
+    class VersionConfirmStandIn
+    {
+    public:
+        // Settable test controls (mirrors private fields that production code
+        // populates from the staged .bin header and peer heartbeats).
+        std::string expectedNewVersion_;
+        std::string currentControllerId_;
+        StandInPhase phase_ = StandInPhase::AWAITING_VERSION_CONFIRMED;
+        std::vector<StandInResult> results_;
+
+        // Fake AstrOs_EspNow.getPeerVersion() backing store.
+        std::unordered_map<std::string, std::string> peerVersions_;
+
+        // Mirrors OtaForwarder::checkPeerVersionForCurrentPadawan().
+        void checkPeerVersion()
+        {
+            if (phase_ != StandInPhase::AWAITING_VERSION_CONFIRMED)
+                return;
+            if (expectedNewVersion_.empty())
+                return; // no comparison possible; fall through to timeout
+
+            auto it = peerVersions_.find(currentControllerId_);
+            std::string reported = (it != peerVersions_.end()) ? it->second : "";
+            if (reported.empty() || reported != expectedNewVersion_)
+                return; // still on old version; keep waiting
+
+            // Version confirmed.
+            phase_ = StandInPhase::IDLE;
+            results_.push_back({currentControllerId_, StandInStatus::OK, expectedNewVersion_, ""});
+        }
+
+        // Mirrors OtaForwarder::handleVersionConfirmTimeout().
+        void fireVersionConfirmTimeout()
+        {
+            if (phase_ != StandInPhase::AWAITING_VERSION_CONFIRMED)
+                return; // stale fire
+            results_.push_back({currentControllerId_, StandInStatus::FAILED, "", "version_unconfirmed"});
+            phase_ = StandInPhase::IDLE;
+        }
+    };
+} // namespace
+
+// ─── Phase A state-machine tests ─────────────────────────────────────────────
+
+TEST(VersionConfirmStandIn, HappyPath_MatchAdvancesToOK)
+{
+    VersionConfirmStandIn sm;
+    sm.currentControllerId_ = "AA:BB:CC:DD:EE:01";
+    sm.expectedNewVersion_ = "1.2.3";
+    sm.peerVersions_["AA:BB:CC:DD:EE:01"] = "1.2.3";
+
+    sm.checkPeerVersion(); // version matches on first tick
+
+    EXPECT_EQ(sm.phase_, StandInPhase::IDLE);
+    ASSERT_EQ(sm.results_.size(), 1u);
+    EXPECT_EQ(sm.results_[0].status, StandInStatus::OK);
+    EXPECT_EQ(sm.results_[0].finalVersion, "1.2.3");
+    EXPECT_EQ(sm.results_[0].errorOrEmpty, "");
+}
+
+TEST(VersionConfirmStandIn, Timeout_NoMatchRecordsFailed)
+{
+    VersionConfirmStandIn sm;
+    sm.currentControllerId_ = "AA:BB:CC:DD:EE:02";
+    sm.expectedNewVersion_ = "1.2.3";
+    sm.peerVersions_["AA:BB:CC:DD:EE:02"] = "1.1.0"; // stuck on old version
+
+    // Simulate 15 ticks with no match.
+    for (int i = 0; i < 15; ++i)
+        sm.checkPeerVersion();
+
+    // Still waiting.
+    EXPECT_EQ(sm.phase_, StandInPhase::AWAITING_VERSION_CONFIRMED);
+    EXPECT_TRUE(sm.results_.empty());
+
+    // 15 s timer fires.
+    sm.fireVersionConfirmTimeout();
+
+    ASSERT_EQ(sm.results_.size(), 1u);
+    EXPECT_EQ(sm.results_[0].status, StandInStatus::FAILED);
+    EXPECT_EQ(sm.results_[0].errorOrEmpty, "version_unconfirmed");
+    EXPECT_EQ(sm.results_[0].finalVersion, "");
+}
+
+TEST(VersionConfirmStandIn, ParseFailure_EmptyExpectedIsNoOpUntilTimeout)
+{
+    VersionConfirmStandIn sm;
+    sm.currentControllerId_ = "AA:BB:CC:DD:EE:03";
+    sm.expectedNewVersion_ = "";                     // simulates failed esp_app_desc parse at deploy start
+    sm.peerVersions_["AA:BB:CC:DD:EE:03"] = "1.2.3"; // peer has a version, but no comparison is possible
+
+    // Tick handler must be a no-op — no match attempted, no result recorded.
+    for (int i = 0; i < 15; ++i)
+        sm.checkPeerVersion();
+
+    EXPECT_EQ(sm.phase_, StandInPhase::AWAITING_VERSION_CONFIRMED);
+    EXPECT_TRUE(sm.results_.empty());
+
+    // Timer fires and records FAILED (same path as timeout).
+    sm.fireVersionConfirmTimeout();
+
+    ASSERT_EQ(sm.results_.size(), 1u);
+    EXPECT_EQ(sm.results_[0].status, StandInStatus::FAILED);
+    EXPECT_EQ(sm.results_[0].errorOrEmpty, "version_unconfirmed");
 }
