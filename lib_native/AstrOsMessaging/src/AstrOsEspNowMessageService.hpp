@@ -55,7 +55,9 @@ namespace AstrOsENC
 } // namespace AstrOsENC
 
 // Wire-stable: NEVER renumber existing variants. Always append new variants at the end with the next sequential value.
-enum class AstrOsPacketType
+// Underlying type is uint8_t — the wire format encodes this enum as a single byte (see generatePackets and
+// parsePacket).
+enum class AstrOsPacketType : uint8_t
 {
     UNKNOWN = 0,
     BASIC = 1,
