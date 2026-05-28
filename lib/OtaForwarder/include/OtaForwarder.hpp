@@ -168,7 +168,7 @@ private:
     std::atomic<bool> active_{false};
 
     // wireBusy_ — "the wire is currently busy with a transfer". This is what
-    // isActive() exposes to the polling gate in main.cpp. Goes false when
+    // isWireBusy() exposes to the polling gate in main.cpp. Goes false when
     // entering AWAITING_VERSION_CONFIRMED (master must poll to observe the
     // rebooted padawan's POLL_ACK) and true again when the next padawan enters
     // AWAITING_BEGIN_ACK. Distinct from active_: we can be active without
