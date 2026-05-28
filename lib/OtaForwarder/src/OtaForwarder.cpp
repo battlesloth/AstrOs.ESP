@@ -37,6 +37,12 @@ OtaForwarder::~OtaForwarder()
             *t = nullptr;
         }
     }
+    if (versionConfirmTimer_ != nullptr)
+    {
+        esp_timer_stop(versionConfirmTimer_);
+        esp_timer_delete(versionConfirmTimer_);
+        versionConfirmTimer_ = nullptr;
+    }
 }
 
 void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
@@ -96,6 +102,14 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&flashResultArgs, &flashResultTimer_));
+
+    {
+        esp_timer_create_args_t args = {};
+        args.callback = [](void *self) { static_cast<OtaForwarder *>(self)->handleVersionConfirmTimeout(); };
+        args.arg = this;
+        args.name = "otaVersionConfirm";
+        esp_timer_create(&args, &versionConfirmTimer_);
+    }
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -1115,6 +1129,9 @@ void OtaForwarder::handleStatsFire()
     case Phase::AWAITING_FLASH_RESULT:
         phaseStr = "AWAITING_FLASH_RESULT";
         break;
+    case Phase::AWAITING_VERSION_CONFIRMED:
+        phaseStr = "AWAITING_VERSION_CONFIRMED";
+        break;
     case Phase::BETWEEN_PADAWANS:
         phaseStr = "BETWEEN_PADAWANS";
         break;
@@ -1219,6 +1236,35 @@ void OtaForwarder::handleFlashResultTimeout()
     ESP_LOGW(TAG, "Flash-result timeout for %s; recording FAILED", currentControllerId_.c_str());
     results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "flash_result_timeout"});
     finishCurrentPadawanAndAdvance();
+}
+
+void OtaForwarder::versionConfirmTimerStart()
+{
+    if (versionConfirmTimer_ == nullptr)
+    {
+        return;
+    }
+    esp_timer_stop(versionConfirmTimer_);
+    esp_timer_start_once(versionConfirmTimer_, 15ULL * 1000ULL * 1000ULL);
+}
+
+void OtaForwarder::versionConfirmTimerStop()
+{
+    if (versionConfirmTimer_ == nullptr)
+    {
+        return;
+    }
+    esp_timer_stop(versionConfirmTimer_);
+}
+
+void OtaForwarder::handleVersionConfirmTimeout()
+{
+    // Stub; populated in Task 8.
+}
+
+void OtaForwarder::checkPeerVersionForCurrentPadawan()
+{
+    // Stub; populated in Task 7.
 }
 
 bool OtaForwarder::resolveControllerMac(const std::string &controllerId, uint8_t outMac[6]) const

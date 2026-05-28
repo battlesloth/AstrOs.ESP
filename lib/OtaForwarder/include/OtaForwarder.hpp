@@ -56,8 +56,9 @@ private:
         AWAITING_BEGIN_ACK = 1, // emitted OTA_BEGIN, waiting on padawan
         STREAMING = 2,
         AWAITING_END_ACK = 3,
-        AWAITING_FLASH_RESULT = 4, // END_ACK OK received; padawan verifying + committing
-        BETWEEN_PADAWANS = 5,      // result recorded; pulling next from order list
+        AWAITING_FLASH_RESULT = 4,      // END_ACK OK received; padawan verifying + committing
+        AWAITING_VERSION_CONFIRMED = 5, // FLASH_RESULT OK received; waiting on heartbeat-version match
+        BETWEEN_PADAWANS = 6,           // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
@@ -141,6 +142,12 @@ private:
     void handleFlashResult(queue_ota_forwarder_msg_t &msg);
     void handleFlashResultTimeout();
 
+    // Phase A — AWAITING_VERSION_CONFIRMED machinery.
+    void versionConfirmTimerStart();
+    void versionConfirmTimerStop();
+    void handleVersionConfirmTimeout();
+    void checkPeerVersionForCurrentPadawan(); // called from the 1 s tick
+
     // Resolves a controller-id (from FW_DEPLOY_BEGIN's order list) to a
     // MAC. Linear-scans AstrOs_EspNow.getPeers() — small list, cheap.
     // Returns true if found; fills outMac. Returns false if no peer
@@ -167,6 +174,16 @@ private:
     esp_timer_handle_t endAckTimer_ = nullptr;
     esp_timer_handle_t statsTimer_ = nullptr;
     esp_timer_handle_t flashResultTimer_ = nullptr;
+
+    // Phase A: parsed once per padawan from the staged .bin's esp_app_desc_t
+    // when entering AWAITING_BEGIN_ACK; consumed during AWAITING_VERSION_CONFIRMED
+    // to decide when the heartbeat-reported version matches.
+    std::string expectedNewVersion_;
+
+    // 15 s safety bound on AWAITING_VERSION_CONFIRMED. Fires
+    // versionConfirmTimerCallback if the padawan never reports the expected
+    // version (silent brick or wrong-image flash).
+    esp_timer_handle_t versionConfirmTimer_ = nullptr;
 
     // Cadence: 50 ms tick, 5 s BEGIN_ACK timeout, 5 s END_ACK timeout,
     // 2 s stats emission, 10 s flash-result safety bound. BEGIN_ACK was 2 s
