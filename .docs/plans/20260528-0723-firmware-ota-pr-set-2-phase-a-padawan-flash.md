@@ -1059,7 +1059,7 @@ EOF
 
 When the 15 s `versionConfirmTimer_` fires without a successful match, record FAILED for the current padawan and advance. Mirror the existing `handleFlashResultTimeout` pattern.
 
-- [ ] **Step 1: Implement handleVersionConfirmTimeout**
+- [x] **Step 1: Implement handleVersionConfirmTimeout**
 
 Replace the stub introduced in Task 5:
 
@@ -1078,17 +1078,17 @@ void OtaForwarder::handleVersionConfirmTimeout()
 }
 ```
 
-- [ ] **Step 2: Ensure abortCurrentPadawan and finishCurrentPadawanAndAdvance stop the timer**
+- [x] **Step 2: Ensure abortCurrentPadawan and finishCurrentPadawanAndAdvance stop the timer**
 
 The version-confirm timer must not survive past current-padawan completion or it would mis-fire against the next padawan. Locate `abortCurrentPadawan` and `finishCurrentPadawanAndAdvance` in `OtaForwarder.cpp` and add `versionConfirmTimerStop();` near the other `*TimerStop()` calls (alongside `flashResultTimerStop()` and `statsTimerStop()`).
 
-- [ ] **Step 3: Build for both boards**
+- [x] **Step 3: Build for both boards**
 
 Run: `pio run -e lolin_d32_pro && pio run -e metro_s3`
 
 Expected: both builds succeed.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add lib/OtaForwarder/src/OtaForwarder.cpp

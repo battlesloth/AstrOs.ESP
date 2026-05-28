@@ -784,6 +784,7 @@ void OtaForwarder::finishCurrentPadawanAndAdvance()
     tickTimerStop();
     statsTimerStop();
     flashResultTimerStop();
+    versionConfirmTimerStop();
 
     bulk_.reset();
 
@@ -1333,7 +1334,15 @@ void OtaForwarder::versionConfirmTimerStop()
 
 void OtaForwarder::handleVersionConfirmTimeout()
 {
-    // Stub; populated in Task 8.
+    if (phase_ != Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        // Stale fire after we already completed via tick-driven match.
+        return;
+    }
+    ESP_LOGW(TAG, "Version-confirm timeout for %s; recording FAILED(version_unconfirmed)",
+             currentControllerId_.c_str());
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "version_unconfirmed"});
+    finishCurrentPadawanAndAdvance();
 }
 
 void OtaForwarder::checkPeerVersionForCurrentPadawan()
