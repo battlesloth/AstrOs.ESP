@@ -491,7 +491,7 @@ EOF
 
 `espnow_peer_t` is byte-for-byte NVS-persisted; we cannot add fields to it. Use a parallel runtime-only map keyed by MAC, populated in `handlePollAck`, read by the new `getPeerVersion` accessor. Guarded by the existing `peersMutex`.
 
-- [ ] **Step 1: Add the map and accessor declarations**
+- [x] **Step 1: Add the map and accessor declarations**
 
 In `lib/AstrOsEspNow/include/AstrOsEspNowService.hpp`:
 
@@ -517,7 +517,7 @@ In the private section (where `peersMutex` and other peer-related fields live), 
     std::unordered_map<std::string, std::string> peerVersions_;
 ```
 
-- [ ] **Step 2: Implement getPeerVersion**
+- [x] **Step 2: Implement getPeerVersion**
 
 In `lib/AstrOsEspNow/src/AstrOsEspNowService.cpp`, add the method (anywhere after the other `AstrOsEspNow::` member functions; near `getPeers` is a natural home):
 
@@ -540,7 +540,7 @@ std::string AstrOsEspNow::getPeerVersion(const std::string &macString) const
 }
 ```
 
-- [ ] **Step 3: Populate peerVersions_ in handlePollAck**
+- [x] **Step 3: Populate peerVersions_ in handlePollAck**
 
 Locate `AstrOsEspNow::handlePollAck` in the same file (around line 964 currently). After `markPollAckReceived` succeeds but before releasing the mutex, store the version. Find this block:
 
@@ -575,19 +575,19 @@ Replace with:
 
 `peerVersion` and `padawanMac` are already in scope from earlier in the function (parsed at lines 980-981).
 
-- [ ] **Step 4: Build for both boards**
+- [x] **Step 4: Build for both boards**
 
 Run: `pio run -e lolin_d32_pro && pio run -e metro_s3`
 
 Expected: both builds succeed.
 
-- [ ] **Step 5: Run native tests (sanity)**
+- [x] **Step 5: Run native tests (sanity)**
 
 Run: `pio test -e test`
 
 Expected: existing native suite passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/AstrOsEspNow/include/AstrOsEspNowService.hpp \
