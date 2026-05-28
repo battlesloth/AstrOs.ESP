@@ -104,13 +104,14 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
     };
     ESP_ERROR_CHECK(esp_timer_create(&flashResultArgs, &flashResultTimer_));
 
-    {
-        esp_timer_create_args_t args = {};
-        args.callback = [](void *self) { static_cast<OtaForwarder *>(self)->handleVersionConfirmTimeout(); };
-        args.arg = this;
-        args.name = "otaVersionConfirm";
-        ESP_ERROR_CHECK(esp_timer_create(&args, &versionConfirmTimer_));
-    }
+    esp_timer_create_args_t versionConfirmArgs = {
+        .callback = &OtaForwarder::versionConfirmTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_versionconf",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&versionConfirmArgs, &versionConfirmTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -146,6 +147,9 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_FLASH_RESULT_TIMEOUT:
         handleFlashResultTimeout();
+        break;
+    case OTA_FWD_VERSION_CONFIRM_TIMEOUT:
+        handleVersionConfirmTimeout();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -1236,6 +1240,23 @@ void OtaForwarder::flashResultTimerCb(void *arg)
     {
         ESP_LOGE(TAG, "flashResultTimerCb: otaForwarderQueue full; sentinel dropped — "
                       "forwarder may hang in AWAITING_FLASH_RESULT");
+    }
+}
+
+void OtaForwarder::versionConfirmTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+        return;
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_VERSION_CONFIRM_TIMEOUT;
+    // Safety bound for a padawan that rebooted but never reported the expected
+    // version. If this sentinel is dropped, the forwarder hangs in
+    // AWAITING_VERSION_CONFIRMED forever — log loudly so bench logs show cause.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "versionConfirmTimerCb: otaForwarderQueue full; sentinel dropped — "
+                      "forwarder may hang in AWAITING_VERSION_CONFIRMED");
     }
 }
 

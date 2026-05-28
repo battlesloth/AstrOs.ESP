@@ -147,6 +147,7 @@ private:
     // Phase A — AWAITING_VERSION_CONFIRMED machinery.
     bool versionConfirmTimerStart();
     void versionConfirmTimerStop();
+    static void versionConfirmTimerCb(void *arg);
     void handleVersionConfirmTimeout();
     void checkPeerVersionForCurrentPadawan(); // called from the 50 ms tick
 
