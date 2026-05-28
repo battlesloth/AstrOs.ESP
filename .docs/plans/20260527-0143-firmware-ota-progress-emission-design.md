@@ -185,8 +185,6 @@ inbound) so the master forwarder receives the new message in its queue.
 
 ### `FW_PROGRESS` — implement the existing-but-unbuilt contract
 
-### `FW_PROGRESS` — implement the existing-but-unbuilt contract
-
 The server's wire contract is already specified
 (`message_handler.ts:301-332`):
 
