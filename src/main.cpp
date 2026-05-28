@@ -541,8 +541,34 @@ static void pollingTimerCallback(void *arg)
             }
             // Master self-POLL_ACK: report own build variant so the server can
             // pick the right firmware asset at flash time.
-            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
-                                                   AstrOsConstants::Version, AstrOsConstants::Variant, true);
+            static std::atomic<bool> firstSelfPollAckSent_{false};
+            bool serialQueued =
+                AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
+                                                       AstrOsConstants::Version, AstrOsConstants::Variant, true);
+
+            if (serialQueued)
+            {
+                // First successful self-POLL_ACK queue post post-reboot proves:
+                // NVS read worked (fingerprint), serial queue alive, message-
+                // service serialization alive, FreeRTOS scheduler healthy.
+                // Enough evidence to cancel auto-rollback for a freshly-flashed
+                // master image. mark_valid is documented as safe to call
+                // unconditionally; returns ESP_ERR_NOT_FOUND if no rollback was
+                // pending (the normal subsequent-boot case).
+                bool expected = false;
+                if (firstSelfPollAckSent_.compare_exchange_strong(expected, true))
+                {
+                    esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+                    if (markErr == ESP_OK)
+                    {
+                        ESP_LOGI(TAG, "Master OTA rollback cancelled — running image is now valid");
+                    }
+                    else if (markErr != ESP_ERR_NOT_FOUND)
+                    {
+                        ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback returned %s", esp_err_to_name(markErr));
+                    }
+                }
+            }
         }
         else
         {
