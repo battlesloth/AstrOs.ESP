@@ -5,6 +5,14 @@ phase ships independently; this doc grows with the PR for each phase.
 
 ## Phase A — Padawan flash + master version-confirm gate
 
+> **One-time precondition before testing A.3 (auto-rollback)**: enabling
+> `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` requires a new bootloader image
+> in flash. Existing field devices booted from the prior bootloader will
+> still treat the rollback API calls as no-ops. Before bench-testing A.3,
+> re-flash both boards via USB (`pio run -e <env> -t upload`) so the new
+> bootloader with rollback enabled is in place. Subsequent OTAs benefit
+> from the safety net.
+
 ### Preconditions
 
 - One master board flashed with the Phase A firmware (post-merge).
