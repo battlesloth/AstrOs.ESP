@@ -664,8 +664,7 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
         std::size_t n = std::min(reason.size(), sizeof(out.local_flash_result.errorReason));
         out.local_flash_result.errorReasonLen = static_cast<uint8_t>(n);
         std::memcpy(out.local_flash_result.errorReason, reason.data(), n);
-        // AstrOs_OtaForwarder is the global singleton; expose its queue
-        // via a new accessor (see step 3 below).
+        // AstrOs_OtaForwarder is the global singleton; its queue is exposed via getForwarderQueue().
         QueueHandle_t q = AstrOs_OtaForwarder.getForwarderQueue();
         if (q == nullptr)
         {

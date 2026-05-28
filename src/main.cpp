@@ -513,10 +513,9 @@ static void pollingTimerCallback(void *arg)
     // down (esp_ota_write erase+program latency degrades when other tasks hit
     // the flash bus concurrently).
     //
-    // Safe to call on master too: OtaWriter::Init now runs on both roles
-    // (Phase C added master self-flash via OTA_WR_LOCAL_FLASH_REQ loopback),
-    // but active_ stays false until OtaForwarder::startMasterSelfFlash posts
-    // a request — so this gate is inert during normal master polling.
+    // Safe to call on master too: OtaWriter::Init runs on both roles, and
+    // active_ stays false until OtaForwarder::startMasterSelfFlash posts a
+    // local-flash request — so this gate is inert during normal master polling.
     const bool otaActive =
         AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isWireBusy() || AstrOs_OtaWriter.isActive();
 

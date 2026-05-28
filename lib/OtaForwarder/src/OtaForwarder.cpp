@@ -594,11 +594,10 @@ void OtaForwarder::startNextPadawan()
     // (order exhausted / no_firmware) fires.
     while (true)
     {
-        // Phase C — defer master row until after all padawan rows complete.
-        // Master always self-flashes last per the cross-milestone design.
-        // Record nothing now — the deferred row's result gets inserted at
-        // this original index in handleLocalFlashResult so the
-        // FW_DEPLOY_DONE row order matches the operator-submitted order
+        // Defer master row until after all padawan rows complete. Master
+        // always self-flashes last; record nothing now — the deferred row's
+        // result gets inserted at this original index in handleLocalFlashResult
+        // so the FW_DEPLOY_DONE row order matches the operator-submitted order
         // list. Master MAC sentinel is the all-zero MAC per the Pi-side
         // FW_DEPLOY_BEGIN convention.
         if (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "00:00:00:00:00:00")
