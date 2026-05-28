@@ -17,8 +17,9 @@
 #include <esp_timer.h>
 
 // Threading: all members are accessed only from otaForwarderTask via
-// `process(msg)`. The one exception is `active_` (atomic; read from the
-// pollingTimer's esp_timer dispatch task for polling-pause gating).
+// `process(msg)`. The exceptions are `active_` and `wireBusy_` (both
+// atomic; read from the pollingTimer's esp_timer dispatch task for
+// polling-pause gating).
 //
 // The tick timer fires from esp_timer's dispatch task, but its callback
 // only does xQueueSend(OTA_FWD_TICK) — state mutation runs on
@@ -42,10 +43,11 @@ public:
     // Single entry point from otaForwarderTask.
     void process(queue_ota_forwarder_msg_t &msg);
 
-    // Safe to call from any task. Gates polling work during a forward.
-    bool isActive() const noexcept
+    // True when the OTA wire is currently busy with a transfer; gates polling
+    // work on the master. Safe to call from any task.
+    bool isWireBusy() const noexcept
     {
-        return active_;
+        return wireBusy_;
     }
 
 private:
@@ -56,8 +58,9 @@ private:
         AWAITING_BEGIN_ACK = 1, // emitted OTA_BEGIN, waiting on padawan
         STREAMING = 2,
         AWAITING_END_ACK = 3,
-        AWAITING_FLASH_RESULT = 4, // END_ACK OK received; padawan verifying + committing
-        BETWEEN_PADAWANS = 5,      // result recorded; pulling next from order list
+        AWAITING_FLASH_RESULT = 4,      // END_ACK OK received; padawan verifying + committing
+        AWAITING_VERSION_CONFIRMED = 5, // FLASH_RESULT OK received; waiting on heartbeat-version match
+        BETWEEN_PADAWANS = 6,           // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
@@ -141,6 +144,13 @@ private:
     void handleFlashResult(queue_ota_forwarder_msg_t &msg);
     void handleFlashResultTimeout();
 
+    // Phase A — AWAITING_VERSION_CONFIRMED machinery.
+    bool versionConfirmTimerStart();
+    void versionConfirmTimerStop();
+    static void versionConfirmTimerCb(void *arg);
+    void handleVersionConfirmTimeout();
+    void checkPeerVersionForCurrentPadawan(); // called from the 50 ms tick
+
     // Resolves a controller-id (from FW_DEPLOY_BEGIN's order list) to a
     // MAC. Linear-scans AstrOs_EspNow.getPeers() — small list, cheap.
     // Returns true if found; fills outMac. Returns false if no peer
@@ -153,8 +163,18 @@ private:
     // run BEFORE this check so the all-zero srcMac never reaches here.
     bool isFromCurrentPadawan(const uint8_t srcMac[6]) const;
 
-    // Active gate (read by pollingTimer's task).
+    // active_ — "a deploy is in flight"; guards against stray messages and
+    // prevents a second FW_DEPLOY_BEGIN from starting. Set true at deploy
+    // start, false only in emitDeployDoneAndReset. NOT used for polling gating.
     std::atomic<bool> active_{false};
+
+    // wireBusy_ — "the wire is currently busy with a transfer". This is what
+    // isWireBusy() exposes to the polling gate in main.cpp. Goes false when
+    // entering AWAITING_VERSION_CONFIRMED (master must poll to observe the
+    // rebooted padawan's POLL_ACK) and true again when the next padawan enters
+    // AWAITING_BEGIN_ACK. Distinct from active_: we can be active without
+    // the wire being busy.
+    std::atomic<bool> wireBusy_{false};
 
     // Queue handle held so timer callbacks can post tick + deadline events
     // into the same queue otaForwarderTask drains.
@@ -167,6 +187,23 @@ private:
     esp_timer_handle_t endAckTimer_ = nullptr;
     esp_timer_handle_t statsTimer_ = nullptr;
     esp_timer_handle_t flashResultTimer_ = nullptr;
+
+    // Phase A: parsed once per padawan from the staged .bin's esp_app_desc_t
+    // when entering AWAITING_BEGIN_ACK; consumed during AWAITING_VERSION_CONFIRMED
+    // to decide when the heartbeat-reported version matches.
+    std::string expectedNewVersion_;
+
+    // esp_timer_get_time() snapshot captured when AWAITING_VERSION_CONFIRMED is
+    // armed (in handleFlashResult OK path). Used alongside the padawan's uptime
+    // field from POLL_ACK to reject pre-reboot ACKs in same-version deploys:
+    // if the padawan's reported uptime >= (now - armedAtUs_), the padawan was
+    // already running before we armed, so the ACK is pre-reboot and ignored.
+    int64_t versionConfirmArmedAtUs_ = 0;
+
+    // 15 s safety bound on AWAITING_VERSION_CONFIRMED. Fires
+    // versionConfirmTimerCallback if the padawan never reports the expected
+    // version (silent brick or wrong-image flash).
+    esp_timer_handle_t versionConfirmTimer_ = nullptr;
 
     // Cadence: 50 ms tick, 5 s BEGIN_ACK timeout, 5 s END_ACK timeout,
     // 2 s stats emission, 10 s flash-result safety bound. BEGIN_ACK was 2 s

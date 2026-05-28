@@ -23,6 +23,7 @@
 #include <esp_crc.h>
 #include <esp_netif.h>
 #include <esp_now.h>
+#include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_wifi_types.h>
@@ -313,6 +314,74 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
         result.push_back(peer);
     }
     return result;
+}
+
+std::string AstrOsEspNow::getPeerVersion(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersion: failed to acquire peersMutex within 1s");
+        return "";
+    }
+    std::string out;
+    auto it = this->peerVersions_.find(macString);
+    if (it != this->peerVersions_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
+}
+
+void AstrOsEspNow::clearPeerVersion(const std::string &macString)
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "clearPeerVersion: failed to acquire peersMutex within 1s");
+        return;
+    }
+    this->peerVersions_.erase(macString);
+    this->peerUptimes_.erase(macString); // keep in sync with peerVersions_
+    xSemaphoreGive(this->peersMutex);
+}
+
+int64_t AstrOsEspNow::getPeerUptimeUs(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerUptimeUs: failed to acquire peersMutex within 1s");
+        return 0;
+    }
+    int64_t out = 0;
+    auto it = this->peerUptimes_.find(macString);
+    if (it != this->peerUptimes_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
+}
+
+AstrOsEspNow::PeerVersionSnapshot AstrOsEspNow::getPeerVersionSnapshot(const std::string &macString) const
+{
+    PeerVersionSnapshot snap;
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersionSnapshot: failed to acquire peersMutex within 1s");
+        return snap;
+    }
+    auto vit = this->peerVersions_.find(macString);
+    if (vit != this->peerVersions_.end())
+    {
+        snap.version = vit->second;
+    }
+    auto uit = this->peerUptimes_.find(macString);
+    if (uit != this->peerUptimes_.end())
+    {
+        snap.uptimeUs = uit->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return snap;
 }
 
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
@@ -939,20 +1008,51 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
-    // Padawan-side POLL_ACK payload: `name<US>fingerprint<US>version<US>variant`.
+    // Padawan-side POLL_ACK payload:
+    //   name<US>fingerprint<US>version<US>variant<US>uptime_us
     // Variant is the PlatformIO env name; the server uses it to pick the
-    // correct firmware asset at OTA flash time.
+    // correct firmware asset at OTA flash time. uptime_us is the padawan's
+    // esp_timer_get_time() snapshot (microseconds since boot); master uses it
+    // as a post-reboot discriminator in same-version deploys. Older masters
+    // receiving a 6-field payload ignore the extra field; older padawans omit
+    // it (master parses missing field as 0 = "uptime unknown").
     std::stringstream ss;
     ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version
-       << UNIT_SEPARATOR << AstrOsConstants::Variant;
+       << UNIT_SEPARATOR << AstrOsConstants::Variant << UNIT_SEPARATOR << std::to_string(esp_timer_get_time());
 
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
-    if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+    esp_err_t sendErr = esp_now_send(destMac, data.data, data.size);
+    if (sendErr != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending poll ack");
         result = false;
+    }
+    else
+    {
+        // First successful POLL_ACK send post-reboot proves: NVS read worked
+        // (fingerprint), ESP-NOW peer table is valid, version + variant
+        // strings are reachable, and the send queue accepted the frame. That's
+        // enough evidence to cancel the auto-rollback for a freshly-flashed
+        // image. The mark_valid call is a no-op when the running image isn't
+        // in PENDING_VERIFY, so no extra guard is needed.
+        bool expected = false;
+        if (firstPollAckSent_.compare_exchange_strong(expected, true))
+        {
+            esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+            if (markErr == ESP_OK)
+            {
+                ESP_LOGI(TAG, "OTA rollback cancelled — running image is now valid");
+            }
+            else
+            {
+                ESP_LOGW(TAG,
+                         "esp_ota_mark_app_valid_cancel_rollback returned %s "
+                         "(safe to ignore if image was not in PENDING_VERIFY)",
+                         esp_err_to_name(markErr));
+            }
+        }
     }
 
     free(data.data);
@@ -980,6 +1080,14 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     // "unknown" rather than silently picking the wrong firmware asset.
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
     auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
+    // 6th field: padawan's esp_timer_get_time() at POLL_ACK build time (us since
+    // boot). Missing in older firmware; parsed as 0 = "uptime unknown". Master
+    // uses this as a post-reboot discriminator in same-version OTA deploys.
+    int64_t peerUptimeUs = 0;
+    if (parts.size() >= 6 && !parts[5].empty())
+    {
+        peerUptimeUs = std::strtoll(parts[5].c_str(), nullptr, 10);
+    }
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
@@ -987,6 +1095,19 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
     bool known = this->peers.markPollAckReceived(padawanMac);
+    if (known && !peerVersion.empty())
+    {
+        // Record the reported firmware version for OtaForwarder to consult
+        // during AWAITING_VERSION_CONFIRMED. Overwrite is intentional —
+        // newer ACKs win.
+        this->peerVersions_[padawanMac] = peerVersion;
+    }
+    // Always record uptime (even 0 = "unknown") to keep it in sync with
+    // peerVersions_. OtaForwarder treats 0 as "legacy peer; skip uptime gate".
+    if (known)
+    {
+        this->peerUptimes_[padawanMac] = peerUptimeUs;
+    }
     xSemaphoreGive(this->peersMutex);
 
     if (!known)

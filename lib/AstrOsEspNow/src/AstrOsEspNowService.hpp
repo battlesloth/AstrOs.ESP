@@ -5,7 +5,9 @@
 #include "AstrOsMessaging.hpp"
 #include <AstrOsEspNowPeers.hpp>
 #include <AstrOsInterfaceResponseMsg.hpp>
+#include <atomic>
 #include <esp_err.h>
+#include <unordered_map>
 
 // needed for QueueHandle_t and SemaphoreHandle_t, must be in this order
 #include <freertos/FreeRTOS.h>
@@ -41,7 +43,7 @@ private:
     bool isMasterNode;
     std::string mac;
     AstrOsEspNowPeers::PeerList peers;
-    SemaphoreHandle_t peersMutex;
+    mutable SemaphoreHandle_t peersMutex;
     QueueHandle_t serviceQueue;
     QueueHandle_t interfaceQueue;
 
@@ -51,6 +53,25 @@ private:
 
     QueueHandle_t otaForwarderQueue_ = nullptr;
     QueueHandle_t otaWriterQueue_ = nullptr;
+
+    // Rollback safety net: on the first successful POLL_ACK send post-reboot,
+    // call esp_ota_mark_app_valid_cancel_rollback so a newly-flashed image
+    // only commits itself after proving it can talk back. If the new image
+    // crashes before reaching this point, the bootloader auto-reverts on
+    // next boot.
+    std::atomic<bool> firstPollAckSent_{false};
+
+    // Parallel storage for per-peer last-known firmware version. Not in
+    // espnow_peer_t because that struct is NVS-persisted byte-for-byte;
+    // version is runtime-only (refreshed every POLL_ACK).
+    std::unordered_map<std::string, std::string> peerVersions_;
+
+    // Per-peer last-reported uptime (esp_timer_get_time() snapshot from the
+    // padawan at the moment it built the POLL_ACK). 0 = unknown (older
+    // padawan firmware that omits the 6th field). Used by OtaForwarder to
+    // discriminate pre-reboot POLL_ACKs from post-reboot ones in same-version
+    // deploys. Kept in sync with peerVersions_ via clearPeerVersion/handlePollAck.
+    std::unordered_map<std::string, int64_t> peerUptimes_;
 
     // Routes an OTA ACK/NAK packet (master-side receive) into
     // otaForwarderQueue_. Parses via M1's parseOta* free functions.
@@ -100,6 +121,35 @@ public:
     ~AstrOsEspNow();
     esp_err_t init(astros_espnow_config_t config);
     std::vector<espnow_peer_t> getPeers();
+    // Returns the last-known firmware version string reported by the given
+    // peer in its most recent POLL_ACK, or an empty string if the peer is
+    // unknown or has never been polled successfully. Thread-safe (acquires
+    // peersMutex internally). MAC is the canonical "XX:XX:XX:XX:XX:XX"
+    // uppercase string used elsewhere in AstrOsEspNow.
+    std::string getPeerVersion(const std::string &macString) const;
+    // Drops any cached version string for the given peer. Called by OtaForwarder
+    // when arming AWAITING_VERSION_CONFIRMED so the pre-flash cached version
+    // can't false-match against the expected new version before the rebooted
+    // padawan has actually sent a POLL_ACK. Also clears the uptime entry to
+    // keep peerVersions_ and peerUptimes_ in sync. Thread-safe (acquires peersMutex).
+    void clearPeerVersion(const std::string &macString);
+    // Returns the last-reported uptime (esp_timer_get_time() microseconds since
+    // padawan boot) from the most recent POLL_ACK for the given peer. Returns 0
+    // if peer unknown, has never been polled, or is running older firmware that
+    // omits the uptime field. Thread-safe (acquires peersMutex internally).
+    int64_t getPeerUptimeUs(const std::string &macString) const;
+    // Atomic snapshot of a peer's last-reported version + uptime, captured
+    // under a single peersMutex acquisition. Use this in any code path that
+    // needs to consider both values together (e.g., the OTA version-confirm
+    // gate must not mix a stale uptime with a fresh version observed across
+    // two separate accessor calls — that race lets a pre-reboot POLL_ACK
+    // false-match in same-version deploys).
+    struct PeerVersionSnapshot
+    {
+        std::string version;  // empty if peer unknown or not yet polled
+        int64_t uptimeUs = 0; // 0 if peer unknown / not yet polled / legacy firmware
+    };
+    PeerVersionSnapshot getPeerVersionSnapshot(const std::string &macString) const;
     void sendRegistrationRequest();
     bool handleMessage(uint8_t *src, uint8_t *data, size_t len);
     void pollPadawans();

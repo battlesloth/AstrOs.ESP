@@ -517,7 +517,7 @@ static void pollingTimerCallback(void *arg)
     // master too — AstrOs_OtaWriter is never Init'd on master, so active_
     // stays false.
     const bool otaActive =
-        AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isActive() || AstrOs_OtaWriter.isActive();
+        AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isWireBusy() || AstrOs_OtaWriter.isActive();
 
     // only send register requests during discovery mode
     if (master && !discovery && !otaActive)

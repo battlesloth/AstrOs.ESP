@@ -600,32 +600,42 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
 
     logSendResult("handleEnd OK END_ACK", sendEndAck(mac, xferId, OtaEndStatus::OK, streamedDigest));
 
-    // M4 PLACEHOLDER — see .docs/plans/20260527-0143-firmware-ota-progress-emission-design.md
-    //
-    // Verification passed. Send OTA_END_ACK OK immediately (above) so the
-    // master can emit FW_PROGRESS FLASHING and the UI flash row lights up.
-    // Then deliberately delay 2 s so that flash row is visibly current
-    // before reporting the M4 placeholder failure.
-    //
-    // PR set 2 replaces this block with:
-    //   - vTaskDelay(pdMS_TO_TICKS(2000));
-    //   - esp_err_t err = esp_ota_set_boot_partition(inactivePartition_);
-    //   - sendFlashResult(mac, xferId,
-    //                     err == ESP_OK ? OtaFlashStatus::OK : OtaFlashStatus::FAILED,
-    //                     err == ESP_OK ? "" : esp_err_to_name(err));
-    //   - if (err == ESP_OK) esp_restart();
-    //
-    // The vTaskDelay below mirrors the natural PR set 2 cadence so server
-    // timing assumptions tested against M4 hold unchanged against PR set 2.
-    ESP_LOGI(TAG, "handleEnd: M4 placeholder — sleeping 2s before OTA_FLASH_RESULT(FLASH_NOT_IMPLEMENTED)");
+    // Verification passed. END_ACK OK has gone on the wire so the master can
+    // emit FW_PROGRESS FLASHING and the UI flash row lights up. Delay 2 s
+    // for visible cadence (matches the timing the server state machine was
+    // tested against in PR set 1), then flip the boot partition and reboot.
+    ESP_LOGI(TAG, "handleEnd: sleeping 2s before esp_ota_set_boot_partition");
     vTaskDelay(pdMS_TO_TICKS(2000));
-    esp_err_t flashErr = sendFlashResult(mac, xferId, OtaFlashStatus::FLASH_NOT_IMPLEMENTED, "pr_set_1_placeholder");
-    if (flashErr != ESP_OK)
+
+    esp_err_t bootErr = esp_ota_set_boot_partition(inactivePartition_);
+    if (bootErr != ESP_OK)
     {
-        ESP_LOGW(TAG, "handleEnd: sendFlashResult failed: %s", esp_err_to_name(flashErr));
+        ESP_LOGE(TAG, "handleEnd: esp_ota_set_boot_partition failed: %s", esp_err_to_name(bootErr));
+        esp_err_t flashErr = sendFlashResult(mac, xferId, OtaFlashStatus::FAILED, esp_err_to_name(bootErr));
+        if (flashErr != ESP_OK)
+        {
+            ESP_LOGW(TAG, "handleEnd: sendFlashResult(FAILED) failed: %s", esp_err_to_name(flashErr));
+        }
+        resetOtaHandleAndSha();
+        return;
     }
 
+    ESP_LOGI(TAG, "handleEnd: boot partition flipped; reporting OK and rebooting");
+    esp_err_t flashErr = sendFlashResult(mac, xferId, OtaFlashStatus::OK, "");
+    if (flashErr != ESP_OK)
+    {
+        ESP_LOGW(TAG, "handleEnd: sendFlashResult(OK) failed: %s — proceeding to reboot anyway",
+                 esp_err_to_name(flashErr));
+    }
+
+    // 200 ms gives the ESP-NOW send queue + UART log a chance to drain on
+    // the wire before esp_restart blows away task state. The master tolerates
+    // missing FLASH_RESULT via its flashResultTimer fallback, but we want the
+    // common case to deliver it.
+    vTaskDelay(pdMS_TO_TICKS(200));
     resetOtaHandleAndSha();
+    esp_restart();
+    // not reached
 }
 
 void OtaWriter::handleWatchdogFire()

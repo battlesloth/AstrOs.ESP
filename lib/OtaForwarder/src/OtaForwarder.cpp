@@ -1,5 +1,6 @@
 #include "OtaForwarder.hpp"
 
+#include <AstrOsEspAppDescParser.hpp>
 #include <AstrOsEspNow.h>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsSerialMsgHandler.hpp>
@@ -36,6 +37,12 @@ OtaForwarder::~OtaForwarder()
             esp_timer_delete(*t);
             *t = nullptr;
         }
+    }
+    if (versionConfirmTimer_ != nullptr)
+    {
+        esp_timer_stop(versionConfirmTimer_);
+        esp_timer_delete(versionConfirmTimer_);
+        versionConfirmTimer_ = nullptr;
     }
 }
 
@@ -96,6 +103,15 @@ void OtaForwarder::Init(QueueHandle_t otaForwarderQueue)
         .skip_unhandled_events = true,
     };
     ESP_ERROR_CHECK(esp_timer_create(&flashResultArgs, &flashResultTimer_));
+
+    esp_timer_create_args_t versionConfirmArgs = {
+        .callback = &OtaForwarder::versionConfirmTimerCb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_fwd_versionconf",
+        .skip_unhandled_events = true,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&versionConfirmArgs, &versionConfirmTimer_));
 }
 
 void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
@@ -131,6 +147,9 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
         break;
     case OTA_FWD_FLASH_RESULT_TIMEOUT:
         handleFlashResultTimeout();
+        break;
+    case OTA_FWD_VERSION_CONFIRM_TIMEOUT:
+        handleVersionConfirmTimeout();
         break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
@@ -213,6 +232,7 @@ void OtaForwarder::handleDeployBegin(queue_ota_forwarder_msg_t &msg)
     results_.clear();
     results_.reserve(orderList_.size());
     active_.store(true);
+    wireBusy_.store(true);
 
     ESP_LOGI(TAG, "FW_DEPLOY_BEGIN: transferId=%s targets=%zu", deployTransferId_.c_str(), orderList_.size());
 
@@ -438,6 +458,16 @@ void OtaForwarder::handleEndAck(queue_ota_forwarder_msg_t &msg)
 }
 void OtaForwarder::handleTick()
 {
+    // Phase A: drive AWAITING_VERSION_CONFIRMED polling first. handleTick
+    // fires every 50 ms regardless of bulk_ state, but the STREAMING-only
+    // logic below is the more restrictive caller. Run version-check before
+    // the bulk_/STREAMING gates so it actually sees the tick.
+    if (phase_ == Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        checkPeerVersionForCurrentPadawan();
+        return;
+    }
+
     // tick(count=0, abandon=false) is indistinguishable from "not streaming";
     // consult status() separately so we skip ticks while idle.
     auto status = bulk_.status();
@@ -662,6 +692,47 @@ void OtaForwarder::startNextPadawan()
             continue;
         }
 
+        // Phase A: read the staged .bin's esp_app_desc_t to learn the expected
+        // post-reboot version string. The 80-byte prefix is plenty — the
+        // parser only reads bytes 0..79. fseek back to 0 afterward so the
+        // streaming send loop starts at the beginning.
+        expectedNewVersion_.clear();
+        {
+            uint8_t prefix[80] = {0};
+            if (std::fread(prefix, 1, sizeof(prefix), firmwareFile_) != sizeof(prefix))
+            {
+                ESP_LOGW(TAG,
+                         "Could not read 80-byte prefix from staged .bin (%s); "
+                         "version-confirm will fall back to timeout",
+                         firmwarePath.c_str());
+            }
+            else
+            {
+                auto desc = AstrOsEspAppDescParser::parse(prefix, sizeof(prefix));
+                if (desc.ok)
+                {
+                    expectedNewVersion_ = desc.version;
+                    ESP_LOGI(TAG, "Parsed expected new version '%s' from staged .bin", expectedNewVersion_.c_str());
+                }
+                else
+                {
+                    ESP_LOGW(TAG,
+                             "esp_app_desc parse failed (%s); version-confirm will "
+                             "fall back to timeout",
+                             desc.error.c_str());
+                }
+            }
+            if (std::fseek(firmwareFile_, 0, SEEK_SET) != 0)
+            {
+                ESP_LOGE(TAG, "fseek(0) failed on firmware file");
+                std::fclose(firmwareFile_);
+                firmwareFile_ = nullptr;
+                results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "firmware_seek_failed"});
+                nextOrderIdx_++;
+                continue;
+            }
+        }
+
         // Safe because handleDeployBegin caps orderList_.size() at
         // kMaxOrderListSize (< 0xFE per the static_assert in the header).
         // Yields xferIds 1..kMaxOrderListSize — never 0 ("no xfer") or
@@ -692,6 +763,7 @@ void OtaForwarder::startNextPadawan()
         lastProgressBytesSent_ = 0;
 
         phase_ = Phase::AWAITING_BEGIN_ACK;
+        wireBusy_.store(true); // wire is active again for this padawan's transfer
         emitOtaBeginFrame();
         beginAckTimerStart();
         statsTimerStart();
@@ -718,6 +790,7 @@ void OtaForwarder::finishCurrentPadawanAndAdvance()
     tickTimerStop();
     statsTimerStop();
     flashResultTimerStop();
+    versionConfirmTimerStop();
 
     bulk_.reset();
 
@@ -779,6 +852,7 @@ void OtaForwarder::emitDeployDoneAndReset()
     results_.clear();
     phase_ = Phase::IDLE;
     active_.store(false);
+    wireBusy_.store(false);
 }
 
 void OtaForwarder::postTimeoutSentinel(ota_forwarder_msg_kind_t kind, const char *site)
@@ -1115,6 +1189,9 @@ void OtaForwarder::handleStatsFire()
     case Phase::AWAITING_FLASH_RESULT:
         phaseStr = "AWAITING_FLASH_RESULT";
         break;
+    case Phase::AWAITING_VERSION_CONFIRMED:
+        phaseStr = "AWAITING_VERSION_CONFIRMED";
+        break;
     case Phase::BETWEEN_PADAWANS:
         phaseStr = "BETWEEN_PADAWANS";
         break;
@@ -1166,6 +1243,23 @@ void OtaForwarder::flashResultTimerCb(void *arg)
     }
 }
 
+void OtaForwarder::versionConfirmTimerCb(void *arg)
+{
+    OtaForwarder *self = static_cast<OtaForwarder *>(arg);
+    if (!self || !self->otaForwarderQueue_)
+        return;
+    queue_ota_forwarder_msg_t m{};
+    m.kind = OTA_FWD_VERSION_CONFIRM_TIMEOUT;
+    // Safety bound for a padawan that rebooted but never reported the expected
+    // version. If this sentinel is dropped, the forwarder hangs in
+    // AWAITING_VERSION_CONFIRMED forever — log loudly so bench logs show cause.
+    if (xQueueSend(self->otaForwarderQueue_, &m, 0) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "versionConfirmTimerCb: otaForwarderQueue full; sentinel dropped — "
+                      "forwarder may hang in AWAITING_VERSION_CONFIRMED");
+    }
+}
+
 void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
 {
     // Rate-limited drop logger: emits on first occurrence and every 10th
@@ -1201,12 +1295,64 @@ void OtaForwarder::handleFlashResult(queue_ota_forwarder_msg_t &msg)
     std::string wireReason(msg.flash_result.reason, msg.flash_result.reasonLen);
 
     auto mapped = AstrOsEspNowProtocol::mapOtaFlashStatusToResult(status, wireReason);
-    std::string finalVersion;
 
     ESP_LOGI(TAG, "Flash result for %s: status=%d reason='%s'", currentControllerId_.c_str(), (int)status,
              mapped.errorReason.c_str());
-    results_.push_back({currentControllerId_, mapped.padawanStatus, finalVersion, mapped.errorReason});
 
+    if (status == OtaFlashStatus::OK)
+    {
+        // Clear any pre-flash cached version for this peer. Without this,
+        // a same-version re-deploy (or a retry whose cache was already populated)
+        // would match immediately on the first version-confirm tick — recording
+        // SUCCESS before the padawan has actually rebooted and sent a fresh
+        // POLL_ACK. After clearing, getPeerVersion returns empty until the next
+        // handlePollAck repopulates it from a post-arm POLL_ACK.
+        //
+        // The version-confirm path now also uses the POLL_ACK uptime
+        // discriminator, so a same-version match is only accepted once the
+        // observed heartbeat is attributable to the post-arm boot rather than
+        // stale pre-reboot state. That closes the main race where a poll lands
+        // during the padawan's pre-reboot delay window and returns the old
+        // version string again.
+        //
+        // Remaining limitation: legacy or otherwise uptime-unknown POLL_ACKs
+        // cannot be gated this way, so a narrow same-version ambiguity remains
+        // for those peers. The auto-rollback safety net still covers the main
+        // practical failure mode: a same-version flash that silently corrupted
+        // the image will fail to mark_app_valid post-reboot, and the bootloader
+        // will revert.
+        AstrOs_EspNow.clearPeerVersion(currentControllerId_);
+        // Capture the arm timestamp BEFORE entering the phase so
+        // checkPeerVersionForCurrentPadawan can compute timeSinceArm correctly
+        // even if the first tick fires almost immediately.
+        versionConfirmArmedAtUs_ = esp_timer_get_time();
+
+        // Padawan reported flash success and is about to reboot. Arm the
+        // version-confirm safety timer FIRST — if it fails there is no
+        // timeout net and the forwarder would hang, so abort immediately
+        // rather than entering AWAITING_VERSION_CONFIRMED.
+        if (!versionConfirmTimerStart())
+        {
+            ESP_LOGE(TAG, "handleFlashResult: versionConfirmTimerStart failed for %s — aborting padawan",
+                     currentControllerId_.c_str());
+            abortCurrentPadawan("version_confirm_timer_failed");
+            return;
+        }
+
+        // Don't record SUCCESS yet — wait until heartbeat shows the expected
+        // new version. The flash row already lit FLASHING when END_ACK OK
+        // landed; now signal the reboot transition for the UI.
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
+                                               firmwareTotalSize_, "");
+
+        wireBusy_.store(false); // wire idle during AWAITING_VERSION_CONFIRMED; master must poll to observe POLL_ACK
+        phase_ = Phase::AWAITING_VERSION_CONFIRMED;
+        tickTimerStart(); // re-arm the 50 ms tick (it was stopped after END_ACK)
+        return;
+    }
+
+    // FAILED or FLASH_NOT_IMPLEMENTED (legacy) — record immediately and advance.
+    results_.push_back({currentControllerId_, mapped.padawanStatus, "", mapped.errorReason});
     finishCurrentPadawanAndAdvance();
 }
 
@@ -1218,6 +1364,101 @@ void OtaForwarder::handleFlashResultTimeout()
     }
     ESP_LOGW(TAG, "Flash-result timeout for %s; recording FAILED", currentControllerId_.c_str());
     results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "flash_result_timeout"});
+    finishCurrentPadawanAndAdvance();
+}
+
+bool OtaForwarder::versionConfirmTimerStart()
+{
+    if (versionConfirmTimer_ == nullptr)
+    {
+        ESP_LOGE(TAG, "versionConfirmTimerStart: timer handle is null");
+        return false;
+    }
+    esp_timer_stop(versionConfirmTimer_);
+    esp_err_t err = esp_timer_start_once(versionConfirmTimer_, 15ULL * 1000ULL * 1000ULL);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "versionConfirmTimerStart: esp_timer_start_once failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
+
+void OtaForwarder::versionConfirmTimerStop()
+{
+    if (versionConfirmTimer_ == nullptr)
+    {
+        return;
+    }
+    esp_timer_stop(versionConfirmTimer_);
+}
+
+void OtaForwarder::handleVersionConfirmTimeout()
+{
+    if (phase_ != Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        // Stale fire after we already completed via tick-driven match.
+        return;
+    }
+    ESP_LOGW(TAG, "Version-confirm timeout for %s; recording FAILED(version_unconfirmed)",
+             currentControllerId_.c_str());
+    results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "version_unconfirmed"});
+    finishCurrentPadawanAndAdvance();
+}
+
+void OtaForwarder::checkPeerVersionForCurrentPadawan()
+{
+    if (phase_ != Phase::AWAITING_VERSION_CONFIRMED)
+    {
+        return;
+    }
+    if (expectedNewVersion_.empty())
+    {
+        // Parse failed at deploy start — no comparison possible. The 15 s
+        // versionConfirmTimer will fire and record FAILED("version_unconfirmed").
+        return;
+    }
+
+    // Uptime discriminator: reject pre-reboot POLL_ACKs in same-version deploys.
+    // After clearPeerVersion + wireBusy_ = false, master can poll the padawan
+    // during its 200 ms pre-reboot vTaskDelay and receive a pre-reboot POLL_ACK
+    // with the same version. The padawan's reported uptime disambiguates: if
+    // uptime >= time-since-arm, the padawan was up before we armed and this ACK
+    // is pre-reboot. Backward compat: uptime == 0 means older padawan firmware
+    // that omits the field; fall through to version-only check.
+    //
+    // Both fields are read under one peersMutex acquisition via getPeerVersionSnapshot
+    // so the gate can't be defeated by an interleaved POLL_ACK writing a fresh
+    // version after we read a stale (cleared) uptime.
+    auto snap = AstrOs_EspNow.getPeerVersionSnapshot(currentControllerId_);
+    int64_t timeSinceArmUs = esp_timer_get_time() - versionConfirmArmedAtUs_;
+
+    // Atomic snapshot — both fields captured under one peersMutex acquisition
+    // so the gate can't be defeated by an interleaved POLL_ACK writing a fresh
+    // version after we read a stale (cleared) uptime.
+    if (snap.uptimeUs > 0 && snap.uptimeUs >= timeSinceArmUs)
+    {
+        // Pre-reboot ACK — padawan's uptime reaches back before we armed.
+        // Keep waiting for the post-reboot POLL_ACK with a lower uptime.
+        return;
+    }
+
+    if (snap.version.empty() || snap.version != expectedNewVersion_)
+    {
+        // Still on old version (or no version reported yet); keep waiting
+        // until either match or timeout.
+        return;
+    }
+
+    ESP_LOGI(TAG, "Version confirmed for %s: '%s' == expected '%s'", currentControllerId_.c_str(), snap.version.c_str(),
+             expectedNewVersion_.c_str());
+
+    versionConfirmTimerStop();
+
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERSION_CONFIRMED",
+                                           firmwareTotalSize_, firmwareTotalSize_, snap.version);
+
+    results_.push_back({currentControllerId_, PadawanStatus::OK, snap.version, ""});
     finishCurrentPadawanAndAdvance();
 }
 
