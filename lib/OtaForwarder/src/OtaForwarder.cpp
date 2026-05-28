@@ -577,20 +577,30 @@ void OtaForwarder::startNextPadawan()
     // (order exhausted / no_firmware) fires.
     while (true)
     {
-        // Skip the master self-flash entry — encoded as the all-zero MAC by
-        // the Pi-side FW_DEPLOY_BEGIN convention (see the matching
-        // "00:00:00:00:00:00" / "master" pair in
-        // astros_serial_protocol_tests fixtures). Self-flash isn't wired
-        // yet; record FAILED so the deploy advances to the padawans.
+        // Phase C — defer master row until after all padawan rows complete.
+        // Master always self-flashes last per the cross-milestone design.
+        // Record nothing now — the deferred row's result gets inserted at
+        // this original index in handleLocalFlashResult so the
+        // FW_DEPLOY_DONE row order matches the operator-submitted order
+        // list. Master MAC sentinel is the all-zero MAC per the Pi-side
+        // FW_DEPLOY_BEGIN convention.
         if (nextOrderIdx_ < orderList_.size() && orderList_[nextOrderIdx_] == "00:00:00:00:00:00")
         {
-            results_.push_back({orderList_[nextOrderIdx_], PadawanStatus::FAILED, "", "master_self_flash_pending"});
+            masterRowDeferred_ = true;
+            masterRowOriginalIndex_ = nextOrderIdx_;
             nextOrderIdx_++;
             continue;
         }
 
         if (nextOrderIdx_ >= orderList_.size())
         {
+            if (masterRowDeferred_)
+            {
+                // Padawan loop done; now do the master self-flash. Result
+                // dispatch + DEPLOY_DONE happen in handleLocalFlashResult.
+                startMasterSelfFlash();
+                return;
+            }
             emitDeployDoneAndReset();
             return;
         }
