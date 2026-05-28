@@ -139,6 +139,7 @@ namespace AstrOsEspNowProtocol
     {
         OK,
         FAILED,
+        PENDING, // master row: optimistic; server resolves via post-reboot self-POLL_ACK version match
     };
 
     struct FlashResultMapped

@@ -1,3 +1,4 @@
+#include <AstrOsEspNowProtocol.hpp>
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 #include <gmock/gmock.h>
@@ -1203,4 +1204,43 @@ TEST(AstrOsSerialMessageService, FwProgress_FlashingStageRoundTrip)
     EXPECT_EQ("10000", payloadParts[3]);
     EXPECT_EQ("10000", payloadParts[4]);
     EXPECT_EQ("pr_set_1_placeholder", payloadParts[5]);
+}
+
+//=================================================================================================
+// PadawanStatus::PENDING + FW_DEPLOY_DONE serializer (Phase C)
+//=================================================================================================
+
+TEST(FwDeployDone, PendingRowSerializesAndContainsPENDINGToken)
+{
+    AstrOsSerialMessageService msgSvc;
+    std::vector<astros_fw_deploy_result_t> results = {
+        {"AA:BB:CC:DD:EE:01", "OK", "1.2.3", ""},
+        {"00:00:00:00:00:00", "PENDING", "", "awaiting_post_reboot_version"},
+        {"AA:BB:CC:DD:EE:02", "FAILED", "", "version_unconfirmed"},
+    };
+    auto msg = msgSvc.getFwDeployDone("msg-99", "xfer-99", results);
+    EXPECT_FALSE(msg.empty()) << "PENDING must not cause the serializer to reject";
+    EXPECT_NE(msg.find("PENDING"), std::string::npos);
+    EXPECT_NE(msg.find("OK"), std::string::npos);
+    EXPECT_NE(msg.find("FAILED"), std::string::npos);
+    EXPECT_NE(msg.find("00:00:00:00:00:00"), std::string::npos);
+    EXPECT_NE(msg.find("awaiting_post_reboot_version"), std::string::npos);
+}
+
+TEST(FwDeployDone, AllPendingRowsAlsoSerializesCleanly)
+{
+    AstrOsSerialMessageService msgSvc;
+    std::vector<astros_fw_deploy_result_t> results = {
+        {"00:00:00:00:00:00", "PENDING", "", "awaiting_post_reboot_version"},
+    };
+    auto msg = msgSvc.getFwDeployDone("msg-100", "xfer-100", results);
+    EXPECT_FALSE(msg.empty());
+    EXPECT_NE(msg.find("PENDING"), std::string::npos);
+}
+
+TEST(PadawanStatus, PendingValueIsTwo)
+{
+    EXPECT_EQ(static_cast<uint8_t>(AstrOsEspNowProtocol::PadawanStatus::OK), 0);
+    EXPECT_EQ(static_cast<uint8_t>(AstrOsEspNowProtocol::PadawanStatus::FAILED), 1);
+    EXPECT_EQ(static_cast<uint8_t>(AstrOsEspNowProtocol::PadawanStatus::PENDING), 2);
 }
