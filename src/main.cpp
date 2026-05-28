@@ -241,17 +241,14 @@ void app_main()
         }
     }
 
-    if (!isMasterNode.load())
+    // 8 KB stack (larger than the OTA receiver/forwarder family):
+    // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
+    // SHA-256 ctx and call frames; that does not fit in 4 KB.
+    // Task runs on both master (self-flash loopback) and padawan (wire OTA).
+    if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) != pdPASS)
     {
-        // 8 KB stack (larger than the OTA receiver/forwarder family):
-        // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
-        // SHA-256 ctx and call frames; that does not fit in 4 KB.
-        if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) !=
-            pdPASS)
-        {
-            ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
-            abort();
-        }
+        ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
+        abort();
     }
 
     // core 0
@@ -330,18 +327,16 @@ void init(void)
         }
     }
 
-    // otaWriterQueue is padawan-only: master never receives OTA_BEGIN /
-    // OTA_DATA / OTA_END (those are master→padawan directional frames).
-    // Keeping the queue padawan-only saves the queue's 16-slot * sizeof
-    // allocation on master nodes.
-    if (!isMasterNode.load())
+    // OtaWriter queue is needed on BOTH master (for self-flash via
+    // OTA_WR_LOCAL_FLASH_REQ from OtaForwarder) and padawan (for
+    // wire-driven OTA_BEGIN/OTA_DATA/OTA_END). The dispatch into this
+    // queue from incoming ESP-NOW frames is gated separately via
+    // setOtaWriterQueue (padawan-only).
+    otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
+    if (otaWriterQueue == NULL)
     {
-        otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
-        if (otaWriterQueue == NULL)
-        {
-            ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
-            abort();
-        }
+        ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
+        abort();
     }
 
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
@@ -358,9 +353,12 @@ void init(void)
         AstrOs_OtaForwarder.Init(otaForwarderQueue);
         AstrOs_EspNow.setOtaForwarderQueue(otaForwarderQueue);
     }
+    AstrOs_OtaWriter.Init(otaWriterQueue);
     if (!isMasterNode.load())
     {
-        AstrOs_OtaWriter.Init(otaWriterQueue);
+        // Padawan-only: route incoming wire OTA frames (OTA_BEGIN/DATA/END)
+        // into OtaWriter. Master uses the loopback (OTA_WR_LOCAL_FLASH_REQ
+        // posted by OtaForwarder) instead.
         AstrOs_EspNow.setOtaWriterQueue(otaWriterQueue);
     }
     ESP_LOGI(TAG, "AstrOs Interface initiated");
