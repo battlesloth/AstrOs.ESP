@@ -692,7 +692,15 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
     struct stat st
     {
     };
-    if (stat(path, &st) != 0 || static_cast<uint32_t>(st.st_size) != expectedSize)
+    if (stat(path, &st) != 0)
+    {
+        ESP_LOGE(TAG, "handleLocalFlashReq: stat(%s) failed", path);
+        std::fclose(f);
+        active_.store(false);
+        postResult(OtaFlashStatus::FAILED, "firmware_stat_failed");
+        return;
+    }
+    if (static_cast<uint32_t>(st.st_size) != expectedSize)
     {
         ESP_LOGE(TAG, "handleLocalFlashReq: size mismatch (stat=%ld expected=%u)", (long)st.st_size, expectedSize);
         std::fclose(f);
@@ -737,6 +745,7 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
             ESP_LOGE(TAG, "handleLocalFlashReq: fread short (%zu of %zu) at offset %zu", got, want, totalRead);
             std::fclose(f);
             esp_ota_abort(otaHandle_);
+            otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
             resetOtaHandleAndSha();
             active_.store(false);
             postResult(OtaFlashStatus::FAILED, "firmware_read_short");
@@ -749,6 +758,7 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
                      esp_err_to_name(err));
             std::fclose(f);
             esp_ota_abort(otaHandle_);
+            otaHandle_ = 0; // tell resetOtaHandleAndSha not to abort again
             resetOtaHandleAndSha();
             active_.store(false);
             postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
