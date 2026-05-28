@@ -69,7 +69,8 @@ private:
         AWAITING_END_ACK = 3,
         AWAITING_FLASH_RESULT = 4,      // END_ACK OK received; padawan verifying + committing
         AWAITING_VERSION_CONFIRMED = 5, // FLASH_RESULT OK received; waiting on heartbeat-version match
-        BETWEEN_PADAWANS = 6,           // result recorded; pulling next from order list
+        MASTER_SELF_FLASHING = 6,       // Phase C — master local-flash in flight; OtaWriter is running
+        BETWEEN_PADAWANS = 7,           // result recorded; pulling next from order list
         // Note: there is no DONE state — emitDeployDoneAndReset transitions
         // straight back to IDLE after emitting FW_DEPLOY_DONE.
     };
@@ -152,6 +153,10 @@ private:
 
     void handleFlashResult(queue_ota_forwarder_msg_t &msg);
     void handleFlashResultTimeout();
+
+    // Phase C — master self-flash machinery.
+    void startMasterSelfFlash();
+    void handleLocalFlashResult(queue_ota_forwarder_msg_t &msg);
 
     // Phase A — AWAITING_VERSION_CONFIRMED machinery.
     bool versionConfirmTimerStart();
@@ -249,6 +254,14 @@ private:
     std::vector<std::string> orderList_;
     size_t nextOrderIdx_ = 0;
     std::vector<PadawanResult> results_;
+
+    // Phase C — master row deferral. Master always self-flashes last per
+    // the cross-milestone design; these track that the row was seen + at
+    // what index, so the result inserts at the original position when
+    // handleLocalFlashResult fires (preserves operator-submitted order in
+    // FW_DEPLOY_DONE).
+    bool masterRowDeferred_ = false;
+    size_t masterRowOriginalIndex_ = 0;
 
     // Per-padawan state (lives across one padawan's transfer; reset on
     // advance).

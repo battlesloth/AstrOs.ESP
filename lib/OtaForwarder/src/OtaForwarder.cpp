@@ -151,6 +151,9 @@ void OtaForwarder::process(queue_ota_forwarder_msg_t &msg)
     case OTA_FWD_VERSION_CONFIRM_TIMEOUT:
         handleVersionConfirmTimeout();
         break;
+    case OTA_FWD_LOCAL_FLASH_RESULT:
+        handleLocalFlashResult(msg);
+        break;
     default:
         ESP_LOGE(TAG, "process: unknown kind %d", (int)msg.kind);
         break;
@@ -831,6 +834,9 @@ void OtaForwarder::emitDeployDoneAndReset()
         case PadawanStatus::FAILED:
             statusStr = "FAILED";
             break;
+        case PadawanStatus::PENDING:
+            statusStr = "PENDING";
+            break;
         default:
             // If a new enum value lands and emitDeployDoneAndReset isn't
             // updated, fail loudly on both master AND wire so the operator
@@ -850,6 +856,8 @@ void OtaForwarder::emitDeployDoneAndReset()
     orderList_.clear();
     nextOrderIdx_ = 0;
     results_.clear();
+    masterRowDeferred_ = false;
+    masterRowOriginalIndex_ = 0;
     phase_ = Phase::IDLE;
     active_.store(false);
     wireBusy_.store(false);
@@ -1192,6 +1200,9 @@ void OtaForwarder::handleStatsFire()
     case Phase::AWAITING_VERSION_CONFIRMED:
         phaseStr = "AWAITING_VERSION_CONFIRMED";
         break;
+    case Phase::MASTER_SELF_FLASHING:
+        phaseStr = "MASTER_SELF_FLASHING";
+        break;
     case Phase::BETWEEN_PADAWANS:
         phaseStr = "BETWEEN_PADAWANS";
         break;
@@ -1404,6 +1415,17 @@ void OtaForwarder::handleVersionConfirmTimeout()
              currentControllerId_.c_str());
     results_.push_back({currentControllerId_, PadawanStatus::FAILED, "", "version_unconfirmed"});
     finishCurrentPadawanAndAdvance();
+}
+
+void OtaForwarder::startMasterSelfFlash()
+{
+    // Stub; populated in Task 6.
+}
+
+void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
+{
+    // Stub; populated in Task 6.
+    (void)msg;
 }
 
 void OtaForwarder::checkPeerVersionForCurrentPadawan()
