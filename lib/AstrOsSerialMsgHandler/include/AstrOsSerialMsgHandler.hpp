@@ -15,22 +15,44 @@ class AstrOsSerialMsgHandler
 private:
     QueueHandle_t handlerQueue;
     QueueHandle_t serialQueue;
+    QueueHandle_t otaQueue;
+    QueueHandle_t otaForwarderQueue;
 
     AstrOsSerialMessageService msgService;
 
     void sendToInterfaceQueue(AstrOsInterfaceResponseType responseType, std::string msgId, std::string peerMac,
                               std::string peerName, std::string message);
 
+    void handleFwTransferBeginInbound(const std::string &msgId, const std::string &payload);
+    void handleFwChunkInbound(const std::string &payload);
+    void handleFwTransferEndInbound(const std::string &msgId, const std::string &payload);
+    void handleFwDeployBeginInbound(const std::string &msgId, const std::string &payload);
+
 public:
     AstrOsSerialMsgHandler();
     ~AstrOsSerialMsgHandler();
-    void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue);
+    void Init(QueueHandle_t serverResponseQueue, QueueHandle_t serialQueue, QueueHandle_t otaQueue,
+              QueueHandle_t otaForwarderQueue);
     void handleMessage(std::string message);
     void sendRegistraionAck(std::string msgId, std::vector<astros_peer_data_t> peers);
-    void sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
-                        bool isAck);
+    // Returns true if the serial-queue post succeeded; false if the queue was
+    // full and the message was dropped. Most callers discard the return (the
+    // self-POLL_ACK message is best-effort). main.cpp's master polling code
+    // checks the return to gate firstSelfPollAckSent_ for OTA rollback.
+    bool sendPollAckNak(std::string mac, std::string name, std::string fingerprint, std::string firmwareVersion,
+                        std::string variant, bool isAck);
     void sendBasicAckNakResponse(AstrOsSerialMessageType type, std::string msgId, std::string mac, std::string name,
                                  std::string payload);
+
+    void sendFwTransferBeginAck(std::string msgId, std::string transferId, std::string status);
+    void sendFwChunkAck(std::string transferId, uint32_t highestContiguousSeq, uint32_t nextExpectedSeq,
+                        uint8_t windowRemaining);
+    void sendFwChunkNak(std::string transferId, uint32_t lastGoodSeq, uint32_t nextExpectedSeq, std::string reasonCode);
+    void sendFwTransferEndAck(std::string msgId, std::string transferId, std::string status,
+                              std::string computedSha256Hex);
+    void sendFwDeployDone(std::string msgId, std::string transferId, std::vector<astros_fw_deploy_result_t> results);
+    void sendFwProgress(std::string transferId, std::string controllerId, std::string stage, uint32_t bytesSent,
+                        uint32_t totalBytes, std::string detail);
 };
 
 extern AstrOsSerialMsgHandler AstrOs_SerialMsgHandler;

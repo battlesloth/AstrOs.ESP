@@ -343,3 +343,151 @@ TEST(SerialProtocol, DescribeRejectReasonReturnsNonNull)
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::UNKNOWN_TYPE));
     EXPECT_STRNE("", describeRejectReason(DecodeRejectReason::EMPTY_PAYLOAD));
 }
+
+TEST(SerialProtocol, MapResponseTypeMasterFwTable)
+{
+    using namespace AstrOsSerialProtocol;
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_BEGIN,
+              mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_CHUNK, mapResponseType(AstrOsSerialMessageType::FW_CHUNK, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_END,
+              mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_END, true));
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_DEPLOY_BEGIN,
+              mapResponseType(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, true));
+}
+
+TEST(SerialProtocol, MapResponseTypePadawanFwAllUnknown)
+{
+    using namespace AstrOsSerialProtocol;
+    // Padawans don't receive FW_* over serial; they get only ESP-NOW.
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_CHUNK, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_TRANSFER_END, false));
+    EXPECT_EQ(AstrOsInterfaceResponseType::UNKNOWN, mapResponseType(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, false));
+}
+
+// ---------------- FW_* dispatch ----------------
+
+TEST(SerialProtocol, DecodeFwTransferBeginProducesSingleCommandWithRawPayload)
+{
+    using namespace AstrOsSerialProtocol;
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "1234567" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" << UNIT_SEPARATOR << "4096"
+            << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome";
+    const std::string raw = payload.str();
+
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, "mid-1", raw);
+    ASSERT_EQ(1u, result.commands.size());
+    EXPECT_TRUE(result.rejects.empty());
+    const auto &cmd = result.commands[0];
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_BEGIN, cmd.responseType);
+    EXPECT_EQ("mid-1", cmd.msgId);
+    EXPECT_EQ("", cmd.peerMac);
+    EXPECT_EQ("", cmd.peerName);
+    EXPECT_EQ(raw, cmd.message); // raw payload passes through unchanged
+}
+
+TEST(SerialProtocol, DecodeFwChunkProducesSingleCommand)
+{
+    using namespace AstrOsSerialProtocol;
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "0" << UNIT_SEPARATOR << "4" << UNIT_SEPARATOR << "AQID" << UNIT_SEPARATOR
+            << "abcd";
+    const std::string raw = payload.str();
+
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_CHUNK, "mid-c", raw);
+    ASSERT_EQ(1u, result.commands.size());
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_CHUNK, result.commands[0].responseType);
+    EXPECT_EQ(raw, result.commands[0].message);
+}
+
+TEST(SerialProtocol, DecodeFwTransferEndProducesSingleCommand)
+{
+    using namespace AstrOsSerialProtocol;
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "9400" << UNIT_SEPARATOR
+            << "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const std::string raw = payload.str();
+
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_TRANSFER_END, "mid-e", raw);
+    ASSERT_EQ(1u, result.commands.size());
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_TRANSFER_END, result.commands[0].responseType);
+    EXPECT_EQ(raw, result.commands[0].message);
+}
+
+TEST(SerialProtocol, DecodeFwDeployBeginProducesSingleCommand)
+{
+    using namespace AstrOsSerialProtocol;
+    std::stringstream payload;
+    payload << "7" << UNIT_SEPARATOR << "core" << RECORD_SEPARATOR << "dome";
+    const std::string raw = payload.str();
+
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, "mid-d", raw);
+    ASSERT_EQ(1u, result.commands.size());
+    EXPECT_EQ(AstrOsInterfaceResponseType::FW_DEPLOY_BEGIN, result.commands[0].responseType);
+    EXPECT_EQ(raw, result.commands[0].message);
+}
+
+TEST(SerialProtocol, DecodeFwTransferBeginEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_TRANSFER_BEGIN, "mid-1", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, DecodeFwChunkEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_CHUNK, "mid-c", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, DecodeFwTransferEndEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_TRANSFER_END, "mid-e", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, DecodeFwDeployBeginEmptyPayloadRejects)
+{
+    using namespace AstrOsSerialProtocol;
+    auto result = decodeSerialMessage(AstrOsSerialMessageType::FW_DEPLOY_BEGIN, "mid-d", "");
+    EXPECT_TRUE(result.commands.empty());
+    ASSERT_EQ(1u, result.rejects.size());
+    EXPECT_EQ(DecodeRejectReason::EMPTY_PAYLOAD, result.rejects[0].reason);
+}
+
+TEST(SerialProtocol, ChunksForSizeExactMultiple)
+{
+    EXPECT_EQ(10u, AstrOsSerialProtocol::chunksForSize(40960, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeOneByteOverMultiple)
+{
+    EXPECT_EQ(11u, AstrOsSerialProtocol::chunksForSize(40961, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeSmallerThanChunk)
+{
+    EXPECT_EQ(1u, AstrOsSerialProtocol::chunksForSize(1, 4096));
+}
+
+TEST(SerialProtocol, ChunksForSizeZeroTotalReturnsZero)
+{
+    EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(0, 4096));
+}
+
+// Defensive guard. Callers are documented as rejecting chunkSize=0 before invoking,
+// but a future caller that forgot would otherwise divide by zero. Pin the contract.
+TEST(SerialProtocol, ChunksForSizeZeroChunkSizeReturnsZero)
+{
+    EXPECT_EQ(0u, AstrOsSerialProtocol::chunksForSize(40960, 0));
+}

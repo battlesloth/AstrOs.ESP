@@ -3,6 +3,8 @@
 #include <AstrOsMessaging.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
+#include <OtaForwarderQueueMessage.h>
+#include <OtaWriterQueueMessage.h>
 
 #include <algorithm>
 #include <array>
@@ -21,6 +23,7 @@
 #include <esp_crc.h>
 #include <esp_netif.h>
 #include <esp_now.h>
+#include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_wifi_types.h>
@@ -313,6 +316,74 @@ std::vector<espnow_peer_t> AstrOsEspNow::getPeers()
     return result;
 }
 
+std::string AstrOsEspNow::getPeerVersion(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersion: failed to acquire peersMutex within 1s");
+        return "";
+    }
+    std::string out;
+    auto it = this->peerVersions_.find(macString);
+    if (it != this->peerVersions_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
+}
+
+void AstrOsEspNow::clearPeerVersion(const std::string &macString)
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "clearPeerVersion: failed to acquire peersMutex within 1s");
+        return;
+    }
+    this->peerVersions_.erase(macString);
+    this->peerUptimes_.erase(macString); // keep in sync with peerVersions_
+    xSemaphoreGive(this->peersMutex);
+}
+
+int64_t AstrOsEspNow::getPeerUptimeUs(const std::string &macString) const
+{
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerUptimeUs: failed to acquire peersMutex within 1s");
+        return 0;
+    }
+    int64_t out = 0;
+    auto it = this->peerUptimes_.find(macString);
+    if (it != this->peerUptimes_.end())
+    {
+        out = it->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return out;
+}
+
+AstrOsEspNow::PeerVersionSnapshot AstrOsEspNow::getPeerVersionSnapshot(const std::string &macString) const
+{
+    PeerVersionSnapshot snap;
+    if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "getPeerVersionSnapshot: failed to acquire peersMutex within 1s");
+        return snap;
+    }
+    auto vit = this->peerVersions_.find(macString);
+    if (vit != this->peerVersions_.end())
+    {
+        snap.version = vit->second;
+    }
+    auto uit = this->peerUptimes_.find(macString);
+    if (uit != this->peerUptimes_.end())
+    {
+        snap.uptimeUs = uit->second;
+    }
+    xSemaphoreGive(this->peersMutex);
+    return snap;
+}
+
 void AstrOsEspNow::updateMasterMac(uint8_t *macAddress)
 {
     if (xSemaphoreTake(masterMacMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
@@ -390,11 +461,270 @@ bool AstrOsEspNow::handleMessage(uint8_t *src, uint8_t *data, size_t len)
         return this->handlePoll(packet);
     case AstrOsPacketType::POLL_ACK:
         return this->handlePollAck(packet);
+    case AstrOsPacketType::OTA_BEGIN_ACK:
+    case AstrOsPacketType::OTA_BEGIN_NAK:
+    case AstrOsPacketType::OTA_DATA_ACK:
+    case AstrOsPacketType::OTA_DATA_NAK:
+    case AstrOsPacketType::OTA_END_ACK:
+    case AstrOsPacketType::OTA_FLASH_RESULT:
+        return this->routeOtaAckNakToForwarder(src, packet);
+    case AstrOsPacketType::OTA_BEGIN:
+    case AstrOsPacketType::OTA_DATA:
+    case AstrOsPacketType::OTA_END:
+        return this->routeOtaToWriter(src, packet);
     default:
         ESP_LOGE(TAG, "Dispatcher returned UnsupportedType for packet type %d but no residual handler exists",
                  (int)packet.packetType);
         return false;
     }
+}
+
+void AstrOsEspNow::setOtaForwarderQueue(QueueHandle_t q)
+{
+    this->otaForwarderQueue_ = q;
+}
+
+void AstrOsEspNow::setOtaWriterQueue(QueueHandle_t q)
+{
+    this->otaWriterQueue_ = q;
+}
+
+bool AstrOsEspNow::routeOtaAckNakToForwarder(const uint8_t *src, const astros_packet_t &packet)
+{
+    if (!this->isMasterNode)
+    {
+        ESP_LOGW(TAG, "OTA padawan→master packet type=%d received on padawan; dropping", (int)packet.packetType);
+        return true;
+    }
+    if (this->otaForwarderQueue_ == nullptr)
+    {
+        ESP_LOGW(TAG, "OTA ACK/NAK type=%d received before otaForwarderQueue_ set; dropping", (int)packet.packetType);
+        return true;
+    }
+
+    queue_ota_forwarder_msg_t m{};
+
+    switch (packet.packetType)
+    {
+    case AstrOsPacketType::OTA_BEGIN_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBeginAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_BEGIN_ACK;
+        memcpy(m.begin_ack.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.begin_ack.xferId = rec.xferId;
+        break;
+    }
+    case AstrOsPacketType::OTA_BEGIN_NAK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBeginNak(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN_NAK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_BEGIN_NAK;
+        memcpy(m.begin_nak.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.begin_nak.xferId = rec.xferId;
+        m.begin_nak.reason = static_cast<uint8_t>(rec.reason);
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaDataAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_DATA_ACK;
+        memcpy(m.data_ack.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.data_ack.xferId = rec.xferId;
+        m.data_ack.highestContiguousSeq = rec.highestContiguousSeq;
+        m.data_ack.nextExpectedSeq = rec.nextExpectedSeq;
+        m.data_ack.windowRemaining = rec.windowRemaining;
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA_NAK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaDataNak(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA_NAK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_DATA_NAK;
+        memcpy(m.data_nak.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.data_nak.xferId = rec.xferId;
+        m.data_nak.highestContiguousSeq = rec.highestContiguousSeq;
+        m.data_nak.nextExpectedSeq = rec.nextExpectedSeq;
+        m.data_nak.windowRemaining = rec.windowRemaining;
+        m.data_nak.reason = static_cast<uint8_t>(rec.reason);
+        break;
+    }
+    case AstrOsPacketType::OTA_END_ACK:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaEndAck(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_END_ACK parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_FWD_END_ACK;
+        memcpy(m.end_ack.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.end_ack.xferId = rec.xferId;
+        m.end_ack.status = static_cast<uint8_t>(rec.status);
+        memcpy(m.end_ack.sha256Computed, rec.sha256Computed, 32);
+        break;
+    }
+    case AstrOsPacketType::OTA_FLASH_RESULT:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaFlashResult(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_FLASH_RESULT parse failed from " MACSTR, MAC2STR(src));
+            return false;
+        }
+        queue_ota_forwarder_msg_t fm{};
+        fm.kind = OTA_FWD_FLASH_RESULT;
+        memcpy(fm.flash_result.srcMac, src, ESP_NOW_ETH_ALEN);
+        fm.flash_result.xferId = rec.xferId;
+        fm.flash_result.status = static_cast<uint8_t>(rec.status);
+        fm.flash_result.reasonLen = static_cast<uint8_t>(rec.reason.size());
+        if (!rec.reason.empty())
+        {
+            memcpy(fm.flash_result.reason, rec.reason.data(), rec.reason.size());
+        }
+        if (xQueueSend(this->otaForwarderQueue_, &fm, pdMS_TO_TICKS(100)) != pdTRUE)
+        {
+            ESP_LOGE(TAG, "OTA_FLASH_RESULT: otaForwarderQueue full; "
+                          "master will report flash_result_timeout instead of true status");
+            freeOtaForwarderMsg(&fm);
+        }
+        return true;
+    }
+    default:
+        ESP_LOGE(TAG, "routeOtaAckNakToForwarder: unexpected packet type %d", (int)packet.packetType);
+        return false;
+    }
+
+    if (xQueueSend(this->otaForwarderQueue_, &m, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "otaForwarderQueue full; dropping OTA ACK/NAK type=%d", (int)packet.packetType);
+        freeOtaForwarderMsg(&m);
+        // Return true (handled, dropped intentionally) so handleMessage's
+        // residual switch doesn't log "no residual handler exists" on top
+        // of the queue-full ESP_LOGE. The dropped ACK/NAK will be
+        // reconstructed by the next padawan retransmit or tick.
+        return true;
+    }
+    return true;
+}
+
+bool AstrOsEspNow::routeOtaToWriter(const uint8_t *src, const astros_packet_t &packet)
+{
+    if (this->isMasterNode)
+    {
+        // Master receiving a master→padawan OTA frame is a protocol error
+        // — log + drop. Returning true marks it handled so the residual
+        // switch doesn't escalate to "no residual handler exists".
+        ESP_LOGW(TAG, "OTA master→padawan packet type=%d received on master; dropping (wrong role)",
+                 (int)packet.packetType);
+        return true;
+    }
+    if (this->otaWriterQueue_ == nullptr)
+    {
+        ESP_LOGW(TAG, "OTA writer-bound packet type=%d received before otaWriterQueue_ set; dropping",
+                 (int)packet.packetType);
+        return true;
+    }
+
+    queue_ota_writer_msg_t m{};
+
+    switch (packet.packetType)
+    {
+    case AstrOsPacketType::OTA_BEGIN:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaBegin(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_BEGIN parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_WR_BEGIN;
+        memcpy(m.begin.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.begin.xferId = rec.xferId;
+        m.begin.totalSize = rec.totalSize;
+        m.begin.chunkSize = rec.chunkSize;
+        m.begin.totalChunks = rec.totalChunks;
+        memcpy(m.begin.sha256Expected, rec.sha256Expected, sizeof(m.begin.sha256Expected));
+        m.begin.flags = rec.flags;
+        break;
+    }
+    case AstrOsPacketType::OTA_DATA:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaData(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_DATA parse rejected (malformed wire bytes)");
+            return false;
+        }
+        // CRITICAL: rec.payload points INTO the packet buffer that the
+        // dispatcher returns from. We MUST copy the bytes before queueing,
+        // otherwise the consumer will read freed memory. freeOtaWriterMsg
+        // releases this malloc.
+        uint8_t *payloadCopy = static_cast<uint8_t *>(malloc(rec.payloadLen));
+        if (payloadCopy == nullptr)
+        {
+            ESP_LOGE(TAG, "OTA_DATA payload malloc(%u) failed — dropping chunk seq=%u", (unsigned)rec.payloadLen,
+                     (unsigned)rec.seq);
+            return true; // handled (dropped); master's tick-retransmit will re-send
+        }
+        memcpy(payloadCopy, rec.payload, rec.payloadLen);
+
+        m.kind = OTA_WR_DATA;
+        memcpy(m.data.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.data.xferId = rec.xferId;
+        m.data.seq = rec.seq;
+        m.data.payloadLen = rec.payloadLen;
+        m.data.crc16 = rec.crc16;
+        m.data.payload = payloadCopy;
+        break;
+    }
+    case AstrOsPacketType::OTA_END:
+    {
+        auto rec = AstrOsEspNowProtocol::parseOtaEnd(packet);
+        if (!rec.valid)
+        {
+            ESP_LOGW(TAG, "OTA_END parse rejected (malformed wire bytes)");
+            return false;
+        }
+        m.kind = OTA_WR_END;
+        memcpy(m.end.srcMac, src, ESP_NOW_ETH_ALEN);
+        m.end.xferId = rec.xferId;
+        m.end.totalChunksSent = rec.totalChunksSent;
+        memcpy(m.end.sha256Final, rec.sha256Final, sizeof(m.end.sha256Final));
+        break;
+    }
+    default:
+        ESP_LOGE(TAG, "routeOtaToWriter: unexpected packet type %d", (int)packet.packetType);
+        return false;
+    }
+
+    if (xQueueSend(this->otaWriterQueue_, &m, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "otaWriterQueue full; dropping OTA packet type=%d", (int)packet.packetType);
+        freeOtaWriterMsg(&m);
+        // Return true (handled, dropped intentionally) so handleMessage's
+        // residual switch doesn't escalate. The dropped chunk will be
+        // reconstructed by the master's tick-driven retransmit.
+        return true;
+    }
+    return true;
 }
 
 /*******************************************
@@ -678,16 +1008,51 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
         return false;
     }
 
+    // Padawan-side POLL_ACK payload:
+    //   name<US>fingerprint<US>version<US>variant<US>uptime_us
+    // Variant is the PlatformIO env name; the server uses it to pick the
+    // correct firmware asset at OTA flash time. uptime_us is the padawan's
+    // esp_timer_get_time() snapshot (microseconds since boot); master uses it
+    // as a post-reboot discriminator in same-version deploys. Older masters
+    // receiving a 6-field payload ignore the extra field; older padawans omit
+    // it (master parses missing field as 0 = "uptime unknown").
     std::stringstream ss;
-    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version;
+    ss << this->getName() << UNIT_SEPARATOR << this->getFingerprint() << UNIT_SEPARATOR << AstrOsConstants::Version
+       << UNIT_SEPARATOR << AstrOsConstants::Variant << UNIT_SEPARATOR << std::to_string(esp_timer_get_time());
 
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
-    if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+    esp_err_t sendErr = esp_now_send(destMac, data.data, data.size);
+    if (sendErr != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending poll ack");
         result = false;
+    }
+    else
+    {
+        // First successful POLL_ACK send post-reboot proves: NVS read worked
+        // (fingerprint), ESP-NOW peer table is valid, version + variant
+        // strings are reachable, and the send queue accepted the frame. That's
+        // enough evidence to cancel the auto-rollback for a freshly-flashed
+        // image. The mark_valid call is a no-op when the running image isn't
+        // in PENDING_VERIFY, so no extra guard is needed.
+        bool expected = false;
+        if (firstPollAckSent_.compare_exchange_strong(expected, true))
+        {
+            esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+            if (markErr == ESP_OK)
+            {
+                ESP_LOGI(TAG, "OTA rollback cancelled — running image is now valid");
+            }
+            else
+            {
+                ESP_LOGW(TAG,
+                         "esp_ota_mark_app_valid_cancel_rollback returned %s "
+                         "(safe to ignore if image was not in PENDING_VERIFY)",
+                         esp_err_to_name(markErr));
+            }
+        }
     }
 
     free(data.data);
@@ -710,10 +1075,19 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
     auto padawanMac = parts[0];
     auto padawan = parts[1];
     auto fingerprint = parts[2];
-    // Phase 1+ peers append their firmware version as a 4th field. Legacy peers
-    // omit it; we forward an empty string so the server records the peer's version
-    // as unknown (which it then treats as incompatible — accurate semantic).
+    // Newer peers append firmware version (4th) and build variant (5th).
+    // Older peers omit; empty strings propagate through so the server records
+    // "unknown" rather than silently picking the wrong firmware asset.
     auto peerVersion = parts.size() >= 4 ? parts[3] : std::string();
+    auto peerVariant = parts.size() >= 5 ? parts[4] : std::string();
+    // 6th field: padawan's esp_timer_get_time() at POLL_ACK build time (us since
+    // boot). Missing in older firmware; parsed as 0 = "uptime unknown". Master
+    // uses this as a post-reboot discriminator in same-version OTA deploys.
+    int64_t peerUptimeUs = 0;
+    if (parts.size() >= 6 && !parts[5].empty())
+    {
+        peerUptimeUs = std::strtoll(parts[5].c_str(), nullptr, 10);
+    }
 
     if (xSemaphoreTake(this->peersMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
     {
@@ -721,6 +1095,19 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
     bool known = this->peers.markPollAckReceived(padawanMac);
+    if (known && !peerVersion.empty())
+    {
+        // Record the reported firmware version for OtaForwarder to consult
+        // during AWAITING_VERSION_CONFIRMED. Overwrite is intentional —
+        // newer ACKs win.
+        this->peerVersions_[padawanMac] = peerVersion;
+    }
+    // Always record uptime (even 0 = "unknown") to keep it in sync with
+    // peerVersions_. OtaForwarder treats 0 as "legacy peer; skip uptime gate".
+    if (known)
+    {
+        this->peerUptimes_[padawanMac] = peerUptimeUs;
+    }
     xSemaphoreGive(this->peersMutex);
 
     if (!known)
@@ -729,11 +1116,9 @@ bool AstrOsEspNow::handlePollAck(astros_packet_t packet)
         return false;
     }
 
-    // Pack `fingerprint<US>version` (or just `fingerprint` for legacy peers) into
-    // the interface queue's `message` field. The dispatcher in main.cpp unpacks it
-    // and threads the version through to getPollAck so the version reported to
-    // the server matches the peer identifiers, not the local controller's version.
-    auto packed = peerVersion.empty() ? fingerprint : fingerprint + UNIT_SEPARATOR + peerVersion;
+    // Pack `fingerprint<US>version<US>variant` for the interface queue. Joined
+    // explicitly so trailing empty pieces survive (splitString would trim them).
+    auto packed = fingerprint + UNIT_SEPARATOR + peerVersion + UNIT_SEPARATOR + peerVariant;
     this->sendToInterfaceQueue(AstrOsInterfaceResponseType::SEND_POLL_ACK, "", padawanMac, padawan, packed);
 
     return true;
@@ -838,6 +1223,36 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
 
     free(packet.data);
     free(destMac);
+}
+
+esp_err_t AstrOsEspNow::sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len)
+{
+    auto frames = this->messageService.generateOtaPacket(type, payload, len);
+    if (frames.empty())
+    {
+        ESP_LOGE(TAG, "sendOtaFrame: generateOtaPacket rejected type=%d len=%zu", (int)type, len);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (frames.size() != 1)
+    {
+        // generateOtaPacket is documented to return 0 or 1 entries (OTA
+        // frames always fit one ESP-NOW transmission). Defensive only.
+        ESP_LOGE(TAG, "sendOtaFrame: unexpected frame count %zu", frames.size());
+        for (auto &f : frames)
+        {
+            free(f.data);
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    astros_espnow_data_t frame = frames[0];
+    esp_err_t err = esp_now_send(mac, frame.data, frame.size);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "sendOtaFrame: esp_now_send returned %s for type=%d", esp_err_to_name(err), (int)type);
+    }
+    free(frame.data); // free regardless of err — esp_now copies into its own buffer
+    return err;
 }
 
 /// @brief checks whether the given MAC (canonical "AA:BB:..." string) is in the peer list.

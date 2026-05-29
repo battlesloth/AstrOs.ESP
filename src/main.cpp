@@ -27,6 +27,10 @@
 #include <GpioModule.hpp>
 #include <I2cMaster.hpp>
 #include <I2cModule.hpp>
+#include <OtaForwarder.hpp>
+#include <OtaQueueMessage.h>
+#include <OtaReceiver.hpp>
+#include <OtaWriter.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -75,6 +79,9 @@ static QueueHandle_t servoQueue;
 static QueueHandle_t i2cQueue;
 static QueueHandle_t gpioQueue;
 static QueueHandle_t espnowQueue;
+static QueueHandle_t otaQueue;
+static QueueHandle_t otaForwarderQueue;
+static QueueHandle_t otaWriterQueue;
 
 /**********************************
  * UART
@@ -90,7 +97,7 @@ static esp_timer_handle_t pollingTimer;
 static bool polling = false;
 
 static esp_timer_handle_t maintenanceTimer;
-static esp_timer_handle_t servoMoveTimer;
+static esp_timer_handle_t servoShutdownTimer;
 
 // Silent-error counters — incremented from cross-task contexts (Wi-Fi driver task
 // for espnowRecvCallback, astrosRxTask on core 0). Read from maintenanceTimerCallback
@@ -156,7 +163,7 @@ static void loadGpioConfig();
 static void initTimers(void);
 static void pollingTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
-static void servoMoveTimerCallback(void *arg);
+static void servoShutdownTimerCallback(void *arg);
 
 // espnow call backs
 bool cachePeer(espnow_peer_t peer);
@@ -178,6 +185,9 @@ void servoQueueTask(void *arg);
 void i2cQueueTask(void *arg);
 void gpioQueueTask(void *arg);
 void espnowQueueTask(void *arg);
+void otaReceiverTask(void *arg);
+void otaForwarderTask(void *arg);
+void otaWriterTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -215,6 +225,31 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+    if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
+        abort();
+    }
+
+    if (isMasterNode.load())
+    {
+        if (xTaskCreatePinnedToCore(&otaForwarderTask, "ota_forwarder_task", 8192, (void *)otaForwarderQueue, 6, NULL,
+                                    1) != pdPASS)
+        {
+            ESP_LOGE(TAG, "Failed to create otaForwarderTask — aborting init");
+            abort();
+        }
+    }
+
+    // 8 KB stack (larger than the OTA receiver/forwarder family):
+    // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
+    // SHA-256 ctx and call frames; that does not fit in 4 KB.
+    // Task runs on both master (self-flash loopback) and padawan (wire OTA).
+    if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
+        abort();
+    }
 
     // core 0
     xTaskCreatePinnedToCore(&astrosRxTask, "astros_rx_task", 4096, (void *)animationQueue, 9, NULL, 0);
@@ -253,6 +288,15 @@ void init(void)
     i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
     espnowQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_espnow_msg_t));
+    otaQueue = xQueueCreate(16, sizeof(queue_ota_msg_t));
+    if (otaQueue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create otaQueue — aborting init");
+        abort();
+    }
+
+    // otaForwarderQueue is created later, after loadConfig() resolves the
+    // master/padawan role — only masters pay the 64-slot heap cost.
 
     maestroModulesMutex = xSemaphoreCreateMutex();
     if (maestroModulesMutex == NULL)
@@ -265,9 +309,58 @@ void init(void)
 
     loadConfig();
 
+    // Master-only forwarder allocations: 64-slot queue + 3 esp_timer
+    // handles + the OtaForwarder singleton's state. Padawans never spawn
+    // the forwarder task and never receive FW_DEPLOY_BEGIN over serial,
+    // so they don't need to allocate any of this.
+    if (isMasterNode.load())
+    {
+        // Sized for streaming-phase peak load: 50 ms tick + ACK/NAK arrivals
+        // from a chunk-streaming peer can overlap if the consumer is briefly
+        // blocked on file I/O. 64 slots give enough headroom that
+        // deadline-bearing sentinel posts don't get dropped under burst.
+        otaForwarderQueue = xQueueCreate(64, sizeof(queue_ota_forwarder_msg_t));
+        if (otaForwarderQueue == NULL)
+        {
+            ESP_LOGE(TAG, "Failed to create otaForwarderQueue — aborting init");
+            abort();
+        }
+    }
+
+    // OtaWriter queue is needed on BOTH master (for self-flash via
+    // OTA_WR_LOCAL_FLASH_REQ from OtaForwarder) and padawan (for
+    // wire-driven OTA_BEGIN/OTA_DATA/OTA_END). The dispatch into this
+    // queue from incoming ESP-NOW frames is gated separately via
+    // setOtaWriterQueue (padawan-only).
+    otaWriterQueue = xQueueCreate(16, sizeof(queue_ota_writer_msg_t));
+    if (otaWriterQueue == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create otaWriterQueue — aborting init");
+        abort();
+    }
+
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue);
+    // otaForwarderQueue is nullptr on padawan; SerialMsgHandler's
+    // handleFwDeployBeginInbound and AstrOsEspNow's routeOtaAckNakToForwarder
+    // both null-guard before posting to it.
+    AstrOs_SerialMsgHandler.Init(interfaceResponseQueue, serialCh1Queue, otaQueue, otaForwarderQueue);
+    // The receiver's watchdog posts abort messages into the same queue
+    // otaReceiverTask drains.
+    AstrOs_OtaReceiver.Init(otaQueue);
+    if (isMasterNode.load())
+    {
+        AstrOs_OtaForwarder.Init(otaForwarderQueue);
+        AstrOs_EspNow.setOtaForwarderQueue(otaForwarderQueue);
+    }
+    AstrOs_OtaWriter.Init(otaWriterQueue);
+    if (!isMasterNode.load())
+    {
+        // Padawan-only: route incoming wire OTA frames (OTA_BEGIN/DATA/END)
+        // into OtaWriter. Master uses the loopback (OTA_WR_LOCAL_FLASH_REQ
+        // posted by OtaForwarder) instead.
+        AstrOs_EspNow.setOtaWriterQueue(otaWriterQueue);
+    }
     ESP_LOGI(TAG, "AstrOs Interface initiated");
 
     ESP_ERROR_CHECK(i2cMaster.Init((gpio_num_t)SDA_PIN, (gpio_num_t)SCL_PIN));
@@ -378,10 +471,10 @@ static void initTimers(void)
                                                 .skip_unhandled_events = true};
 
     // May need to make this a GPT timer?
-    const esp_timer_create_args_t sTimerArgs = {.callback = &servoMoveTimerCallback,
+    const esp_timer_create_args_t sTimerArgs = {.callback = &servoShutdownTimerCallback,
                                                 .arg = NULL,
                                                 .dispatch_method = ESP_TIMER_TASK,
-                                                .name = "servoMove",
+                                                .name = "servoShutdown",
                                                 .skip_unhandled_events = true};
 
     ESP_ERROR_CHECK(esp_timer_create(&pTimerArgs, &pollingTimer));
@@ -392,9 +485,9 @@ static void initTimers(void)
     ESP_ERROR_CHECK(esp_timer_start_periodic(maintenanceTimer, 10 * 1000 * 1000));
     ESP_LOGI("init_timer", "Started maintenance timer");
 
-    ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoMoveTimer));
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
-    ESP_LOGI("init_timer", "Started servo move timer");
+    ESP_ERROR_CHECK(esp_timer_create(&sTimerArgs, &servoShutdownTimer));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoShutdownTimer, 300 * 1000));
+    ESP_LOGI("init_timer", "Started servo shutdown timer");
 }
 
 static void pollingTimerCallback(void *arg)
@@ -410,8 +503,24 @@ static void pollingTimerCallback(void *arg)
     const bool master = isMasterNode.load();
     const bool discovery = discoveryMode.load();
 
+    // Skip master polling work (POLL_ACK self-TX + POLL_PADAWANS dispatch)
+    // during OTA — bench measurements show the contention with otaReceiverTask
+    // and astrosRxTask stalls inbound FW_CHUNK for 1-3 s per 2-s poll cycle,
+    // halving wire throughput. Heartbeat log + display timeout stay unconditional.
+    //
+    // Padawan-side OTA gate: writer is active while a transfer is in flight.
+    // Pause polling/discovery ESP-NOW traffic to keep SPI flash contention
+    // down (esp_ota_write erase+program latency degrades when other tasks hit
+    // the flash bus concurrently).
+    //
+    // Safe to call on master too: OtaWriter::Init runs on both roles, and
+    // active_ stays false until OtaForwarder::startMasterSelfFlash posts a
+    // local-flash request — so this gate is inert during normal master polling.
+    const bool otaActive =
+        AstrOs_OtaReceiver.isActive() || AstrOs_OtaForwarder.isWireBusy() || AstrOs_OtaWriter.isActive();
+
     // only send register requests during discovery mode
-    if (master && !discovery)
+    if (master && !discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -429,8 +538,36 @@ static void pollingTimerCallback(void *arg)
             {
                 ESP_LOGW(TAG, "Failed to read controller fingerprint; sending empty value");
             }
-            AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
-                                                   AstrOsConstants::Version, true);
+            // Master self-POLL_ACK: report own build variant so the server can
+            // pick the right firmware asset at flash time.
+            static std::atomic<bool> firstSelfPollAckSent_{false};
+            bool serialQueued =
+                AstrOs_SerialMsgHandler.sendPollAckNak("00:00:00:00:00:00", "master", std::string(fingerprint),
+                                                       AstrOsConstants::Version, AstrOsConstants::Variant, true);
+
+            if (serialQueued)
+            {
+                // First successful self-POLL_ACK queue post post-reboot proves:
+                // NVS read worked (fingerprint), serial queue alive, message-
+                // service serialization alive, FreeRTOS scheduler healthy.
+                // Enough evidence to cancel auto-rollback for a freshly-flashed
+                // master image. mark_valid is documented as safe to call
+                // unconditionally; returns ESP_ERR_NOT_FOUND if no rollback was
+                // pending (the normal subsequent-boot case).
+                bool expected = false;
+                if (firstSelfPollAckSent_.compare_exchange_strong(expected, true))
+                {
+                    esp_err_t markErr = esp_ota_mark_app_valid_cancel_rollback();
+                    if (markErr == ESP_OK)
+                    {
+                        ESP_LOGI(TAG, "Master OTA rollback cancelled — running image is now valid");
+                    }
+                    else if (markErr != ESP_ERR_NOT_FOUND)
+                    {
+                        ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback returned %s", esp_err_to_name(markErr));
+                    }
+                }
+            }
         }
         else
         {
@@ -443,7 +580,7 @@ static void pollingTimerCallback(void *arg)
             ESP_LOGW(TAG, "Send espnow queue fail");
         }
     }
-    else if (!master && discovery)
+    else if (!master && discovery && !otaActive)
     {
         queue_espnow_msg_t msg;
         msg.data = nullptr;
@@ -688,13 +825,11 @@ void animationDispatchTask(void *arg)
     }
 }
 
-static void servoMoveTimerCallback(void *arg)
+// Periodically check if servos should be shut down to extend servo life.
+// currently there hasn't been a demand for servos to hold tension. May need
+// to add an option for that in the future
+static void servoShutdownTimerCallback(void *arg)
 {
-    // get time at start of loop
-    // auto loopStart = esp_timer_get_time();
-
-    // ServoMod.MoveServos();
-
     // Snapshot module handles under the mutex, then release it before calling
     // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
     // which spins on a per-module mutex. Holding maestroModulesMutex across
@@ -713,7 +848,7 @@ static void servoMoveTimerCallback(void *arg)
     }
     else
     {
-        ESP_LOGW(TAG, "servoMoveTimerCallback: maestroModulesMutex timeout — skipping cycle");
+        ESP_LOGW(TAG, "servoShutdownTimerCallback: maestroModulesMutex timeout — skipping cycle");
     }
 
     for (auto &maestroMod : snapshot)
@@ -721,14 +856,7 @@ static void servoMoveTimerCallback(void *arg)
         maestroMod->CheckServos(300);
     }
 
-    // get time at end of loop
-    // auto loopEnd = esp_timer_get_time();
-
-    // start loop  so it will trigger 500 ms from the start of the loop
-    // int ms = SERVO_MOVE_INTERVAL - std::round((loopEnd - loopStart) / 1000);
-    // auto timeToNextMove = std::clamp(ms, 100, SERVO_MOVE_INTERVAL);
-    // ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, timeToNextMove * 1000));
-    ESP_ERROR_CHECK(esp_timer_start_once(servoMoveTimer, 300 * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_once(servoShutdownTimer, 300 * 1000));
 }
 
 #pragma endregion
@@ -829,18 +957,20 @@ void interfaceResponseQueueTask(void *arg)
             case AstrOsInterfaceResponseType::SEND_POLL_ACK:
             {
                 // The interface queue's `message` field for SEND_POLL_ACK is packed by
-                // AstrOsEspNow::handlePollAck as `fingerprint` (legacy peer, no version)
-                // or `fingerprint<US>version` (Phase 1+ peer). splitString() strips any
-                // trailing empty part, so a missing version yields a single piece.
+                // AstrOsEspNow::handlePollAck as `fingerprint<US>version<US>variant`
+                // for newer peers, or fewer pieces for older peers that omit the trailing
+                // fields (splitString strips trailing empties). Missing pieces fall back
+                // to "" — the server then skips populating its variant cache for those peers.
                 auto pieces = AstrOsStringUtils::splitString(std::string(msg.message), UNIT_SEPARATOR);
                 std::string fp = pieces.size() > 0 ? pieces[0] : "";
                 std::string ver = pieces.size() > 1 ? pieces[1] : "";
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, true);
+                std::string variant = pieces.size() > 2 ? pieces[2] : "";
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, fp, ver, variant, true);
                 break;
             }
             case AstrOsInterfaceResponseType::SEND_POLL_NAK:
             {
-                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", false);
+                AstrOs_SerialMsgHandler.sendPollAckNak(msg.peerMac, msg.peerName, "", "", "", false);
                 break;
             }
             case AstrOsInterfaceResponseType::REGISTRATION_SYNC:
@@ -983,8 +1113,8 @@ void interfaceResponseQueueTask(void *arg)
 
 void astrosRxTask(void *arg)
 {
-
-    size_t bufferLength = 2000;
+    // 8 KB sized for FW_CHUNK lines (~5500 B after base64 + headers).
+    size_t bufferLength = 8192;
     int bufferIndex = 0;
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
     uint8_t *commandBuffer = (uint8_t *)malloc(bufferLength);
@@ -1006,7 +1136,32 @@ void astrosRxTask(void *arg)
                 if (data[i] == '\n')
                 {
                     commandBuffer[bufferIndex] = '\0';
-                    ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+
+                    // Compact log for FW_CHUNK — dumping the full ~5.5 KB
+                    // base64 body would compete with FW_CHUNK_ACK for the UART
+                    // TX and trip the server's retransmit timer. The CRC is
+                    // always the last 4 chars by protocol contract. Bounded
+                    // scan over the first 32 bytes avoids touching the body
+                    // for non-chunk messages.
+                    bool isFwChunk = false;
+                    const int scanEnd = bufferIndex < 32 ? bufferIndex : 32;
+                    for (int s = 0; s + 8 <= scanEnd; s++)
+                    {
+                        if (memcmp(&commandBuffer[s], "FW_CHUNK", 8) == 0)
+                        {
+                            isFwChunk = true;
+                            break;
+                        }
+                    }
+                    if (isFwChunk && bufferIndex >= 4)
+                    {
+                        ESP_LOGI("AstrOs RX", "FW_CHUNK (%d bytes, crc=%.4s)", bufferIndex,
+                                 &commandBuffer[bufferIndex - 4]);
+                    }
+                    else
+                    {
+                        ESP_LOGI("AstrOs RX", "Read %d bytes: '%s'", bufferIndex, commandBuffer);
+                    }
 
                     AstrOs_SerialMsgHandler.handleMessage(
                         std::string(reinterpret_cast<char *>(commandBuffer), bufferIndex));
@@ -1019,7 +1174,8 @@ void astrosRxTask(void *arg)
                     bufferIndex++;
                     if (bufferIndex >= bufferLength)
                     {
-                        ESP_LOGW("AstrOs RX", "Buffer overflow");
+                        // Data loss — drops partial message + bytes until next line terminator.
+                        ESP_LOGE("AstrOs RX", "Line overflow (>%zu B) — discarding partial message", bufferLength);
                         astrosRxOverflowCount.fetch_add(1, std::memory_order_relaxed);
                         bufferIndex = 0;
                     }
@@ -1241,6 +1397,7 @@ void serialCh1QueueTask(void *arg)
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
+
                 SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
@@ -1402,6 +1559,70 @@ void gpioQueueTask(void *arg)
     }
 }
 
+void otaReceiverTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_msg_t msg;
+
+    // portMAX_DELAY is safe — this task is the queue's exclusive consumer
+    // and has no other work to do.
+    while (1)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY))
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "OTA Receiver Stack HWM: %d", highWaterMark);
+            }
+
+            AstrOs_OtaReceiver.process(msg);
+        }
+    }
+}
+
+void otaForwarderTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_forwarder_msg_t msg;
+
+    while (true)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY) == pdTRUE)
+        {
+            AstrOs_OtaForwarder.process(msg);
+        }
+
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        if (hwm < 500)
+        {
+            ESP_LOGW(TAG, "OTA Forwarder Stack HWM: %u", (unsigned int)hwm);
+        }
+    }
+}
+
+void otaWriterTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+    queue_ota_writer_msg_t msg;
+
+    while (true)
+    {
+        if (xQueueReceive(queue, &msg, portMAX_DELAY) == pdTRUE)
+        {
+            // process() internally calls freeOtaWriterMsg — do NOT free here.
+            // Matches otaReceiverTask + otaForwarderTask convention.
+            AstrOs_OtaWriter.process(msg);
+        }
+
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        if (hwm < 500)
+        {
+            ESP_LOGW(TAG, "OTA Writer Stack HWM: %u", (unsigned int)hwm);
+        }
+    }
+}
+
 void espnowQueueTask(void *arg)
 {
     QueueHandle_t espnowQueue;
@@ -1549,12 +1770,6 @@ static void loadMaestroConfigs()
     auto maestroConfigs = AstrOs_Storage.loadMaestroConfigs();
     ESP_LOGI(TAG, "Loaded Maestro modules from file: %d", maestroConfigs.size());
 
-    // Phase 1: structural map mutation under maestroModulesMutex only. We
-    // record pending UpdateConfig calls against existing modules instead of
-    // applying them inline — UpdateConfig() spin-waits on each module's own
-    // mutex, and LoadConfig() does NVS reads + HomeServos() UART traffic.
-    // Running either under the map mutex would stall servoQueueTask and trip
-    // the 100ms timeout in servoMoveTimerCallback repeatedly.
     struct PendingUpdate
     {
         std::shared_ptr<MaestroModule> module;

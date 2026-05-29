@@ -1,0 +1,20 @@
+{
+  "name": "OtaForwarder",
+  "version": "0.0.1",
+  "description": "Master-side OTA forwarder: drives ESP-NOW chunk transfer to padawans",
+  "dependencies": {
+    "AstrOsBulkTransport": "*",
+    "AstrOsEspNow": "*",
+    "AstrOsEspNowPeers": "*",
+    "AstrOsMessaging": "*",
+    "AstrOsQueueMessages": "*",
+    "AstrOsSerialMsgHandler": "*",
+    "AstrOsUtility": "*",
+    "OtaReceiver": "*"
+  },
+  "build": {
+    "flags": [
+      "-I include"
+    ]
+  }
+}

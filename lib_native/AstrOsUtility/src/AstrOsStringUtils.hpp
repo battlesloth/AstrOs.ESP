@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <bitset>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -146,6 +149,79 @@ public:
         }
 
         return n;
+    }
+
+    /// @brief Parse a decimal string strictly into a uint8_t (0..255). Stricter than strtoul:
+    ///        rejects empty input, leading sign, leading/trailing whitespace, hex prefix, and
+    ///        any non-digit character. Returns std::nullopt on any rejection or value > 255.
+    static std::optional<uint8_t> parseStrictU8(const std::string &s)
+    {
+        if (s.empty())
+        {
+            return std::nullopt;
+        }
+        for (char c : s)
+        {
+            if (c < '0' || c > '9')
+            {
+                return std::nullopt;
+            }
+        }
+        errno = 0;
+        char *endp = nullptr;
+        unsigned long ul = std::strtoul(s.c_str(), &endp, 10);
+        if (errno != 0 || endp == s.c_str() || *endp != '\0' || ul > 255)
+        {
+            return std::nullopt;
+        }
+        return static_cast<uint8_t>(ul);
+    }
+
+    /// @brief Lowercase-hex encode `len` bytes from `in` into `out`. Writes
+    ///        exactly `2*len + 1` chars including the trailing NUL; caller
+    ///        owns the buffer and is responsible for sizing it.
+    /// @pre   `out != nullptr` (always — even `len == 0` writes a NUL).
+    /// @pre   `in != nullptr` when `len > 0` (`in` may be null only if `len == 0`).
+    ///        No defensive checks; violating these is undefined behavior. This
+    ///        is an internal utility — validate at the boundary, not here.
+    static void toHexLower(const uint8_t *in, size_t len, char *out)
+    {
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < len; ++i)
+        {
+            out[2 * i] = kHex[(in[i] >> 4) & 0x0F];
+            out[2 * i + 1] = kHex[in[i] & 0x0F];
+        }
+        out[2 * len] = '\0';
+    }
+
+    /// @brief Parse an RS (0x1E) separated controller-id list. Empty fields
+    ///        are dropped (unlike splitString which preserves middles).
+    ///        Tolerates a nullptr.
+    [[nodiscard]] static std::vector<std::string> parseOrderList(const char *raw)
+    {
+        std::vector<std::string> out;
+        if (raw == nullptr)
+        {
+            return out;
+        }
+        std::string s = raw;
+        size_t start = 0;
+        while (start < s.size())
+        {
+            size_t end = s.find(RECORD_SEPARATOR, start);
+            std::string id = (end == std::string::npos) ? s.substr(start) : s.substr(start, end - start);
+            if (!id.empty())
+            {
+                out.push_back(id);
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return out;
     }
 
     template <typename... Args> static std::string stringFormat(const std::string &format, Args &&...args)

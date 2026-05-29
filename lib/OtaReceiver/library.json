@@ -1,0 +1,17 @@
+{
+  "name": "OtaReceiver",
+  "version": "0.1.0",
+  "description": "MIXED lib wrapping AstrOsBulkTransport with a FreeRTOS task and queue for firmware OTA receive.",
+  "dependencies": {
+    "AstrOsBulkTransport": "*",
+    "AstrOsSerialMsgHandler": "*",
+    "AstrOsMessaging": "*",
+    "AstrOsQueueMessages": "*",
+    "AstrOsUtility": "*"
+  },
+  "build": {
+    "flags": [
+      "-I include"
+    ]
+  }
+}

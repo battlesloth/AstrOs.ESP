@@ -6,6 +6,25 @@
 #include <cstring>
 #include <string>
 
+bool isOtaPacketType(AstrOsPacketType type)
+{
+    switch (type)
+    {
+    case AstrOsPacketType::OTA_BEGIN:
+    case AstrOsPacketType::OTA_BEGIN_ACK:
+    case AstrOsPacketType::OTA_BEGIN_NAK:
+    case AstrOsPacketType::OTA_DATA:
+    case AstrOsPacketType::OTA_DATA_ACK:
+    case AstrOsPacketType::OTA_DATA_NAK:
+    case AstrOsPacketType::OTA_END:
+    case AstrOsPacketType::OTA_END_ACK:
+    case AstrOsPacketType::OTA_FLASH_RESULT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 AstrOsEspNowMessageService::AstrOsEspNowMessageService()
 {
     packetTypeMap[AstrOsPacketType::UNKNOWN] = AstrOsENC::UNKNOWN;
@@ -33,6 +52,15 @@ AstrOsEspNowMessageService::AstrOsEspNowMessageService()
     packetTypeMap[AstrOsPacketType::FORMAT_SD_NAK] = AstrOsENC::FORMAT_SD_NAK;
     packetTypeMap[AstrOsPacketType::SERVO_TEST] = AstrOsENC::SERVO_TEST;
     packetTypeMap[AstrOsPacketType::SERVO_TEST_ACK] = AstrOsENC::SERVO_TEST_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN] = AstrOsENC::OTA_BEGIN;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN_ACK] = AstrOsENC::OTA_BEGIN_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_BEGIN_NAK] = AstrOsENC::OTA_BEGIN_NAK;
+    packetTypeMap[AstrOsPacketType::OTA_DATA] = AstrOsENC::OTA_DATA;
+    packetTypeMap[AstrOsPacketType::OTA_DATA_ACK] = AstrOsENC::OTA_DATA_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_DATA_NAK] = AstrOsENC::OTA_DATA_NAK;
+    packetTypeMap[AstrOsPacketType::OTA_END] = AstrOsENC::OTA_END;
+    packetTypeMap[AstrOsPacketType::OTA_END_ACK] = AstrOsENC::OTA_END_ACK;
+    packetTypeMap[AstrOsPacketType::OTA_FLASH_RESULT] = AstrOsENC::OTA_FLASH_RESULT;
 }
 
 AstrOsEspNowMessageService::~AstrOsEspNowMessageService() {}
@@ -98,7 +126,8 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(As
         offset += 1;
         memcpy(packet + offset, &totalPackets, 1);
         offset += 1;
-        memcpy(packet + offset, &type, 1);
+        uint8_t typeByte = static_cast<uint8_t>(type);
+        memcpy(packet + offset, &typeByte, sizeof(typeByte));
         offset += 1;
         memcpy(packet + offset, &actualPayloadSize, 1);
         offset += 1;
@@ -114,15 +143,79 @@ std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generatePackets(As
     return packets;
 }
 
+std::vector<astros_espnow_data_t> AstrOsEspNowMessageService::generateOtaPacket(AstrOsPacketType type,
+                                                                                const uint8_t *payload, size_t len)
+{
+    std::vector<astros_espnow_data_t> packets;
+
+    if (!isOtaPacketType(type))
+    {
+        return packets;
+    }
+    if (len > ASTROS_PACKET_PAYLOAD_SIZE)
+    {
+        return packets;
+    }
+    if (len > 0 && payload == nullptr)
+    {
+        return packets;
+    }
+
+    uint8_t *id = AstrOsEspNowMessageService::generateId();
+    uint8_t *frame = (uint8_t *)malloc(20 + len);
+
+    const uint8_t packetNumber = 1;
+    const uint8_t totalPackets = 1;
+    const uint8_t typeByte = static_cast<uint8_t>(type);
+    const uint8_t payloadSize = static_cast<uint8_t>(len);
+
+    int offset = 0;
+    std::memcpy(frame, id, 16);
+    offset += 16;
+    frame[offset++] = packetNumber;
+    frame[offset++] = totalPackets;
+    frame[offset++] = typeByte;
+    frame[offset++] = payloadSize;
+    if (len > 0)
+    {
+        std::memcpy(frame + offset, payload, len);
+    }
+
+    free(id);
+
+    astros_espnow_data_t data = {frame, 20 + len};
+    packets.push_back(data);
+    return packets;
+}
+
 astros_packet_t AstrOsEspNowMessageService::parsePacket(uint8_t *packet)
 {
     astros_packet_t parsedPacket;
     memcpy(parsedPacket.id, packet, 16);
     parsedPacket.packetNumber = packet[16];
     parsedPacket.totalPackets = packet[17];
-    parsedPacket.packetType = (AstrOsPacketType)packet[18];
+    parsedPacket.packetType = static_cast<AstrOsPacketType>(packet[18]);
     parsedPacket.payloadSize = packet[19];
     parsedPacket.payload = packet + 20;
+
+    if (isOtaPacketType(parsedPacket.packetType))
+    {
+        // OTA frames carry binary payloads with no validator-string prefix.
+        // payload and payloadSize already point at the right bytes; skip
+        // the validatePacket() call below which would mark the packet
+        // UNKNOWN (the binary bytes won't match the validator string).
+        //
+        // Defense: reject if the on-wire payloadSize exceeds the per-packet
+        // budget. A corrupt or truncated radio frame could deliver a buffer
+        // shorter than packet[19] bytes — the downstream parsers' reinterpret_cast
+        // would then read out-of-bounds. ESP-NOW's max payload is 180 bytes;
+        // anything beyond that is malformed by construction.
+        if (parsedPacket.payloadSize > ASTROS_PACKET_PAYLOAD_SIZE)
+        {
+            parsedPacket.packetType = AstrOsPacketType::UNKNOWN;
+        }
+        return parsedPacket;
+    }
 
     auto validated = validatePacket(parsedPacket);
     if (validated == -1)

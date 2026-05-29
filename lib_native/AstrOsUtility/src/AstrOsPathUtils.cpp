@@ -1,9 +1,41 @@
 #include "AstrOsPathUtils.hpp"
 
+#include <cstdio>
 #include <string>
 
 namespace AstrOsPathUtils
 {
+    bool contentAddressedFirmwarePath(const char *hashHex, char *out, std::size_t outLen)
+    {
+        if (out != nullptr && outLen > 0)
+        {
+            out[0] = '\0';
+        }
+        if (out == nullptr || outLen < FIRMWARE_PATH_BUF_LEN || hashHex == nullptr)
+        {
+            return false;
+        }
+        // Need at least FIRMWARE_HASH_PREFIX_LEN chars before the NUL — a
+        // shorter input would let snprintf's precision-clipped "%.*s" silently
+        // truncate to whatever it found, producing names that don't reflect
+        // the digest.
+        for (std::size_t i = 0; i < FIRMWARE_HASH_PREFIX_LEN; ++i)
+        {
+            if (hashHex[i] == '\0')
+            {
+                return false;
+            }
+        }
+        int written =
+            std::snprintf(out, outLen, "%s%.*s.bin", FIRMWARE_DIR, static_cast<int>(FIRMWARE_HASH_PREFIX_LEN), hashHex);
+        if (written <= 0 || static_cast<std::size_t>(written) >= outLen)
+        {
+            out[0] = '\0';
+            return false;
+        }
+        return true;
+    }
+
     bool isPathSafe(const std::string &path, std::string &reasonOut)
     {
         reasonOut.clear();

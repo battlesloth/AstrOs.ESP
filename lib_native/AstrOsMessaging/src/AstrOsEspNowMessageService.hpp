@@ -43,35 +43,56 @@ namespace AstrOsENC
     constexpr const static char *FORMAT_SD_NAK = "FORMAT_SD_NAK";
     constexpr const static char *SERVO_TEST = "SERVO_TEST";
     constexpr const static char *SERVO_TEST_ACK = "SERVO_TEST_ACK";
+    constexpr const static char *OTA_BEGIN = "OTA_BEGIN";
+    constexpr const static char *OTA_BEGIN_ACK = "OTA_BEGIN_ACK";
+    constexpr const static char *OTA_BEGIN_NAK = "OTA_BEGIN_NAK";
+    constexpr const static char *OTA_DATA = "OTA_DATA";
+    constexpr const static char *OTA_DATA_ACK = "OTA_DATA_ACK";
+    constexpr const static char *OTA_DATA_NAK = "OTA_DATA_NAK";
+    constexpr const static char *OTA_END = "OTA_END";
+    constexpr const static char *OTA_END_ACK = "OTA_END_ACK";
+    constexpr const static char *OTA_FLASH_RESULT = "OTA_FLASH_RESULT";
 } // namespace AstrOsENC
 
-enum class AstrOsPacketType
+// Wire-stable: NEVER renumber existing variants. Always append new variants at the end with the next sequential value.
+// Underlying type is uint8_t — the wire format encodes this enum as a single byte (see generatePackets and
+// parsePacket).
+enum class AstrOsPacketType : uint8_t
 {
-    UNKNOWN,
-    BASIC,
-    REGISTRATION_REQ,
-    REGISTRATION,
-    REGISTRATION_ACK,
-    POLL,
-    POLL_ACK,
-    CONFIG,
-    CONFIG_ACK,
-    CONFIG_NAK,
-    SCRIPT_DEPLOY,
-    SCRIPT_DEPLOY_ACK,
-    SCRIPT_DEPLOY_NAK,
-    SCRIPT_RUN,
-    SCRIPT_RUN_ACK,
-    SCRIPT_RUN_NAK,
-    COMMAND_RUN,
-    COMMAND_RUN_ACK,
-    COMMAND_RUN_NAK,
-    PANIC_STOP,
-    FORMAT_SD,
-    FORMAT_SD_ACK,
-    FORMAT_SD_NAK,
-    SERVO_TEST,
-    SERVO_TEST_ACK
+    UNKNOWN = 0,
+    BASIC = 1,
+    REGISTRATION_REQ = 2,
+    REGISTRATION = 3,
+    REGISTRATION_ACK = 4,
+    POLL = 5,
+    POLL_ACK = 6,
+    CONFIG = 7,
+    CONFIG_ACK = 8,
+    CONFIG_NAK = 9,
+    SCRIPT_DEPLOY = 10,
+    SCRIPT_DEPLOY_ACK = 11,
+    SCRIPT_DEPLOY_NAK = 12,
+    SCRIPT_RUN = 13,
+    SCRIPT_RUN_ACK = 14,
+    SCRIPT_RUN_NAK = 15,
+    COMMAND_RUN = 16,
+    COMMAND_RUN_ACK = 17,
+    COMMAND_RUN_NAK = 18,
+    PANIC_STOP = 19,
+    FORMAT_SD = 20,
+    FORMAT_SD_ACK = 21,
+    FORMAT_SD_NAK = 22,
+    SERVO_TEST = 23,
+    SERVO_TEST_ACK = 24,
+    OTA_BEGIN = 25,
+    OTA_BEGIN_ACK = 26,
+    OTA_BEGIN_NAK = 27,
+    OTA_DATA = 28,
+    OTA_DATA_ACK = 29,
+    OTA_DATA_NAK = 30,
+    OTA_END = 31,
+    OTA_END_ACK = 32,
+    OTA_FLASH_RESULT = 33, // padawan → master flash-commit outcome
 };
 
 typedef struct
@@ -104,8 +125,18 @@ public:
     std::vector<astros_espnow_data_t> generateEspNowMsg(AstrOsPacketType type, std::string mac = "",
                                                         std::string message = "");
     std::vector<astros_espnow_data_t> generatePackets(AstrOsPacketType type, std::string message);
+    // Binary-frame builder for OTA packets. Unlike generateEspNowMsg/generatePackets,
+    // this path does NOT inject a validator-string prefix into the payload — the full
+    // ASTROS_PACKET_PAYLOAD_SIZE budget is available for binary content. Always
+    // produces exactly one packet (OTA frames fit in a single ESP-NOW transmission
+    // by design). Returns an empty vector if `type` is not an OTA type or `len`
+    // exceeds ASTROS_PACKET_PAYLOAD_SIZE.
+    std::vector<astros_espnow_data_t> generateOtaPacket(AstrOsPacketType type, const uint8_t *payload, size_t len);
     astros_packet_t parsePacket(uint8_t *packet);
     int validatePacket(astros_packet_t packet);
 };
+
+// True iff `type` is one of the OTA_* packet types.
+bool isOtaPacketType(AstrOsPacketType type);
 
 #endif

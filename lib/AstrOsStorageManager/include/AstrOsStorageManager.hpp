@@ -1,8 +1,10 @@
 #ifndef ASTROSSTORAGEMANAGER_HPP
 #define ASTROSSTORAGEMANAGER_HPP
 
+#include <cstdint>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +62,15 @@ public:
     std::vector<std::string> listFiles(std::string folder);
 
     esp_err_t formatSdCard();
+
+    // nullopt distinguishes a probe failure (card unmounted, FATFS error)
+    // from a legitimate 0-bytes-free reading.
+    std::optional<uint64_t> freeSpaceSdBytes();
+#ifndef USE_SPIFFS
+    // OTA-only: hard-codes /sdcard/firmware. Absent from SPIFFS builds so
+    // callers fail to link rather than silently writing to the wrong volume.
+    bool ensureSdFirmwareDir();
+#endif
 };
 
 extern AstrOsStorageManager AstrOs_Storage;
