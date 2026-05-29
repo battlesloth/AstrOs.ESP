@@ -54,6 +54,14 @@ except NameError:
 
 VERSION_FILE = REPO_ROOT / "VERSION"
 OUTPUT_FILE = REPO_ROOT / "lib_native" / "AstrOsUtility" / "src" / "version_generated.hpp"
+# ESP-IDF reads ${PROJECT_DIR}/version.txt for PROJECT_VER, which becomes the
+# esp_app_desc_t.version embedded in the .bin. Emitting it here keeps the
+# firmware-embedded version identical to AstrOsConstants::Version. The OTA
+# version-confirm handshake (master parses esp_app_desc.version from the staged
+# .bin; padawan reports AstrOsConstants::Version in POLL_ACK) compares the two
+# for equality, so they MUST come from this single source or every deploy fails
+# with FAILED(version_unconfirmed).
+PROJECT_VER_FILE = REPO_ROOT / "version.txt"
 
 
 def _run(cmd: list[str], default: str = "") -> str:
@@ -155,13 +163,32 @@ def write_header(version: str, sha: str, variant: str) -> bool:
     return True
 
 
+def write_version_txt(version: str) -> bool:
+    """Write ${PROJECT_DIR}/version.txt so ESP-IDF sets PROJECT_VER (and the
+    embedded esp_app_desc_t.version) to the same string as
+    AstrOsConstants::Version. Returns True if contents changed.
+
+    Write-if-changed: version.txt lands on ESP-IDF's CMake configure-depends
+    list, so rewriting identical content with a fresh mtime would force a
+    needless reconfigure on every build.
+    """
+    content = version + "\n"
+    if PROJECT_VER_FILE.exists() and PROJECT_VER_FILE.read_text() == content:
+        return False
+    PROJECT_VER_FILE.write_text(content)
+    return True
+
+
 def main() -> None:
     version, sha = resolve_version()
     variant = resolve_variant()
     changed = write_header(version, sha, variant)
+    ver_changed = write_version_txt(version)
     rel_out = OUTPUT_FILE.relative_to(REPO_ROOT)
     marker = "(updated)" if changed else "(unchanged)"
+    ver_marker = "(updated)" if ver_changed else "(unchanged)"
     print(f"[version_gen] Version={version} GitSha={sha} Variant={variant} -> {rel_out} {marker}")
+    print(f"[version_gen] PROJECT_VER -> version.txt {ver_marker}")
 
 
 # Dispatch main() in both execution contexts.
