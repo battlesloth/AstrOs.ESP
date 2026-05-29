@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -36,6 +37,52 @@ AstrOsEspNow AstrOs_EspNow;
 
 static void (*espnowSendCallback)(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 static void (*espnowRecvCallback)(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
+
+// ESP-NOW TX in-flight counter — frames handed to esp_now_send but not yet
+// send-done-acked. All sends route through espnowSendCounted (one accounting
+// site); the registered send-done callback decrements via notifyTxComplete.
+// relaxed ordering: this is a throttle hint, not a data guard (mirrors
+// espnowMallocFailureCount in main.cpp). A miscount drifts the value HIGH at
+// worst (pending callbacks dropped on teardown), which throttles OTA harder —
+// degraded, never deadlocked — and self-heals as in-flight callbacks arrive.
+static std::atomic<int> espnowTxInFlight_{0};
+
+// Cap on concurrent ESP-NOW frames in flight. Held below the WiFi TX buffer
+// pool on both boards (metro_s3: CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32;
+// lolin_d32_pro: CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=16) and matching the
+// shared CONFIG_ESP_WIFI_TX_BA_WIN=6. Past the pool, esp_now_send starts
+// returning ESP_ERR_ESPNOW_NO_MEM.
+static constexpr int kEspnowTxInFlightCap = 6;
+
+// Single accounting site for every esp_now_send. Increments before the send;
+// on a non-OK return the frame never enqueued and no send-done callback will
+// fire, so decrement back immediately to keep the count exact. The matching
+// decrement for an enqueued (ESP_OK) frame happens once in notifyTxComplete.
+static esp_err_t espnowSendCounted(const uint8_t *mac, const uint8_t *data, size_t size)
+{
+    espnowTxInFlight_.fetch_add(1, std::memory_order_relaxed);
+    esp_err_t err = esp_now_send(mac, data, size);
+    if (err != ESP_OK)
+    {
+        espnowTxInFlight_.fetch_sub(1, std::memory_order_relaxed);
+    }
+    return err;
+}
+
+void AstrOsEspNow::notifyTxComplete()
+{
+    espnowTxInFlight_.fetch_sub(1, std::memory_order_relaxed);
+}
+
+bool AstrOsEspNow::espnowTxAtCapacity() const
+{
+    return espnowTxInFlight_.load(std::memory_order_relaxed) >= kEspnowTxInFlightCap;
+}
+
+esp_err_t AstrOsEspNow::sendCounted(const uint8_t *mac, const uint8_t *data, size_t len)
+{
+    return espnowSendCounted(mac, data, len);
+}
 
 AstrOsEspNow::AstrOsEspNow() {}
 
@@ -741,7 +788,7 @@ void AstrOsEspNow::sendRegistrationRequest()
     if (IS_BROADCAST_ADDR(destMac))
     {
         astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_REQ)[0];
-        if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+        if (espnowSendCounted(destMac, data.data, data.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending registraion request");
         }
@@ -819,7 +866,7 @@ bool AstrOsEspNow::handleRegistrationReq(uint8_t *src)
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION, macStr, padawanName)[0];
 
-    err = esp_now_send(broadcastMac, data.data, data.size);
+    err = espnowSendCounted(broadcastMac, data.data, data.size);
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
         return false;
@@ -900,7 +947,7 @@ bool AstrOsEspNow::sendRegistrationAck()
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::REGISTRATION_ACK, this->mac, this->name)[0];
 
-    if (esp_now_send(destMac, data.data, data.size) != ESP_OK)
+    if (espnowSendCounted(destMac, data.data, data.size) != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending registration ack");
         result = false;
@@ -984,7 +1031,7 @@ void AstrOsEspNow::pollPadawans()
 
         astros_espnow_data_t data = this->messageService.generateEspNowMsg(AstrOsPacketType::POLL, this->mac)[0];
 
-        if (esp_now_send(peer.mac_addr, data.data, data.size) != ESP_OK)
+        if (espnowSendCounted(peer.mac_addr, data.data, data.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending poll message to " MACSTR, MAC2STR(peer.mac_addr));
         }
@@ -1023,7 +1070,7 @@ bool AstrOsEspNow::handlePoll(astros_packet_t packet)
     astros_espnow_data_t data =
         this->messageService.generateEspNowMsg(AstrOsPacketType::POLL_ACK, this->mac, ss.str())[0];
 
-    esp_err_t sendErr = esp_now_send(destMac, data.data, data.size);
+    esp_err_t sendErr = espnowSendCounted(destMac, data.data, data.size);
     if (sendErr != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending poll ack");
@@ -1168,7 +1215,7 @@ void AstrOsEspNow::sendConfigAckNak(std::string msgId, bool success)
 
     auto packet = this->messageService.generateEspNowMsg(ackNak, this->getMac(), ss.str())[0];
 
-    if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+    if (espnowSendCounted(destMac, packet.data, packet.size) != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending config update to " MACSTR, MAC2STR(destMac));
     }
@@ -1216,7 +1263,7 @@ void AstrOsEspNow::sendBasicAckNak(std::string msgId, AstrOsPacketType type, std
 
     auto packet = this->messageService.generateEspNowMsg(type, this->getMac(), ss.str())[0];
 
-    if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+    if (espnowSendCounted(destMac, packet.data, packet.size) != ESP_OK)
     {
         ESP_LOGE(TAG, "Error sending basic ack/nak for type %d to " MACSTR, (int)type, MAC2STR(destMac));
     }
@@ -1246,7 +1293,7 @@ esp_err_t AstrOsEspNow::sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type
     }
 
     astros_espnow_data_t frame = frames[0];
-    esp_err_t err = esp_now_send(mac, frame.data, frame.size);
+    esp_err_t err = espnowSendCounted(mac, frame.data, frame.size);
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "sendOtaFrame: esp_now_send returned %s for type=%d", esp_err_to_name(err), (int)type);
@@ -1285,7 +1332,7 @@ void AstrOsEspNow::sendEspNowMessage(AstrOsPacketType type, std::string peer, st
 
     for (auto &packet : data)
     {
-        if (esp_now_send(destMac, packet.data, packet.size) != ESP_OK)
+        if (espnowSendCounted(destMac, packet.data, packet.size) != ESP_OK)
         {
             ESP_LOGE(TAG, "Error sending packet type %d to " MACSTR, (int)type, MAC2STR(destMac));
         }

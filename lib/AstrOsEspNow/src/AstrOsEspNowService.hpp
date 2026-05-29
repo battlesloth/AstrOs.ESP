@@ -171,6 +171,26 @@ public:
     // returns (Pattern A immediate-free, matching the other send-helpers).
     esp_err_t sendOtaFrame(const uint8_t mac[6], AstrOsPacketType type, const uint8_t *payload, size_t len);
 
+    // ESP-NOW TX backpressure (OTA congestion control). The radio's send queue
+    // is bounded; pushing past it returns ESP_ERR_ESPNOW_NO_MEM and, during an
+    // OTA transfer, drives a retransmit/NAK storm. A file-static atomic counts
+    // frames handed to esp_now_send but not yet send-done-acked.
+    //
+    // notifyTxComplete: decrement the in-flight count. Call exactly once per
+    //   send-done callback (the callback fires once per enqueued frame). Safe
+    //   from the WiFi-task callback context (lock-free atomic).
+    // espnowTxAtCapacity: true when in-flight has reached the cap. The OTA drain
+    //   polls this and declines to send (non-blocking) rather than overrunning
+    //   the radio; a miscount degrades to "throttle harder", never to a hang.
+    // sendCounted: in-flight-counted esp_now_send for raw, pre-formed frames
+    //   sent from outside the class (the ESPNOW_SEND queue path in main.cpp).
+    //   Keeps the increment/decrement pairing total — every send-done callback
+    //   fires notifyTxComplete, so an uncounted send drifts the counter and
+    //   silently disables throttling.
+    void notifyTxComplete();
+    bool espnowTxAtCapacity() const;
+    esp_err_t sendCounted(const uint8_t *mac, const uint8_t *data, size_t len);
+
     // OTA ACK/NAK arrivals on the master are routed into this queue.
     // Called from main.cpp during init; before this is set, OTA arrivals
     // on master fall through to ESP_LOGW + drop (same path as padawan).

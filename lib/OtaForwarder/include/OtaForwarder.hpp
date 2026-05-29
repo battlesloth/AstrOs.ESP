@@ -245,8 +245,17 @@ private:
 
     // BulkSender params (from the frozen contract).
     static constexpr uint16_t kChunkSize = 128;
-    static constexpr uint8_t kWindowSize = 8;
-    static constexpr uint32_t kAckTimeoutMs = 400;
+    // Window + ack-timeout tuned against the padawan's OTA-flash write cadence.
+    // The padawan writes each chunk to flash (slow erase+program) and pauses
+    // other ESP-NOW traffic during writes, so cumulative ACKs lag well past the
+    // original 400 ms timeout under load — the 50 ms tick then retransmits
+    // chunks the padawan has already committed, and every dup draws an
+    // OUT_OF_ORDER NAK. That spurious-retransmit loop (plus an 8-deep window
+    // overrunning the ESP-NOW TX queue) produced a NAK/NO_MEM congestion storm
+    // on a 1.27 MB image. Smaller window bounds in-flight airtime; longer
+    // timeout stops retransmitting chunks still being flashed.
+    static constexpr uint8_t kWindowSize = 4;
+    static constexpr uint32_t kAckTimeoutMs = 1500;
     static constexpr uint8_t kMaxRetries = 3;
 
     // Hard upper bound on the order list size. Must stay well below 254 so
