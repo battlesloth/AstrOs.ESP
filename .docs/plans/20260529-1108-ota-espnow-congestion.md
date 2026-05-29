@@ -65,7 +65,8 @@ compromise.
   (before the NULL-arg guard), at the top of `espnowSendCallback` in main.cpp —
   the send-done callback fires exactly once per enqueued frame, SUCCESS or FAIL.
 - `AstrOsEspNow::espnowTxAtCapacity()`: `load() >= kEspnowTxInFlightCap`
-  (cap = 6, under the 32 WiFi TX buffers, matching TX_BA_WIN=6).
+  (cap = 6, below metro_s3's 32 dynamic TX buffers and lolin_d32_pro's
+  16 static TX buffers, matching the shared TX_BA_WIN=6).
 - `OtaForwarder::streamDrain`: at the top of each loop iteration, if
   `AstrOs_EspNow.espnowTxAtCapacity()` then stop draining this tick (same exit
   as `WINDOW_FULL`); the 50 ms tick resumes when the radio drains.
