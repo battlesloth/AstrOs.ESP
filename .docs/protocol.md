@@ -48,6 +48,12 @@ QUEUED | UPLOADING_TO_MASTER | SENDING | VERIFYING | FLASHING | REBOOTING | VERS
 - **VERSION_CONFIRMED** — Padawan heartbeat received with new version; flash successful.
 - **FAILED** — Transfer, write, hash, or reboot failure.
 
+> **FINALIZING** is a **server-internal** stage and is intentionally absent from
+> the wire enum above — the master never emits it in `FW_PROGRESS.stage`. The
+> server synthesizes it from a `PENDING` `FW_DEPLOY_DONE` row (master self-flash)
+> and holds the deploy open until the master's post-reboot heartbeat confirms
+> the new version. See the `FW_DEPLOY_DONE` payload notes below.
+
 ## A. Server ↔ Master (serial)
 
 Existing framing is unchanged: `[type(int)][RS][validator-string][RS][msg-id][GS][payload]\n` with `RS=0x1E`, `US=0x1F`, `GS=0x1D`. Chunk payloads are base64-encoded because the line-delimited framing breaks on raw binary.
@@ -94,7 +100,17 @@ FW_DEPLOY_BEGIN:      transfer-id<US>order-list   // ordered ids, padawans first
 FW_PROGRESS:          transfer-id<US>controller-id<US>stage<US>bytes-sent<US>total-bytes<US>detail
                       stage value: see "Stage enum" above
 FW_DEPLOY_DONE:       transfer-id<US>per-controller-result-list
-                      result = controllerId<US>OK|FAILED<US>finalVersion<US>errorOrEmpty (RS-separated)
+                      result = controllerId<US>OK|FAILED|PENDING<US>finalVersion<US>errorOrEmpty (RS-separated)
+                      PENDING is emitted ONLY for the master self-flash success
+                      row (AstrOs.ESP Phase C). The master writes its inactive
+                      partition, emits FW_DEPLOY_DONE with master=PENDING,
+                      then reboots. finalVersion MUST be empty on PENDING
+                      rows; errorOrEmpty carries a firmware-domain marker
+                      ("awaiting_post_reboot_version"). The server holds the
+                      deploy open in Finalizing until either the master's
+                      post-reboot POLL_ACK arrives with a matching version
+                      (PENDING → VersionConfirmed) or a 90s safety timer
+                      fires (PENDING → FAILED("post_reboot_timeout")).
 FW_BACKPRESSURE:      transfer-id<US>PAUSE|RESUME<US>reason
 ```
 
