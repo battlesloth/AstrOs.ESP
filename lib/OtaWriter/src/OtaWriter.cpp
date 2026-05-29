@@ -290,9 +290,11 @@ void OtaWriter::handleBegin(queue_ota_writer_msg_t &msg)
         return;
     }
 
-    // Must equal the master's BulkSender kWindowSize. Mismatched windows
-    // desync ack accounting.
-    constexpr uint8_t kWindowSize = 8;
+    // Must equal the master's BulkSender kWindowSize in OtaForwarder.hpp
+    // (currently 4). Mismatched windows desync ack accounting. windowSize is
+    // not carried on the OTA_BEGIN wire payload, so it can't be derived here —
+    // the two compile-time constants must be kept in lockstep by hand.
+    constexpr uint8_t kWindowSize = 4;
     auto br = bulk_.begin(xferId, msg.begin.totalSize, msg.begin.totalChunks, msg.begin.chunkSize, kWindowSize);
     if (!br.valid)
     {

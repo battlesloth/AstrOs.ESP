@@ -1669,7 +1669,12 @@ void espnowQueueTask(void *arg)
             {
                 ESP_LOGD(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
 
-                if (esp_now_send(msg.dest, msg.data, msg.data_len) != ESP_OK)
+                // Route through the in-flight-counted send so this path's
+                // send-done callback has a matching increment — espnowSendCallback
+                // calls notifyTxComplete() unconditionally, so an uncounted send
+                // here would drift espnowTxInFlight_ negative and disable OTA
+                // throttling.
+                if (AstrOs_EspNow.sendCounted(msg.dest, msg.data, msg.data_len) != ESP_OK)
                 {
                     ESP_LOGE(TAG, "Send error");
                 }
@@ -1918,6 +1923,12 @@ void displaySetDefault(std::string line1, std::string line2, std::string line3)
 
 static void espnowSendCallback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
+    // Decrement the ESP-NOW TX in-flight counter — once per callback, before any
+    // early return. The send-done callback fires exactly once per frame that
+    // esp_now_send enqueued (ESP_OK), regardless of SUCCESS/FAIL status, so this
+    // is the unconditional match for the fetch_add in espnowSendCounted.
+    AstrOs_EspNow.notifyTxComplete();
+
     if (tx_info == NULL)
     {
         ESP_LOGE(TAG, "Send cb arg error");
