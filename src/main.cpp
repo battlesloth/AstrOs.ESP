@@ -1669,7 +1669,12 @@ void espnowQueueTask(void *arg)
             {
                 ESP_LOGD(TAG, "Send data to " MACSTR, MAC2STR(msg.dest));
 
-                if (esp_now_send(msg.dest, msg.data, msg.data_len) != ESP_OK)
+                // Route through the in-flight-counted send so this path's
+                // send-done callback has a matching increment — espnowSendCallback
+                // calls notifyTxComplete() unconditionally, so an uncounted send
+                // here would drift espnowTxInFlight_ negative and disable OTA
+                // throttling.
+                if (AstrOs_EspNow.sendCounted(msg.dest, msg.data, msg.data_len) != ESP_OK)
                 {
                     ESP_LOGE(TAG, "Send error");
                 }

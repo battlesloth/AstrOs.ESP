@@ -47,9 +47,11 @@ static void (*espnowRecvCallback)(const esp_now_recv_info_t *recv_info, const ui
 // degraded, never deadlocked — and self-heals as in-flight callbacks arrive.
 static std::atomic<int> espnowTxInFlight_{0};
 
-// Cap on concurrent ESP-NOW frames in flight. Held well under
-// CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM (32); matches CONFIG_ESP_WIFI_TX_BA_WIN
-// (6). Past this, esp_now_send starts returning ESP_ERR_ESPNOW_NO_MEM.
+// Cap on concurrent ESP-NOW frames in flight. Held below the WiFi TX buffer
+// pool on both boards (metro_s3: CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32;
+// lolin_d32_pro: CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=16) and matching the
+// shared CONFIG_ESP_WIFI_TX_BA_WIN=6. Past the pool, esp_now_send starts
+// returning ESP_ERR_ESPNOW_NO_MEM.
 static constexpr int kEspnowTxInFlightCap = 6;
 
 // Single accounting site for every esp_now_send. Increments before the send;
@@ -75,6 +77,11 @@ void AstrOsEspNow::notifyTxComplete()
 bool AstrOsEspNow::espnowTxAtCapacity() const
 {
     return espnowTxInFlight_.load(std::memory_order_relaxed) >= kEspnowTxInFlightCap;
+}
+
+esp_err_t AstrOsEspNow::sendCounted(const uint8_t *mac, const uint8_t *data, size_t len)
+{
+    return espnowSendCounted(mac, data, len);
 }
 
 AstrOsEspNow::AstrOsEspNow() {}

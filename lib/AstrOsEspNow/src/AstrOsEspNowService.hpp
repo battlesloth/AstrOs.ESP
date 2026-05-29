@@ -182,8 +182,14 @@ public:
     // espnowTxAtCapacity: true when in-flight has reached the cap. The OTA drain
     //   polls this and declines to send (non-blocking) rather than overrunning
     //   the radio; a miscount degrades to "throttle harder", never to a hang.
+    // sendCounted: in-flight-counted esp_now_send for raw, pre-formed frames
+    //   sent from outside the class (the ESPNOW_SEND queue path in main.cpp).
+    //   Keeps the increment/decrement pairing total — every send-done callback
+    //   fires notifyTxComplete, so an uncounted send drifts the counter and
+    //   silently disables throttling.
     void notifyTxComplete();
     bool espnowTxAtCapacity() const;
+    esp_err_t sendCounted(const uint8_t *mac, const uint8_t *data, size_t len);
 
     // OTA ACK/NAK arrivals on the master are routed into this queue.
     // Called from main.cpp during init; before this is set, OTA arrivals
