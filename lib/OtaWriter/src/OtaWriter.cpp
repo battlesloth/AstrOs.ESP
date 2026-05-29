@@ -553,7 +553,7 @@ void OtaWriter::handleEnd(queue_ota_writer_msg_t &msg)
     // Read-back-and-rehash: catches silent flash corruption that landed
     // between esp_ota_write and esp_ota_end's finalize. 4 KB buffer
     // matches the flash sector size. Stack-allocated; sized against
-    // otaWriterTask's stack (8 KB). Re-verify HWM if the stack is shrunk.
+    // otaWriterTask's stack (12 KB). Re-verify HWM if the stack is shrunk.
     AstrOsSha256Ctx rbCtx;
     AstrOsSha256_init(&rbCtx);
 
@@ -732,6 +732,8 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
     }
 
     // ─── Step 3: stream the file in 4 KB chunks ──────────────────────
+    // This buffer is reused by the Step 6 readback verify — keep it a single
+    // 4 KB array. A second function-scoped 4 KB buffer overflows the stack.
     AstrOsSha256_init(&shaCtx_);
     shaActive_ = true;
     constexpr size_t kChunkBytes = 4096;
@@ -800,14 +802,17 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
     otaHandle_ = 0;
 
     // ─── Step 6: read-back-rehash verify ─────────────────────────────
+    // Reuse the Step 3 streaming buffer `buf`: the file is closed and the
+    // write phase is complete, so the two phases never touch it at once.
+    // Keeping a single 4 KB buffer (not two) holds ota_writer_task's stack
+    // within budget — two function-scoped 4 KB arrays coexist under -Og and
+    // overflow the stack mid-flash (see src/main.cpp ota_writer_task sizing).
     AstrOsSha256Ctx rbCtx;
     AstrOsSha256_init(&rbCtx);
-    constexpr size_t kRbBufSize = 4096;
-    uint8_t rbBuf[kRbBufSize];
     for (size_t off = 0; off < expectedSize;)
     {
-        size_t chunk = std::min(kRbBufSize, static_cast<size_t>(expectedSize - off));
-        err = esp_partition_read(inactivePartition_, off, rbBuf, chunk);
+        size_t chunk = std::min(kChunkBytes, static_cast<size_t>(expectedSize - off));
+        err = esp_partition_read(inactivePartition_, off, buf, chunk);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "handleLocalFlashReq: esp_partition_read at off=%zu failed: %s", off, esp_err_to_name(err));
@@ -816,7 +821,7 @@ void OtaWriter::handleLocalFlashReq(queue_ota_writer_msg_t &msg)
             postResult(OtaFlashStatus::FAILED, esp_err_to_name(err));
             return;
         }
-        AstrOsSha256_update(&rbCtx, rbBuf, chunk);
+        AstrOsSha256_update(&rbCtx, buf, chunk);
         off += chunk;
     }
     uint8_t readbackDigest[32];
