@@ -962,6 +962,20 @@ void OtaForwarder::streamDrain(uint64_t nowMs)
 {
     for (;;)
     {
+        // ESP-NOW TX backpressure: if the radio already has kEspnowTxInFlightCap
+        // frames queued, stop draining new chunks this pass rather than piling on
+        // (which returns ESP_ERR_ESPNOW_NO_MEM and, under load, feeds the
+        // retransmit/NAK storm). Checked BEFORE nextChunkToSend so we don't
+        // reserve an in-flight window slot we then decline to send. Non-blocking:
+        // the 50 ms tick re-enters streamDrain as send-done callbacks drain the
+        // count — same poll-and-decline shape as the WINDOW_FULL exit below. The
+        // tick-driven retransmit path is intentionally NOT gated here: it's
+        // bounded by the window and is higher-priority recovery traffic, and its
+        // own NO_MEM handling already backstops it.
+        if (AstrOs_EspNow.espnowTxAtCapacity())
+        {
+            return;
+        }
         auto sr = bulk_.nextChunkToSend(nowMs);
         if (sr.decision == AstrOsBulkTransport::SendResult::Decision::SEND)
         {

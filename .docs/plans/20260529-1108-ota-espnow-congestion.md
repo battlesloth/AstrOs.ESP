@@ -83,12 +83,12 @@ a throttle hint, not a data guard (mirrors `espnowMallocFailureCount`).
 ## Tasks
 
 - [x] Part A: bump `kAckTimeoutMs` 400→1500, `kWindowSize` 8→4 in OtaForwarder.hpp.
-- [ ] Part B: add `espnowTxInFlight_` atomic + `espnowSendCounted` wrapper (route
+- [x] Part B: add `espnowTxInFlight_` atomic + `espnowSendCounted` wrapper (route
       all 9 send sites through it), `notifyTxComplete` (called from
       `espnowSendCallback`), `espnowTxAtCapacity` accessor, and the cap check in
       `streamDrain`. Non-blocking — leak degrades to slow, never deadlock.
-- [ ] `pio run -e metro_s3` and `-e lolin_d32_pro` build clean.
-- [ ] `pio test -e test` green (BulkTransport native tests unaffected — constants
+- [x] `pio run -e metro_s3` and `-e lolin_d32_pro` build clean.
+- [x] `pio test -e test` green (BulkTransport native tests unaffected — constants
       are runtime args; no PURE-layer change).
 - [ ] Bench: re-run the padawan-only deploy; confirm NO_MEM bursts gone (or rare)
       and OUT_OF_ORDER NAK storm gone; transfer completes without manual abort.
