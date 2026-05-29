@@ -65,7 +65,7 @@ gate all sends uniformly (one sem, one give per callback, one take per send).
 
 ## Tasks
 
-- [ ] Part A: bump `kAckTimeoutMs` 400→1500, `kWindowSize` 8→4 in OtaForwarder.hpp.
+- [x] Part A: bump `kAckTimeoutMs` 400→1500, `kWindowSize` 8→4 in OtaForwarder.hpp.
 - [ ] Part B: add TX-credit counting semaphore; take in the send path, give in
       `espnowSendCallback`, give-back on non-OK `esp_now_send` return. Decide
       OTA-only vs all-sends gating and document the accounting invariant in code.
