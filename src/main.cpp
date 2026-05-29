@@ -241,11 +241,14 @@ void app_main()
         }
     }
 
-    // 8 KB stack (larger than the OTA receiver/forwarder family):
-    // OtaWriter::handleEnd declares a 4 KB readback buffer plus the
-    // SHA-256 ctx and call frames; that does not fit in 4 KB.
+    // 12 KB stack (larger than the OTA receiver/forwarder family):
+    // OtaWriter declares a 4 KB readback buffer plus the SHA-256 ctx and
+    // call frames; that does not fit in 4 KB. The master self-flash path
+    // (handleLocalFlashReq) layers a deep fread→FATFS→SD/SPI call chain on
+    // top of that buffer — deeper than the padawan wire path's shallow
+    // esp_partition_read — so it needs more headroom than 8 KB.
     // Task runs on both master (self-flash loopback) and padawan (wire OTA).
-    if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 8192, (void *)otaWriterQueue, 6, NULL, 1) != pdPASS)
+    if (xTaskCreatePinnedToCore(&otaWriterTask, "ota_writer_task", 12288, (void *)otaWriterQueue, 6, NULL, 1) != pdPASS)
     {
         ESP_LOGE(TAG, "Failed to create otaWriterTask — aborting init");
         abort();

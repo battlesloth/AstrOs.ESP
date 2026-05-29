@@ -55,8 +55,8 @@ bench re-run of the master self-flash.
 
 ## Tasks
 
-- [ ] Collapse Step 6's `rbBuf`/`kRbBufSize` to reuse Step 3's `buf`/`kChunkBytes` in `lib/OtaWriter/src/OtaWriter.cpp`; add a comment noting the single-buffer stack budget
-- [ ] Update the `handleEnd` readback comment that references "otaWriterTask's stack (8 KB)" to "(12 KB)"
-- [ ] Bump `ota_writer_task` stack 8192 → 12288 in `src/main.cpp:248` and refresh the sizing comment to mention the self-flash FATFS/SD read depth
-- [ ] Build `pio run -e metro_s3` (crashing board) and run `pio test -e test`; confirm both pass
+- [x] Collapse Step 6's `rbBuf`/`kRbBufSize` to reuse Step 3's `buf`/`kChunkBytes` in `lib/OtaWriter/src/OtaWriter.cpp`; add a comment noting the single-buffer stack budget
+- [x] Update the `handleEnd` readback comment that references "otaWriterTask's stack (8 KB)" to "(12 KB)"
+- [x] Bump `ota_writer_task` stack 8192 → 12288 in `src/main.cpp:248` and refresh the sizing comment to mention the self-flash FATFS/SD read depth
+- [x] Build + tests: `pio test -e test` 482/482 pass; `pio run -e metro_s3` and `pio run -e lolin_d32_pro` both SUCCESS; clang-format clean on both changed files
 - [ ] Commit; bench-verify master self-flash on hardware (manual, off-plan)
