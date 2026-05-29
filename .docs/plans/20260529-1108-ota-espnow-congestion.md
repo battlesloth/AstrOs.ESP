@@ -97,9 +97,9 @@ a throttle hint, not a data guard (mirrors `espnowMallocFailureCount`).
 ## Risk / notes
 
 - Touches the **shared** ESP-NOW send path + the WiFi-task send callback — a
-  known-fragile, brick-adjacent area (CLAUDE.md). Credit-accounting bugs
-  deadlock the mesh, so the take/give pairing must be exhaustively correct
-  across every `esp_now_send` return path.
+  known-fragile, brick-adjacent area (CLAUDE.md). Credit-accounting bugs can
+  over-throttle OTA or disable throttling, so the add/sub pairing must be
+  exhaustively correct across every `esp_now_send` return path.
 - Part A alone may calm the storm enough to ship; if bench after A is clean,
   Part B can be evaluated separately. Keep the commits split so A can land
   independently of B.
