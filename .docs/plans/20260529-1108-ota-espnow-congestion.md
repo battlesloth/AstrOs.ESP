@@ -40,35 +40,53 @@ storm on the master→padawan ESP-NOW link. Observed (operator aborted the run):
 - Lower `kWindowSize` 8 → 4 to bound in-flight bytes and airtime pressure.
 - Leave `kChunkSize=128`, `kMaxRetries=3` unchanged for now (revisit after bench).
 
-### Part B — ESP-NOW TX credit pacing (`src/main.cpp` + `lib/AstrOsEspNow`)
-Add a counting semaphore ("TX credits") sized a couple below the ESP-NOW internal
-queue depth so the master never outruns the radio:
-- Create `otaTxCredits` (FreeRTOS counting semaphore, max=N, initial=N; N≈5).
-- `sendOtaFrame`: `xSemaphoreTake(credits, timeout)` BEFORE `esp_now_send`. If
-  `esp_now_send` returns non-OK (NO_MEM etc.), **give the credit back
-  immediately** — no send-done callback will fire for a send that didn't
-  enqueue. On take-timeout, return a busy error so the tick retries later.
-- `espnowSendCallback` (main.cpp): on each completion, `xSemaphoreGive(credits)`
-  (ISR/WiFi-task-safe give). Fires once per `esp_now_send` that returned ESP_OK.
+### Part B — ESP-NOW TX in-flight counter (`src/main.cpp` + `lib/AstrOsEspNow`)
 
-**Accounting invariant (the sharp edge):** every successful `esp_now_send`
-(ESP_OK) produces exactly one callback → exactly one give. Every take is paired
-with either (a) a give in the callback (send enqueued) or (b) an immediate give
-on the non-OK return (send not enqueued). Get this wrong and credits leak →
-deadlock. **Scope the credit gate to the OTA path only** (sendOtaFrame), not all
-12 `esp_now_send` sites — but the single shared callback gives unconditionally,
-so non-OTA sends would over-give. Resolve by either: (i) a dedicated OTA-only
-send wrapper whose completions are distinguishable, or (ii) gate ALL sends with
-the credit sem (simplest, uniform accounting) — DECIDE during implementation
-after checking whether the callback can distinguish OTA frames. Default lean:
-gate all sends uniformly (one sem, one give per callback, one take per send).
+**Design choice: non-blocking atomic counter, NOT a counting semaphore.** A
+blocking semaphore `take` in front of every send means any credit-accounting leak
+deadlocks the whole mesh (all 9 send sites share one callback). An atomic counter
+whose only consumer is a *poll-and-decline* check in the OTA drain degrades a leak
+to "OTA throttles a bit more than it should" (slow), never "mesh hangs." The
+window+tick machinery already polls-and-declines on `WINDOW_FULL`, so this fits
+the existing control flow with no new blocking primitive.
+
+**Centralize accounting in ONE wrapper.** All 9 `esp_now_send(mac,data,size)`
+calls in `AstrOsEspNowService.cpp` are uniform, so route them through a single
+file-static helper rather than counting at each site (per-site counting is the
+leak hazard). Count ALL sends (poll, registration, servo-test, OTA) — they share
+the same radio TX buffers, so counting them all is physically accurate, not a
+compromise.
+
+- `static std::atomic<int> espnowTxInFlight_{0};` (file-static in the .cpp).
+- `espnowSendCounted(mac,data,size)`: `fetch_add(1)` → `esp_now_send` →
+  `fetch_sub(1)` if it returns non-OK (no send-done callback fires for a frame
+  that never enqueued). Replace all 9 raw `esp_now_send` calls with this helper.
+- `AstrOsEspNow::notifyTxComplete()`: `fetch_sub(1)`. Called once, unconditionally
+  (before the NULL-arg guard), at the top of `espnowSendCallback` in main.cpp —
+  the send-done callback fires exactly once per enqueued frame, SUCCESS or FAIL.
+- `AstrOsEspNow::espnowTxAtCapacity()`: `load() >= kEspnowTxInFlightCap`
+  (cap = 6, under the 32 WiFi TX buffers, matching TX_BA_WIN=6).
+- `OtaForwarder::streamDrain`: at the top of each loop iteration, if
+  `AstrOs_EspNow.espnowTxAtCapacity()` then stop draining this tick (same exit
+  as `WINDOW_FULL`); the 50 ms tick resumes when the radio drains.
+
+**Accounting invariant:** every `fetch_add` is matched by exactly one
+`fetch_sub` — either the immediate non-OK give-back (frame not enqueued) or the
+one callback (frame enqueued). Centralizing both the add and the non-OK sub in
+`espnowSendCounted`, and the callback sub in the single `notifyTxComplete`, makes
+the pairing auditable in two functions. **Failure direction is safe:** if a
+sub is ever missed (e.g. pending callbacks dropped on ESP-NOW teardown / abort),
+the counter drifts HIGH → OTA throttles more → slower, never hung. It self-heals
+as in-flight callbacks arrive. `memory_order_relaxed` throughout — the counter is
+a throttle hint, not a data guard (mirrors `espnowMallocFailureCount`).
 
 ## Tasks
 
 - [x] Part A: bump `kAckTimeoutMs` 400→1500, `kWindowSize` 8→4 in OtaForwarder.hpp.
-- [ ] Part B: add TX-credit counting semaphore; take in the send path, give in
-      `espnowSendCallback`, give-back on non-OK `esp_now_send` return. Decide
-      OTA-only vs all-sends gating and document the accounting invariant in code.
+- [ ] Part B: add `espnowTxInFlight_` atomic + `espnowSendCounted` wrapper (route
+      all 9 send sites through it), `notifyTxComplete` (called from
+      `espnowSendCallback`), `espnowTxAtCapacity` accessor, and the cap check in
+      `streamDrain`. Non-blocking — leak degrades to slow, never deadlock.
 - [ ] `pio run -e metro_s3` and `-e lolin_d32_pro` build clean.
 - [ ] `pio test -e test` green (BulkTransport native tests unaffected — constants
       are runtime args; no PURE-layer change).
