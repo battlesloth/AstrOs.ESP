@@ -50,8 +50,8 @@ single handler that overruns mid-execution.
    (~112 KB free on the bench run); +4 KB stack is comfortable.
 
 Net permanent RAM cost: +4 KB. No behavior change beyond stack/buffer layout.
-Not unit-testable (stack depth is invisible to host tests); verified by build +
-bench re-run of the master self-flash.
+Not unit-testable (stack depth is invisible to host tests); build checks pass,
+and master self-flash still needs a bench re-run.
 
 ## Tasks
 
