@@ -33,14 +33,14 @@ pre-build hook runs before configure, so `esp_app_desc.version` becomes
 
 ## Tasks
 
-- [ ] `scripts/version_gen.py`: add `write_version_txt(version)` (write-if-changed,
+- [x] `scripts/version_gen.py`: add `write_version_txt(version)` (write-if-changed,
       mirroring `write_header`) and call it from `main()`, targeting
       `${PROJECT_DIR}/version.txt`.
-- [ ] `.gitignore`: ignore `version.txt` (generated, changes every commit, like
+- [x] `.gitignore`: ignore `version.txt` (generated, changes every commit, like
       `version_generated.hpp`).
-- [ ] Verify producer: run `python3 scripts/version_gen.py`; confirm `version.txt`
+- [x] Verify producer: run `python3 scripts/version_gen.py`; confirm `version.txt`
       == the `Version` value in `version_generated.hpp`.
-- [ ] Verify no regression: `pio test -e test`.
+- [x] Verify no regression: `pio test -e test`.
 - [ ] Bench confirm (manual, on-device): next deploy's master log shows
       `Parsed expected new version '1.2.0-dev.390' from staged .bin` and the
       padawan row reaches `VERSION_CONFIRMED` / `status=OK`. Note in
