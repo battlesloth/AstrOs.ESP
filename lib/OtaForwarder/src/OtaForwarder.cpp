@@ -1536,6 +1536,8 @@ void OtaForwarder::startMasterSelfFlash()
     // VERIFYING: the server pre-advanced the master row to SENDING during upload,
     // so Sending->Verifying is the legal first master FW_PROGRESS. Emit it before
     // hashing so the verify row is visible while computeFileSha256 reads the file.
+    // Authoritative stage-transition graph: AstrOs.Server
+    // flash_job_state_machine.ts LEGAL_NEXT_STAGES (the order claims below track it).
     AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERIFYING", firmwareTotalSize_,
                                            firmwareTotalSize_, "");
 
@@ -1628,7 +1630,10 @@ void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
         // Flashing->Rebooting is the legal transition. The server then takes the
         // sentinel row Rebooting->Finalizing on the PENDING FW_DEPLOY_DONE below,
         // and the post-reboot heartbeat resolves it to VERSION_CONFIRMED. Emit
-        // before insertMasterRow so REBOOTING precedes FW_DEPLOY_DONE on the wire.
+        // before insertMasterRow: this is load-bearing, not cosmetic —
+        // emitDeployDoneAndReset (below) clears deployTransferId_, so REBOOTING
+        // must go out first to carry a valid transferId (and so precede
+        // FW_DEPLOY_DONE on the wire).
         AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
                                                firmwareTotalSize_, "");
 
