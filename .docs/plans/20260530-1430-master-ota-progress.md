@@ -55,15 +55,16 @@ left untouched.
 
 ## Tasks
 
-- [ ] In `startMasterSelfFlash`: set `currentControllerId_ = "00:00:00:00:00:00"`
+- [x] In `startMasterSelfFlash`: set `currentControllerId_ = "00:00:00:00:00:00"`
       and `firmwareTotalSize_ = expectedSize` early; emit `VERIFYING` before
-      `computeFileSha256`.
-- [ ] In `startMasterSelfFlash`: emit `FLASHING` immediately after the writer-queue
+      `computeFileSha256`. (Removed the redundant later `currentControllerId_`
+      assignment.)
+- [x] In `startMasterSelfFlash`: emit `FLASHING` immediately after the writer-queue
       `xQueueSend` succeeds.
-- [ ] In `handleLocalFlashResult` OK branch: emit `REBOOTING` before
+- [x] In `handleLocalFlashResult` OK branch: emit `REBOOTING` before
       `insertMasterRow` / reboot.
-- [ ] Compile both boards (`pio run -e metro_s3` and `-e lolin_d32_pro`).
-- [ ] Add QA plan `.docs/qa/master-ota-progress.md`.
+- [x] Compile both boards (`pio run -e metro_s3` and `-e lolin_d32_pro`) — both SUCCESS.
+- [x] Add QA plan `.docs/qa/master-ota-progress.md`.
 
 ## Out of scope / notes
 
