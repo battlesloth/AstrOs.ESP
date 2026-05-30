@@ -1525,6 +1525,22 @@ void OtaForwarder::startMasterSelfFlash()
     }
     uint32_t expectedSize = static_cast<uint32_t>(st.st_size);
 
+    // The master reports its own self-flash progress under the sentinel MAC so
+    // the server's controller-agnostic state machine renders it like a padawan.
+    // firmwareTotalSize_ is otherwise only set on the padawan transfer path; the
+    // master row needs it for the FW_PROGRESS byte counts (esp. a master-only
+    // deploy, where no padawan transfer ran to populate it).
+    currentControllerId_ = "00:00:00:00:00:00";
+    firmwareTotalSize_ = expectedSize;
+
+    // VERIFYING: the server pre-advanced the master row to SENDING during upload,
+    // so Sending->Verifying is the legal first master FW_PROGRESS. Emit it before
+    // hashing so the verify row is visible while computeFileSha256 reads the file.
+    // Authoritative stage-transition graph: AstrOs.Server
+    // flash_job_state_machine.ts LEGAL_NEXT_STAGES (the order claims below track it).
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "VERIFYING", firmwareTotalSize_,
+                                           firmwareTotalSize_, "");
+
     // ─── Compute SHA-256 ────────────────────────────────────────────
     uint8_t expectedSha[32];
     if (!computeFileSha256(firmwarePath, expectedSha))
@@ -1551,8 +1567,6 @@ void OtaForwarder::startMasterSelfFlash()
         emitDeployDoneAndReset();
         return;
     }
-
-    currentControllerId_ = "00:00:00:00:00:00";
 
     // Start the timer FIRST — before posting the request. If the timer fails
     // to start AFTER the request was posted, OtaWriter would already be
@@ -1584,6 +1598,15 @@ void OtaForwarder::startMasterSelfFlash()
         emitDeployDoneAndReset();
         return;
     }
+
+    // FLASHING: the image is now handed to OtaWriter, which runs the full
+    // write + read-back verify + esp_ota_set_boot_partition inline. Emit here so
+    // the flash row stays visible for that whole window (the writer reports only
+    // a single OK/FAILED result at the end, not intermediate progress).
+    // Sending->Verifying->Flashing is the legal order; the FAILED path lands
+    // Flashing->Failed via FW_DEPLOY_DONE, same as a padawan.
+    AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "FLASHING", firmwareTotalSize_,
+                                           firmwareTotalSize_, "");
 }
 
 void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
@@ -1603,10 +1626,23 @@ void OtaForwarder::handleLocalFlashResult(queue_ota_forwarder_msg_t &msg)
 
     if (status == OtaFlashStatus::OK)
     {
+        // REBOOTING: writer committed the new partition; we're about to restart.
+        // Flashing->Rebooting is the legal transition. The server then takes the
+        // sentinel row Rebooting->Finalizing on the PENDING FW_DEPLOY_DONE below,
+        // and the post-reboot heartbeat resolves it to VERSION_CONFIRMED. Emit
+        // before insertMasterRow: this is load-bearing, not cosmetic —
+        // emitDeployDoneAndReset (below) clears deployTransferId_, so REBOOTING
+        // must go out first to carry a valid transferId (and so precede
+        // FW_DEPLOY_DONE on the wire).
+        AstrOs_SerialMsgHandler.sendFwProgress(deployTransferId_, currentControllerId_, "REBOOTING", firmwareTotalSize_,
+                                               firmwareTotalSize_, "");
+
         insertMasterRow(PadawanStatus::PENDING, "", "awaiting_post_reboot_version");
         emitDeployDoneAndReset();
 
         ESP_LOGI(TAG, "Master self-flash complete; rebooting in 500ms");
+        // The 500 ms delay also gives serialCh1Queue time to drain the REBOOTING
+        // + FW_DEPLOY_DONE frames to the Pi before esp_restart tears down tasks.
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
         // not reached
