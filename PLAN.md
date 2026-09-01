@@ -4,20 +4,23 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  none — between projects
-Now:     —
-Next:    promote a Backlog item to T-001, or start the next project with a seam-discovery session
+Active:  standalone tasks — Maestro servo-release fixes
+Now:     T-001 (CheckServos release math) — authored, ready to implement
+Next:    T-002 (channels per-instance), then T-003 (state locking; depends on T-002)
 Blocked: none
-Last:    2026-08-16 — agentic workflow bootstrap; rel_1.2 shipped, develop bumped to 1.3.0
+Last:    2026-08-31 — servo-release root cause traced; T-001..T-003 authored
 
 ## Standalone tasks
 
-(none open)
+- [ ] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/T-001-checkservos-release-timeout.md`)
+- [ ] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/T-002-maestro-channels-per-instance.md`)
+- [ ] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/T-003-maestro-channel-state-sync.md`) — depends on T-002
 
 ## Backlog (unscheduled candidates)
 
 - Known-fragile catalog: `.docs/code-review/code-review.md` (P0–P3) — headline items also listed in CLAUDE.md "Known-fragile areas" (timer-callback leaks/stack pressure, `peers` vector mutex, `AnimationController` unlocked reads, `setKeyId` peer-index assumption, cross-core globals). Promote individually as tasks.
 - Queue consumers that fail to `free()` embedded pointers (same review catalog) — sweepable as one task or per-consumer.
+- `MaestroModule::QueueCommand` passes a stale `lastPos` when re-arming a released servo — `lastPos` is only ever set by `HomeServos`, so the pre-speed/accel position command replays the home position, not the last commanded one. Found 2026-08-31 during the servo-release investigation; needs its own investigation before a fix task.
 
 Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
@@ -26,6 +29,10 @@ Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findi
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-08-31 servo-release investigation
+  - bench symptom: servos stay energized after scripted moves. Root cause: `CheckServos` accumulates a fractional double into the int `currentPos` — increments < 1 (effective speed ≤ 5, which includes any scripted accel 1–5 via the accel-substitution clamp) truncate to zero, so the Maestro off command never fires; modeled rate is also ~40× slower than physical travel
+  - authored T-001 (fix math via pure `lib_native` helper + native tests), T-002 (de-globalize `channels[24]`), T-003 (timer-vs-command-path locking); noted stale-`lastPos` re-arm issue in Backlog
 
 - 2026-08-16 workflow bootstrap
   - adopted the task-file workflow (`.docs/agentic-workflow.md`), ported from AstrOs.Server; `PLAN.md` is now the authoritative status view — agent memory is a cache
