@@ -92,4 +92,32 @@ int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
     return std::clamp(move, minPos, maxPos);
 }
 
+// Extra allowance on the Maestro release deadline for slow-reacting loads
+// (e.g. linear actuators that lag well behind the commanded profile).
+constexpr int MAESTRO_RELEASE_SLACK = 4;
+
+/// @brief Worst-case time for a Maestro servo to cover the full 0-3000 us
+/// guard range, with MAESTRO_RELEASE_SLACK applied. The Maestro speed unit
+/// is 0.25 us per 10 ms per unit, so full-range travel takes
+/// 120000 / effectiveSpeed ms. Speed 0 (no limit) is treated as 255;
+/// acceleration substitutes for speed when it is nonzero and slower;
+/// out-of-range inputs are clamped to 0-255.
+/// @param speed Maestro speed value (0-255)
+/// @param acceleration Maestro acceleration value (0-255)
+/// @return deadline in milliseconds (ceiling)
+int WorstCaseTravelMs(int speed, int acceleration)
+{
+    speed = std::clamp(speed, 0, 255);
+    acceleration = std::clamp(acceleration, 0, 255);
+
+    int effective = speed == 0 ? 255 : speed;
+    if (acceleration != 0 && acceleration < effective)
+    {
+        effective = acceleration;
+    }
+
+    int totalMs = 120000 * MAESTRO_RELEASE_SLACK;
+    return (totalMs + effective - 1) / effective;
+}
+
 #endif

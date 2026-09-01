@@ -183,9 +183,12 @@ void MaestroModule::HomeServos()
 }
 
 /// @brief Since we can't really know where the servo is actually at
-/// and we don't want to keep the servo on all the time, we need to
-/// see if the servo could have moved it's entire range in the time
-/// since the last command. If it could have, we need to turn it off.
+/// and we don't want to keep the servo on all the time, we accumulate
+/// elapsed time per channel and turn the servo off once it has had
+/// enough time to cover its entire range (worst case, with slack).
+/// While a move is active, currentPos serves as the elapsed-ms
+/// accumulator; the deadline comes from WorstCaseTravelMs
+/// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp).
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
 {
@@ -197,23 +200,9 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
         }
         if (channels[i].on)
         {
-            // speed is (.25us/10ms) * n, where n is 0-255
-            // 0 is no speed limit
-            // An extended range servo is 500-2500us at 180 degrees
-            // to give us some buffer, we will calculate 0 to 3000 us
-            // if accel is less than speed, we will use accel to account for
-            // slower start and stop
-            // UPDATE: increase the timeout to accomidate linear acuators Doug is using
-            // being slow as fuck to react to changes
-            double speed = channels[i].speed == 0 ? 255 : channels[i].speed;
-            if (channels[i].acceleration < speed && channels[i].acceleration != 0)
-            {
-                speed = channels[i].acceleration;
-            }
+            channels[i].currentPos += msSinceLastCheck;
 
-            channels[i].currentPos = channels[i].currentPos + (((.25 * speed) * (msSinceLastCheck / 100)) / 4);
-
-            if (channels[i].currentPos >= 3000)
+            if (channels[i].currentPos >= WorstCaseTravelMs(channels[i].speed, channels[i].acceleration))
             {
                 ESP_LOGI(TAG, "Turning off servo %d", i);
                 this->setServoOff(i);

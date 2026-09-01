@@ -57,13 +57,13 @@ traced in-session:
 
 ## Acceptance criteria
 
-- [ ] Native tests in `test/test_native/astros_servo_utils_tests.cpp` cover `WorstCaseTravelMs`:
+- [x] Native tests in `test/test_native/astros_servo_utils_tests.cpp` cover `WorstCaseTravelMs`:
       speed 0 (→255), speed 1, speed 255, high speed + accel 1 (substitution), accel ≥ speed
       (no substitution), accel 0 (no substitution) — each asserting the exact expected ms.
-- [ ] Formerly-broken case is finite and correct: speed 1 → 120 000 ms × slack; accel 1 with any
+- [x] Formerly-broken case is finite and correct: speed 1 → 120 000 ms × slack; accel 1 with any
       speed → same.
-- [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
-- [ ] QA plan `.docs/qa/maestro-servo-release.md` created with release-timing cases.
+- [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
+- [x] QA plan `.docs/qa/maestro-servo-release.md` created with release-timing cases.
 - [ ] Bench (human-gated): scripted move with accel 1–5 → "Turning off servo N" appears on the
       monitor within the computed deadline and the servo is free to move by hand.
 - [ ] Bench (human-gated): full-speed slider move releases in a few seconds, not ~19 s.
@@ -88,3 +88,12 @@ pio run -e metro_s3
 ## Implementation checklist
 
 <!-- Added when work starts. -->
+
+- [x] RED: native tests for `WorstCaseTravelMs` written and observed failing
+- [x] GREEN: helper implemented in `AstrOsServoUtils.hpp`, tests pass
+- [x] `CheckServos` reworked to integer-ms accumulation + deadline compare; comment updated
+- [x] `pio test -e test` fully green
+- [x] `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean
+- [x] QA plan `.docs/qa/maestro-servo-release.md` written
+- [x] clang-format clean on changed C++ files
+- [x] PLAN.md status updated

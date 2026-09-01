@@ -73,3 +73,45 @@ TEST(ServoUtils, GetRelativeRequestedPosition)
     EXPECT_EQ(252, positionH);
     EXPECT_EQ(326, positionI);
 }
+
+// T-001: worst-case travel deadline for the Maestro release check.
+// Model: 0.25 us per 10 ms per speed unit over a 0-3000 us guard range
+// => 120000 / effectiveSpeed ms, times MAESTRO_RELEASE_SLACK (4), ceiling.
+TEST(ServoUtils, WorstCaseTravelMsUnlimitedSpeedTreatedAs255)
+{
+    EXPECT_EQ(1883, WorstCaseTravelMs(0, 0));
+    EXPECT_EQ(1883, WorstCaseTravelMs(255, 0));
+}
+
+TEST(ServoUtils, WorstCaseTravelMsSlowestSpeedIsFinite)
+{
+    // speed 1 formerly never released (fractional increment truncated to 0)
+    EXPECT_EQ(480000, WorstCaseTravelMs(1, 0));
+}
+
+TEST(ServoUtils, WorstCaseTravelMsMidSpeed)
+{
+    EXPECT_EQ(48000, WorstCaseTravelMs(10, 0));
+}
+
+TEST(ServoUtils, WorstCaseTravelMsAccelSubstitutesWhenSlower)
+{
+    // accel 1 with a fast speed formerly never released
+    EXPECT_EQ(480000, WorstCaseTravelMs(200, 1));
+    // accel substitutes even when speed is unlimited (0 -> 255)
+    EXPECT_EQ(160000, WorstCaseTravelMs(0, 3));
+}
+
+TEST(ServoUtils, WorstCaseTravelMsAccelIgnoredWhenNotSlower)
+{
+    EXPECT_EQ(48000, WorstCaseTravelMs(10, 50));
+    EXPECT_EQ(48000, WorstCaseTravelMs(10, 10));
+    EXPECT_EQ(48000, WorstCaseTravelMs(10, 0));
+}
+
+TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
+{
+    // negative or >255 values from a bad parse behave like the nearest bound
+    EXPECT_EQ(1883, WorstCaseTravelMs(-5, -1));
+    EXPECT_EQ(1883, WorstCaseTravelMs(999, 300));
+}

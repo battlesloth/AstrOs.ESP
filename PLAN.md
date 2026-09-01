@@ -5,10 +5,10 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-001 (CheckServos release math) — authored, ready to implement
+Now:     T-001 — implemented on feature/T-001-checkservos-release-timeout (tests + both builds green); bench verify + PR pending
 Next:    T-002 (channels per-instance), then T-003 (state locking; depends on T-002)
 Blocked: none
-Last:    2026-08-31 — servo-release root cause traced; T-001..T-003 authored
+Last:    2026-08-31 — T-001 implemented; root cause traced same day, T-001..T-003 authored
 
 ## Standalone tasks
 
