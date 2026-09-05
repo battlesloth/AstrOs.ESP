@@ -92,32 +92,87 @@ int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
     return std::clamp(move, minPos, maxPos);
 }
 
-// Extra allowance on the Maestro release deadline for slow-reacting loads
-// (e.g. linear actuators that lag well behind the commanded profile).
+// Slack multiplier on the physical worst-case travel time. Covers model
+// uncertainty (servo lag behind the commanded pulse, timer jitter). Bench-tune.
 constexpr int MAESTRO_RELEASE_SLACK = 4;
 
-/// @brief Worst-case time for a Maestro servo to cover the full 0-3000 us
-/// guard range, with MAESTRO_RELEASE_SLACK applied. The Maestro speed unit
-/// is 0.25 us per 10 ms per unit, so full-range travel takes
-/// 120000 / effectiveSpeed ms. Speed 0 (no limit) is treated as 255;
-/// acceleration substitutes for speed when it is nonzero and slower;
-/// out-of-range inputs are clamped to 0-255.
+// Floor on the release deadline for loads whose slew the Maestro speed model
+// does not describe (linear actuators run at their own rate regardless of the
+// commanded pulse ramp). 20 s matches the ~19 s full-speed hold the old math
+// produced, which those loads were living with. Stand-in until a per-channel
+// release setting exists.
+constexpr int MAESTRO_RELEASE_FLOOR_MS = 20000;
+
+/// @brief ceil(a / b) for a >= 0, b > 0
+constexpr int CeilDiv(int a, int b)
+{
+    return (a + b - 1) / b;
+}
+
+/// @brief smallest n >= 0 with n * n >= x
+static int CeilSqrt(int x)
+{
+    int n = (int)std::sqrt((double)x);
+    while (n > 0 && (n - 1) * (n - 1) >= x)
+    {
+        --n;
+    }
+    while (n * n < x)
+    {
+        ++n;
+    }
+    return n;
+}
+
+/// @brief Physical worst-case time for a Maestro servo to cover the full
+/// 0-3000 us guard range, times MAESTRO_RELEASE_SLACK.
+///
+/// Maestro units: speed is 0.25 us per 10 ms per unit, so cruising the guard
+/// range takes 120000 / speed ms. Acceleration is 0.25 us per 10 ms per 80 ms
+/// per unit, i.e. speed grows by `acceleration` units every 80 ms, so ramping
+/// up to the cap takes 80 * speed / acceleration ms. A move is a trapezoid
+/// (ramp, cruise, ramp) when the cap is reached before the halfway point,
+/// which is speed^2 <= 1500 * acceleration; otherwise it is a triangle and
+/// the time is 2 * sqrt(3000 us / a) with a = acceleration * 312.5 us/s^2,
+/// i.e. sqrt(38400000 / acceleration) ms.
+/// Speed 0 (no limit) is treated as 255; acceleration 0 means no ramp;
+/// out-of-range inputs are clamped to 0-255. All divisions ceil.
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
-/// @return deadline in milliseconds (ceiling)
+/// @return worst-case travel in milliseconds, with slack
 int WorstCaseTravelMs(int speed, int acceleration)
 {
     speed = std::clamp(speed, 0, 255);
     acceleration = std::clamp(acceleration, 0, 255);
 
-    int effective = speed == 0 ? 255 : speed;
-    if (acceleration != 0 && acceleration < effective)
+    int cap = speed == 0 ? 255 : speed;
+    int cruiseMs = CeilDiv(120000, cap);
+
+    int travelMs;
+    if (acceleration == 0)
     {
-        effective = acceleration;
+        travelMs = cruiseMs;
+    }
+    else if (cap * cap <= 1500 * acceleration)
+    {
+        travelMs = cruiseMs + CeilDiv(80 * cap, acceleration);
+    }
+    else
+    {
+        travelMs = CeilSqrt(CeilDiv(38400000, acceleration));
     }
 
-    int totalMs = 120000 * MAESTRO_RELEASE_SLACK;
-    return (totalMs + effective - 1) / effective;
+    return travelMs * MAESTRO_RELEASE_SLACK;
+}
+
+/// @brief The release deadline CheckServos uses: the physical worst case
+/// (WorstCaseTravelMs) floored at MAESTRO_RELEASE_FLOOR_MS.
+/// @param speed Maestro speed value (0-255)
+/// @param acceleration Maestro acceleration value (0-255)
+/// @return deadline in milliseconds
+int ServoReleaseDeadlineMs(int speed, int acceleration)
+{
+    return std::max(WorstCaseTravelMs(speed, acceleration), MAESTRO_RELEASE_FLOOR_MS);
 }
 
 #endif

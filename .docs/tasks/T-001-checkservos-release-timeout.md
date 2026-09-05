@@ -77,16 +77,16 @@ traced in-session:
 
 ## Acceptance criteria
 
-- [ ] Native tests in `test/test_native/astros_servo_utils_tests.cpp` cover `WorstCaseTravelMs`:
+- [x] Native tests in `test/test_native/astros_servo_utils_tests.cpp` cover `WorstCaseTravelMs`:
       speed-only (0→255, 1, 10, 20), trapezoid (20/2, 20/1, 10/2, 5/1, 10/50, 1/1), triangle
       (0/1, 0/2, 0/5, 200/1), the regime boundary (255/43 vs 255/44 continuous), and clamping —
       each asserting the exact expected ms.
-- [ ] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
+- [x] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
       (0/0, 0/5), model wins when above (20/0, 20/2, 1/0).
-- [ ] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 24 788 ms
+- [x] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 24 788 ms
       (was 480 000); speed 20 / accel 2 → 27 200 ms (was 240 000).
-- [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
-- [ ] QA plan `.docs/qa/maestro-servo-release.md` updated with the new reference deadlines and a
+- [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
+- [x] QA plan `.docs/qa/maestro-servo-release.md` updated with the new reference deadlines and a
       floor case.
 - [ ] Bench (human-gated): scripted move with speed 20 / accel 2 → "Turning off servo N" on the
       monitor ~27 s after the command and the servo is free by hand.
@@ -125,9 +125,9 @@ pio run -e metro_s3
 
 Amendment (2026-09-05):
 
-- [ ] RED: tests updated to the trapezoid/triangle model + new `ServoReleaseDeadlineMs` floor tests; observed failing
-- [ ] GREEN: `WorstCaseTravelMs` reworked, `ServoReleaseDeadlineMs` added, `CheckServos` switched to it
-- [ ] `pio test -e test` fully green; both boards build clean
-- [ ] QA plan reference deadlines + floor case updated
-- [ ] clang-format clean on changed C++ files
-- [ ] PLAN.md: Backlog item for per-channel release setting; Status + Log updated
+- [x] RED: tests updated to the trapezoid/triangle model + new `ServoReleaseDeadlineMs` floor tests; observed failing
+- [x] GREEN: `WorstCaseTravelMs` reworked, `ServoReleaseDeadlineMs` added, `CheckServos` switched to it
+- [x] `pio test -e test` fully green; both boards build clean
+- [x] QA plan reference deadlines + floor case updated
+- [x] clang-format clean on changed C++ files
+- [x] PLAN.md: Backlog item for per-channel release setting; Status + Log updated

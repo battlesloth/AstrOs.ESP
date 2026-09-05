@@ -187,8 +187,9 @@ void MaestroModule::HomeServos()
 /// elapsed time per channel and turn the servo off once it has had
 /// enough time to cover its entire range (worst case, with slack).
 /// While a move is active, currentPos serves as the elapsed-ms
-/// accumulator; the deadline comes from WorstCaseTravelMs
-/// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp).
+/// accumulator; the deadline comes from ServoReleaseDeadlineMs
+/// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp): the physical
+/// worst case for the channel's speed/accel, floored at 20 s.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
 {
@@ -202,7 +203,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
         {
             channels[i].currentPos += msSinceLastCheck;
 
-            if (channels[i].currentPos >= WorstCaseTravelMs(channels[i].speed, channels[i].acceleration))
+            if (channels[i].currentPos >= ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration))
             {
                 ESP_LOGI(TAG, "Turning off servo %d", i);
                 this->setServoOff(i);
