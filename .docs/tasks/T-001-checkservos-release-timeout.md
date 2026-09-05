@@ -38,6 +38,12 @@ traced in-session:
   ~19 s figure is what the linear actuators had been living with, so a 20 s floor is added to keep
   full-speed behavior where it was while the slow cases get fixed. The floor is a stand-in until a
   per-channel release setting exists (PLAN.md Backlog).
+- Second pass, same day: the ×4 slack multiplier inherited from the old `/ 4` is dropped. Every
+  real error source is a fixed few hundred ms (timer tick, serial latency, Maestro 80 ms accel
+  steps), so a multiplier over-penalizes slow moves (speed 1: 480 s for an 80 s sweep) while
+  adding nothing where it matters. The model already carries a proportional margin — the guard
+  range is 3000 µs against a real sweep of ≤2000 µs — and the 20 s floor covers everything at
+  speed ≥ 10. Deadline is simply `max(model, floor)`.
 
 ## Contract (pinned — do not change)
 
@@ -51,9 +57,9 @@ traced in-session:
   elapsed-ms accumulator, same type.)
 - PURE-lib purity: the new helpers live in `lib_native/AstrOsUtility` (`AstrOsServoUtils.hpp`),
   no ESP-IDF/FreeRTOS includes.
-- Allowances are explicit named constants, not buried in unit math: one slack multiplier on the
-  physical model (`MAESTRO_RELEASE_SLACK`) for model uncertainty, and one floor
-  (`MAESTRO_RELEASE_FLOOR_MS`) for loads whose slew the model does not describe.
+- One explicit named allowance: the floor (`MAESTRO_RELEASE_FLOOR_MS`) for loads whose slew the
+  model does not describe. No multiplier. The model's own margin is the 0–3000 µs guard range
+  (a real sweep is ≤2000 µs), stated in the helper's comment, not buried in unit math.
 
 ## Task
 
@@ -64,8 +70,7 @@ traced in-session:
    - accel 0: `cruise = ceil(120000 / speed)` ms.
    - cap reached (`speed² ≤ 1500 × accel`): `cruise + ramp`, where `ramp = ceil(80 × speed / accel)` ms.
    - cap never reached (triangle): `ceil(sqrt(38 400 000 / accel))` ms (= 2·√(3000 µs / a)).
-   - result × `MAESTRO_RELEASE_SLACK` (4 — bench-tune; may drop now the floor carries the
-     actuator case).
+   - no multiplier; the guard range is the margin.
 2. Add `ServoReleaseDeadlineMs(int speed, int acceleration)` =
    `max(WorstCaseTravelMs(speed, acceleration), MAESTRO_RELEASE_FLOOR_MS)` with the floor at
    20 000 ms. This is the policy layer `CheckServos` calls; `WorstCaseTravelMs` stays pure physics.
@@ -81,15 +86,17 @@ traced in-session:
       speed-only (0→255, 1, 10, 20), trapezoid (20/2, 20/1, 10/2, 5/1, 10/50, 1/1), triangle
       (0/1, 0/2, 0/5, 200/1), the regime boundary (255/43 vs 255/44 continuous), and clamping —
       each asserting the exact expected ms.
-- [x] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
-      (0/0, 0/5), model wins when above (20/0, 20/2, 1/0).
-- [x] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 24 788 ms
-      (was 480 000); speed 20 / accel 2 → 27 200 ms (was 240 000).
+- [ ] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
+      (0/0, 20/2, 10/2), model wins when above (5/1, 5/0, 1/0).
+- [ ] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 6 197 ms
+      (was 480 000); speed 20 / accel 2 → 6 800 ms (was 240 000); both then floored to 20 s.
 - [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
 - [x] QA plan `.docs/qa/maestro-servo-release.md` updated with the new reference deadlines and a
       floor case.
-- [ ] Bench (human-gated): scripted move with speed 20 / accel 2 → "Turning off servo N" on the
-      monitor ~27 s after the command and the servo is free by hand.
+- [ ] Bench (human-gated): scripted move with speed 20 / accel 2 (the reported bug) →
+      "Turning off servo N" ~20 s after the command (floor) and the servo is free by hand.
+- [ ] Bench (human-gated): scripted move with speed 5 / accel 1 → release ~24.7 s (model above
+      the floor), proving the max() is wired.
 - [ ] Bench (human-gated): full-speed slider move releases at ~20 s (floor), matching pre-fix
       behavior; linear actuators complete their stroke before release.
 
@@ -108,7 +115,8 @@ pio test -e test                      # WorstCaseTravelMs + ServoReleaseDeadline
 pio run -e lolin_d32_pro
 pio run -e metro_s3
 # bench: script move with speed 20 / accel 2; serial monitor shows
-# "Turning off servo N" ~27 s after "Setting servo N ..."; servo de-energized after.
+# "Turning off servo N" ~20 s after "Setting servo N ..." (floor); servo de-energized after.
+# bench: script move with speed 5 / accel 1; release ~24.7 s after (model above floor).
 # bench: slider move (speed 0); "Turning off servo N" ~20 s after (floor).
 ```
 
@@ -131,3 +139,10 @@ Amendment (2026-09-05):
 - [x] QA plan reference deadlines + floor case updated
 - [x] clang-format clean on changed C++ files
 - [x] PLAN.md: Backlog item for per-channel release setting; Status + Log updated
+
+Amendment, second pass (2026-09-05, drop the multiplier):
+
+- [ ] RED: test expectations reduced to model-only values; deadline tests re-split around the floor; observed failing
+- [ ] GREEN: `MAESTRO_RELEASE_SLACK` deleted; `WorstCaseTravelMs` returns the physical model
+- [ ] `pio test -e test` fully green; both boards build clean; clang-format clean
+- [ ] QA plan reference table + cases updated; PLAN.md Status + Log updated
