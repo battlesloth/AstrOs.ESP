@@ -86,9 +86,9 @@ traced in-session:
       speed-only (0→255, 1, 10, 20), trapezoid (20/2, 20/1, 10/2, 5/1, 10/50, 1/1), triangle
       (0/1, 0/2, 0/5, 200/1), the regime boundary (255/43 vs 255/44 continuous), and clamping —
       each asserting the exact expected ms.
-- [ ] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
+- [x] Native tests cover `ServoReleaseDeadlineMs`: floor applied when the model is below 20 s
       (0/0, 20/2, 10/2), model wins when above (5/1, 5/0, 1/0).
-- [ ] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 6 197 ms
+- [x] Formerly-never-release cases are finite and physical: accel 1 with speed 200 → 6 197 ms
       (was 480 000); speed 20 / accel 2 → 6 800 ms (was 240 000); both then floored to 20 s.
 - [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
 - [x] QA plan `.docs/qa/maestro-servo-release.md` updated with the new reference deadlines and a
@@ -142,7 +142,7 @@ Amendment (2026-09-05):
 
 Amendment, second pass (2026-09-05, drop the multiplier):
 
-- [ ] RED: test expectations reduced to model-only values; deadline tests re-split around the floor; observed failing
-- [ ] GREEN: `MAESTRO_RELEASE_SLACK` deleted; `WorstCaseTravelMs` returns the physical model
-- [ ] `pio test -e test` fully green; both boards build clean; clang-format clean
-- [ ] QA plan reference table + cases updated; PLAN.md Status + Log updated
+- [x] RED: test expectations reduced to model-only values; deadline tests re-split around the floor; observed failing
+- [x] GREEN: `MAESTRO_RELEASE_SLACK` deleted; `WorstCaseTravelMs` returns the physical model
+- [x] `pio test -e test` fully green; both boards build clean; clang-format clean
+- [x] QA plan reference table + cases updated; PLAN.md Status + Log updated

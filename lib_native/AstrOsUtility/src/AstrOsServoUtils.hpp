@@ -92,10 +92,6 @@ int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
     return std::clamp(move, minPos, maxPos);
 }
 
-// Slack multiplier on the physical worst-case travel time. Covers model
-// uncertainty (servo lag behind the commanded pulse, timer jitter). Bench-tune.
-constexpr int MAESTRO_RELEASE_SLACK = 4;
-
 // Floor on the release deadline for loads whose slew the Maestro speed model
 // does not describe (linear actuators run at their own rate regardless of the
 // commanded pulse ramp). 20 s matches the ~19 s full-speed hold the old math
@@ -125,7 +121,10 @@ static int CeilSqrt(int x)
 }
 
 /// @brief Physical worst-case time for a Maestro servo to cover the full
-/// 0-3000 us guard range, times MAESTRO_RELEASE_SLACK.
+/// 0-3000 us guard range. The guard range is the margin: a real sweep is at
+/// most 2000 us (500-2500), so every result is >= 1.5x the physical time.
+/// The remaining error sources (300 ms check tick, serial latency, Maestro
+/// 80 ms accel steps) are additive and sub-second; no multiplier is applied.
 ///
 /// Maestro units: speed is 0.25 us per 10 ms per unit, so cruising the guard
 /// range takes 120000 / speed ms. Acceleration is 0.25 us per 10 ms per 80 ms
@@ -139,7 +138,7 @@ static int CeilSqrt(int x)
 /// out-of-range inputs are clamped to 0-255. All divisions ceil.
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
-/// @return worst-case travel in milliseconds, with slack
+/// @return worst-case travel in milliseconds
 int WorstCaseTravelMs(int speed, int acceleration)
 {
     speed = std::clamp(speed, 0, 255);
@@ -148,21 +147,15 @@ int WorstCaseTravelMs(int speed, int acceleration)
     int cap = speed == 0 ? 255 : speed;
     int cruiseMs = CeilDiv(120000, cap);
 
-    int travelMs;
     if (acceleration == 0)
     {
-        travelMs = cruiseMs;
+        return cruiseMs;
     }
-    else if (cap * cap <= 1500 * acceleration)
+    if (cap * cap <= 1500 * acceleration)
     {
-        travelMs = cruiseMs + CeilDiv(80 * cap, acceleration);
+        return cruiseMs + CeilDiv(80 * cap, acceleration);
     }
-    else
-    {
-        travelMs = CeilSqrt(CeilDiv(38400000, acceleration));
-    }
-
-    return travelMs * MAESTRO_RELEASE_SLACK;
+    return CeilSqrt(CeilDiv(38400000, acceleration));
 }
 
 /// @brief The release deadline CheckServos uses: the physical worst case

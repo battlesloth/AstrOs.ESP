@@ -80,62 +80,63 @@ TEST(ServoUtils, GetRelativeRequestedPosition)
 //   accel unit = 0.25 us / 10 ms / 80 ms -> speed grows `accel` units per 80 ms
 // Trapezoid (cap reached, speed^2 <= 1500*accel): cruise + 80*speed/accel.
 // Triangle (cap never reached):                   sqrt(38400000 / accel).
-// Result x MAESTRO_RELEASE_SLACK (4). All ceilings.
+// No multiplier: the guard range (3000 us vs a real sweep of <= 2000 us) is
+// the margin. All ceilings.
 TEST(ServoUtils, WorstCaseTravelMsSpeedOnlyUnlimitedTreatedAs255)
 {
-    EXPECT_EQ(1884, WorstCaseTravelMs(0, 0));
-    EXPECT_EQ(1884, WorstCaseTravelMs(255, 0));
+    EXPECT_EQ(471, WorstCaseTravelMs(0, 0));
+    EXPECT_EQ(471, WorstCaseTravelMs(255, 0));
 }
 
 TEST(ServoUtils, WorstCaseTravelMsSpeedOnlySlowestIsFinite)
 {
     // speed 1 formerly never released (fractional increment truncated to 0)
-    EXPECT_EQ(480000, WorstCaseTravelMs(1, 0));
+    EXPECT_EQ(120000, WorstCaseTravelMs(1, 0));
 }
 
 TEST(ServoUtils, WorstCaseTravelMsSpeedOnlyMidRange)
 {
-    EXPECT_EQ(48000, WorstCaseTravelMs(10, 0));
-    EXPECT_EQ(24000, WorstCaseTravelMs(20, 0));
+    EXPECT_EQ(12000, WorstCaseTravelMs(10, 0));
+    EXPECT_EQ(6000, WorstCaseTravelMs(20, 0));
 }
 
 TEST(ServoUtils, WorstCaseTravelMsTrapezoidAddsRampToCruise)
 {
     // accel only adds a ramp; it is not a speed cap
-    EXPECT_EQ(27200, WorstCaseTravelMs(20, 2)); // 6000 + 800
-    EXPECT_EQ(30400, WorstCaseTravelMs(20, 1)); // 6000 + 1600
-    EXPECT_EQ(49600, WorstCaseTravelMs(10, 2)); // 12000 + 400
-    EXPECT_EQ(97600, WorstCaseTravelMs(5, 1));  // 24000 + 400
+    EXPECT_EQ(6800, WorstCaseTravelMs(20, 2));  // 6000 + 800
+    EXPECT_EQ(7600, WorstCaseTravelMs(20, 1));  // 6000 + 1600
+    EXPECT_EQ(12400, WorstCaseTravelMs(10, 2)); // 12000 + 400
+    EXPECT_EQ(24400, WorstCaseTravelMs(5, 1));  // 24000 + 400
 }
 
 TEST(ServoUtils, WorstCaseTravelMsTrapezoidRampCeilsAndIsSmallForHighAccel)
 {
-    EXPECT_EQ(48064, WorstCaseTravelMs(10, 50)); // 12000 + ceil(800/50)=16
-    EXPECT_EQ(480320, WorstCaseTravelMs(1, 1));  // 120000 + 80
+    EXPECT_EQ(12016, WorstCaseTravelMs(10, 50)); // 12000 + ceil(800/50)=16
+    EXPECT_EQ(120080, WorstCaseTravelMs(1, 1));  // 120000 + 80
 }
 
 TEST(ServoUtils, WorstCaseTravelMsTriangleWhenCapNeverReached)
 {
     // unlimited speed with low accel: servo never reaches speed 255
-    EXPECT_EQ(24788, WorstCaseTravelMs(0, 1)); // ceil(sqrt(38400000)) = 6197
-    EXPECT_EQ(17528, WorstCaseTravelMs(0, 2)); // ceil(sqrt(19200000)) = 4382
-    EXPECT_EQ(11088, WorstCaseTravelMs(0, 5)); // ceil(sqrt(7680000))  = 2772
+    EXPECT_EQ(6197, WorstCaseTravelMs(0, 1)); // ceil(sqrt(38400000))
+    EXPECT_EQ(4382, WorstCaseTravelMs(0, 2)); // ceil(sqrt(19200000))
+    EXPECT_EQ(2772, WorstCaseTravelMs(0, 5)); // ceil(sqrt(7680000))
     // accel 1 with a fast speed formerly never released
-    EXPECT_EQ(24788, WorstCaseTravelMs(200, 1));
+    EXPECT_EQ(6197, WorstCaseTravelMs(200, 1));
 }
 
 TEST(ServoUtils, WorstCaseTravelMsRegimeBoundaryIsContinuous)
 {
     // 255^2 = 65025: accel 43 (1500*43 = 64500) is triangle, accel 44 (66000) is trapezoid
-    EXPECT_EQ(3780, WorstCaseTravelMs(255, 43));
-    EXPECT_EQ(3740, WorstCaseTravelMs(255, 44));
+    EXPECT_EQ(945, WorstCaseTravelMs(255, 43));
+    EXPECT_EQ(935, WorstCaseTravelMs(255, 44));
 }
 
 TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
 {
     // negative or >255 values from a bad parse behave like the nearest bound
-    EXPECT_EQ(1884, WorstCaseTravelMs(-5, -1));
-    EXPECT_EQ(2204, WorstCaseTravelMs(999, 300)); // (255,255): 471 + 80
+    EXPECT_EQ(471, WorstCaseTravelMs(-5, -1));
+    EXPECT_EQ(551, WorstCaseTravelMs(999, 300)); // (255,255): 471 + 80
 }
 
 // Policy layer: the deadline CheckServos actually uses. Floors the physical
@@ -143,13 +144,14 @@ TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
 // does not describe (linear actuators); stand-in for a per-channel setting.
 TEST(ServoUtils, ServoReleaseDeadlineMsAppliesFloorWhenModelIsFaster)
 {
-    EXPECT_EQ(20000, ServoReleaseDeadlineMs(0, 0)); // model 1884
-    EXPECT_EQ(20000, ServoReleaseDeadlineMs(0, 5)); // model 11088
+    EXPECT_EQ(20000, ServoReleaseDeadlineMs(0, 0));  // model 471
+    EXPECT_EQ(20000, ServoReleaseDeadlineMs(20, 2)); // model 6800 (the reported bug case)
+    EXPECT_EQ(20000, ServoReleaseDeadlineMs(10, 2)); // model 12400
 }
 
 TEST(ServoUtils, ServoReleaseDeadlineMsUsesModelWhenSlower)
 {
-    EXPECT_EQ(24000, ServoReleaseDeadlineMs(20, 0));
-    EXPECT_EQ(27200, ServoReleaseDeadlineMs(20, 2));
-    EXPECT_EQ(480000, ServoReleaseDeadlineMs(1, 0));
+    EXPECT_EQ(24400, ServoReleaseDeadlineMs(5, 1));
+    EXPECT_EQ(24000, ServoReleaseDeadlineMs(5, 0));
+    EXPECT_EQ(120000, ServoReleaseDeadlineMs(1, 0));
 }
