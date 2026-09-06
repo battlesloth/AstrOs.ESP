@@ -87,8 +87,10 @@ Reference deadlines (model, floored at 20 s):
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
   inputs are clamped; servo releases at the floor (~20 s).
-- **Slider message with channel ≥ 24** (hand-crafted): `Invalid channel N` error logged, no
-  command sent, no crash (the arming write is bounds-checked).
+- **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
+  would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
+  logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`
+  and the cast to the wire byte happens only after it passes.
 - **Servo commanded to its current position** (no physical motion): still releases
   on the same deadline — the model is time-based, not motion-based.
 - **Tuning knob** lives in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` only:

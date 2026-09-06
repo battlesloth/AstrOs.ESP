@@ -170,3 +170,5 @@ Third pass (2026-09-05, PR #52 review — slider arming):
 - [x] both boards build clean; clang-format clean
 - [x] QA plan: released-channel slider case + noisy-drag case added
 - [x] PLAN.md Status + Log updated
+- [x] Re-review: `SetServoPosition` takes `int`, validates `0 <= channel < 24` before the
+      `uint8_t` cast (256 no longer wraps to 0 past the guard); QA edge case updated
