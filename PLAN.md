@@ -5,10 +5,10 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-001 (CheckServos release math) — authored, ready to implement
+Now:     T-001 — amended 2026-09-05 (trapezoid release model, 20 s floor, no multiplier) on feature/T-001-checkservos-release-timeout; tests + both builds green; bench verify + PR pending
 Next:    T-002 (channels per-instance), then T-003 (state locking; depends on T-002)
 Blocked: none
-Last:    2026-08-31 — servo-release root cause traced; T-001..T-003 authored
+Last:    2026-09-05 — T-001 amended: accel-as-speed model was a dimensional error (4-min deadlines); replaced with physical trapezoid + floor, slack multiplier dropped
 
 ## Standalone tasks
 
@@ -29,6 +29,12 @@ Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findi
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-05 T-001 amendment (pre-PR review)
+  - the accel-for-speed substitution carried over from the old code was a dimensional error: Maestro accel is speed-units per 80 ms, not a speed cap. Accel 2 reaches speed 25 in 1 s; modeling it as speed 2 made a speed-20/accel-2 move (physically ~6.8 s) wait 240 s
+  - replaced with the physical trapezoid/triangle model (`WorstCaseTravelMs`) and added `ServoReleaseDeadlineMs` = max(model × slack, 20 s floor). The floor keeps full-speed release at ~20 s (old broken math gave ~19 s, which the linear actuators were living with; first-pass T-001 had cut it to 1.9 s)
+  - per-channel release-time setting (absolute ms, floor semantics) added to Backlog; removes the global floor when it lands
+  - second pass: dropped the ×4 slack multiplier inherited from the old `/ 4`. Error sources are additive and sub-second; the 3000 vs ≤2000 µs guard range already gives 1.5×; the floor covers everything at speed ≥ 10. Deadline = max(model, 20 s)
 
 - 2026-08-31 servo-release investigation
   - bench symptom: servos stay energized after scripted moves. Root cause: `CheckServos` accumulates a fractional double into the int `currentPos` — increments < 1 (effective speed ≤ 5, which includes any scripted accel 1–5 via the accel-substitution clamp) truncate to zero, so the Maestro off command never fires; modeled rate is also ~40× slower than physical travel
