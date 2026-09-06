@@ -121,14 +121,16 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     this->setServoPosition(ch, channels[ch].requestedPos, channels[ch].lastPos, servoCmd.speed, servoCmd.acceleration);
 }
 
-void MaestroModule::SetServoPosition(uint8_t channel, int ms)
+void MaestroModule::SetServoPosition(int channel, int ms)
 {
     if (this->loading)
     {
         return;
     }
 
-    if (channel > 23)
+    // Validate as int: the caller parses the channel from text, and narrowing
+    // to uint8_t before this check would wrap 256 to 0 and -1 to 255.
+    if (channel < 0 || channel > 23)
     {
         ESP_LOGE(TAG, "Invalid channel %d", channel);
         return;
@@ -144,7 +146,7 @@ void MaestroModule::SetServoPosition(uint8_t channel, int ms)
     channels[channel].acceleration = 0;
     channels[channel].on = true;
 
-    this->setServoPosition(channel, ms, -1, 0, 0);
+    this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0);
 }
 
 void MaestroModule::Panic()

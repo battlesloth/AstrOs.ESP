@@ -58,7 +58,7 @@ public:
     void LoadConfig();
     void HomeServos();
     void QueueCommand(uint8_t *cmd);
-    void SetServoPosition(uint8_t channel, int ms);
+    void SetServoPosition(int channel, int ms);
     void Panic();
     // periodically check servos to turn them off
     void CheckServos(int msSinceLastCheck);

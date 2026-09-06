@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-001 — PR #52 open on develop; review threads answered + resolved 2026-09-05; slider arming fix committed (94cb2c5), slider re-bench pending, then push + re-review + merge
+Now:     T-001 — PR #52 merged to develop 2026-09-06 (model + floor). Follow-up PR #54 carries slider arming (94cb2c5) + int-channel validation (a3a84c7, push pending); slider re-bench pending, then merge and close out T-001 (move task file, flip checkbox)
 Next:    T-002 (channels per-instance), then T-003 (state locking; depends on T-002)
 Blocked: none
 Last:    2026-09-05 — T-001 amended: accel-as-speed model was a dimensional error (4-min deadlines); replaced with physical trapezoid + floor, slack multiplier dropped
@@ -36,6 +36,7 @@ Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findi
   - per-channel release-time setting (absolute ms, floor semantics) added to Backlog; removes the global floor when it lands
   - second pass: dropped the ×4 slack multiplier inherited from the old `/ 4`. Error sources are additive and sub-second; the 3000 vs ≤2000 µs guard range already gives 1.5×; the floor covers everything at speed ≥ 10. Deadline = max(model, 20 s)
   - PR #52 review (Copilot) found the slider path (`SetServoPosition`) never armed release tracking — pre-existing; a slider move on a released channel was never turned off. Fixed by arming with the script-path block (bounds-checked, no INFO log so drags don't spam). Second review item — timer callback passes a constant 300 ms rather than a measured delta, so the accumulator undercounts (late release only) — declined: late release is acceptable, constant stays
+  - PR #52 merged 2026-09-06 (8b54d77) at 55c3128, before the slider fix. Follow-up PR #54 from the same branch carries slider arming + a review fix: `SetServoPosition` validated after narrowing to `uint8_t`, so channel 256 wrapped to 0 and passed — now validates the parsed `int` first
 
 - 2026-08-31 servo-release investigation
   - bench symptom: servos stay energized after scripted moves. Root cause: `CheckServos` accumulates a fractional double into the int `currentPos` — increments < 1 (effective speed ≤ 5, which includes any scripted accel 1–5 via the accel-substitution clamp) truncate to zero, so the Maestro off command never fires; modeled rate is also ~40× slower than physical travel
