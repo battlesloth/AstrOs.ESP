@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-002 — in progress on `feature/T-002-maestro-channels-per-instance` (channels moved to a private member; native tests + both builds green; PR-toolkit review done, doc findings fixed; bench single-module regression + PR pending)
+Now:     T-002 — PR #56 open on develop (channels moved to a private member; native tests + both builds green; PR-toolkit reviewed twice, doc findings fixed); bench single-module regression pending, then merge + close out
 Next:    T-003 (state locking) or T-004 (panic → Maestro off, authored 2026-09-06); both depend on T-002, independent of each other
 Blocked: none
 Last:    2026-09-06 — T-001 complete: merged to develop via PRs #52, #54, #55; bench-verified
