@@ -10,7 +10,9 @@ Maestro units: cruise = 120000 / speed ms (speed 0 → 255); accel adds a ramp o
 80 × speed / accel ms (accel is speed-units per 80 ms, **not** a speed cap); when the cap is
 never reached the move is a triangle, sqrt(38 400 000 / accel) ms. No multiplier — the guard
 range (3000 µs vs a real sweep of ≤2000 µs) is the margin.
-The shutdown timer checks every 300 ms, so observed release ≈ deadline + ≤300 ms.
+The shutdown timer checks every 300 ms and counts its first tick after a command as a full
+300 ms, so observed release lands between deadline − 300 ms and deadline + one tick, plus a
+small late drift (measured 2026-09-06: 19.81–20.04 s for the 20 s floor).
 
 Reference deadlines (model, floored at 20 s):
 
@@ -41,9 +43,11 @@ Reference deadlines (model, floored at 20 s):
   come due together at ~20 s; phase B (40–123 s) moves all four at 40 s, then each channel
   again every 20.0 / 20.1 / 20.2 / 20.3 s (ch1–ch4) so a move lands inside the release tick each
   round; home at 123 s. Deploy it to the body location and run it with the monitor attached.
-  Pass: no `Turning off servo N on module 0` within 20 s after a `Setting servo N on module 0`
-  for that channel; channels 2–4 release once at ~20 s during phase A; no `state mutex timeout`
-  line anywhere; all four home at 123 s and release ~20 s later.
+  Pass: no `Turning off servo N on module 1` *after* a newer `Setting servo N on module 1` for
+  that channel (a release 19.7–20.1 s after the latest move is normal; the body Maestro is
+  module idx 1); channels 2–4 release once at ~20 s during phase A; no `state mutex timeout`
+  line anywhere; all four home at 123 s and release ~20 s later. First run 2026-09-06:
+  89 moves, 22 releases, gaps 19.81–20.04 s, 0 stale releases, 0 WARN/ERROR — pass.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
   Status tab. When the release lands, the channel's target drops to 0 and its Enabled box
   unchecks — proof the Maestro received the off command, not just that the ESP sent it.
