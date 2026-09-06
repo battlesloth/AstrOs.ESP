@@ -72,7 +72,10 @@ restructure sends so one operation holds `this->mutex` once:
    `stateMutex` (`pdMS_TO_TICKS(50)`; WARN + give `this->mutex` + abort on timeout) → write the
    channel fields → give `stateMutex` → `enqueueFrame(…, 500 ms)` for every frame of the
    operation → give `this->mutex`. `LoadConfig` copies under `stateMutex` only; its
-   `HomeServos` call uses the pattern above.
+   `HomeServos` call uses the pattern above. (`Panic` in T-004 instead clears its state *after*
+   its enqueues succeed, in a second short `stateMutex` section, because its failure direction
+   must never leave an output energized while tracking says off; the single send-mutex hold
+   and the no-blocking-under-`stateMutex` rule are unchanged.)
 3. `CheckServos` (esp_timer task): `xSemaphoreTake(stateMutex, 0)`; on failure WARN and return
    (whole tick skipped). For each servo channel that is `on`: advance the accumulator; if due,
    `xSemaphoreTake(this->mutex, 0)`; if acquired, `enqueueFrame(off, 0)`; if that returned

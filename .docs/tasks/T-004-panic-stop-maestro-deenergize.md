@@ -64,10 +64,13 @@ task depends on T-003.
   touched (serial queues self-heal by FIFO order; `i2cQueue` is the PCA9685 path, out of scope).
 - Order inside `handlePanicStop`: `AnimationCtrl.panicStop()` first (stop dispatching), then
   drain `servoQueue`, then the Maestro offs.
-- `Panic()` follows T-003's command-path pattern exactly: hold `this->mutex` once across its
-  state update and all of its off frames, with `stateMutex` nested briefly inside (lock order
-  send → state). It runs on `interfaceResponseQueueTask`, never on the esp_timer task, so it
-  may block on the sends.
+- `Panic()` follows T-003's command-path locking: hold `this->mutex` once across its state
+  reads, all of its off frames, and its state clear, with `stateMutex` nested briefly inside
+  (lock order send → state) and never held across an enqueue. It runs on
+  `interfaceResponseQueueTask`, never on the esp_timer task, so it may block on the sends.
+- Tracking state is cleared only for channels whose off frame was enqueued. A channel whose
+  off could not be queued stays `on` so the timer retries it (servo) or the error is the
+  signal (GPIO). Never clear state ahead of a send that can fail.
 - Depends on T-002 and T-003 merged.
 
 ## Task
@@ -75,16 +78,27 @@ task depends on T-003.
 1. Rewrite `MaestroModule::Panic()` as a T-003 command-path operation: `takeSendMutex()` (T-003's
    bounded take; on `false`, `ESP_LOGE("Panic: send mutex timeout on module %d — offs NOT
    sent")` and return — the serial path is wedged and nothing could reach the Maestro anyway)
-   → take `stateMutex` (50 ms) → for every channel with `enabled == true` (servo **and**
-   GPIO-type — panic means "no signal on every configured output") set `on = false`,
-   `currentPos = 0` and remember it in a local 24-entry flag array → give `stateMutex` →
-   `enqueueFrame(0x84 ch 0 0, 500 ms)` for each remembered channel → give `this->mutex`.
+   → take `stateMutex` (50 ms) → copy `enabled` for all 24 channels into a local flag array
+   (servo **and** GPIO-type — panic means "no signal on every configured output") → give
+   `stateMutex` → `enqueueFrame(0x84 ch 0 0, 500 ms)` for each enabled channel, recording
+   success per channel → take `stateMutex` (50 ms) → for each channel whose enqueue
+   **succeeded** set `on = false`, `currentPos = 0` → give `stateMutex` → give `this->mutex`.
+   State is cleared only for channels whose off frame actually went out. A channel whose
+   enqueue failed stays exactly as it was: `ESP_LOGE("Panic: off NOT queued for channel %d on
+   module %d")`; a servo channel is then retried by `CheckServos` within one deadline because
+   it is still `on`; a GPIO-type channel has no timer retry (they are never auto-released), so
+   the error line is the operator's signal. This ordering differs from the other T-003
+   command paths (which write state first) because panic's failure direction — output
+   energized while tracking says off — is the one that must never happen. The single
+   send-mutex hold and the no-blocking-under-`stateMutex` rule still apply: the enqueues run
+   with `stateMutex` released.
    **Fallback if the `stateMutex` take times out** (practically unreachable under T-003's
    lock order — the only other holders are `CheckServos` and `LoadConfig`, for microseconds):
    WARN, read `enabled` for each channel *without* the lock — it is config-only, written by
    `LoadConfig` alone, a single byte so it cannot tear — send the offs for those channels, and
-   leave `on` / `currentPos` untouched. `CheckServos` then sends one redundant off per channel
-   within a deadline and clears the state itself; nothing is left energized or untracked.
+   leave `on` / `currentPos` untouched (the post-send clear is skipped too). `CheckServos` then
+   sends one redundant off per channel within a deadline and clears the state itself; nothing
+   is left energized or untracked.
    One `ESP_LOGI` per module (`"Panic: de-energizing module %d"`), not per channel. Delete the
    `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
@@ -100,10 +114,12 @@ task depends on T-003.
 ## Acceptance criteria
 
 - [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel and sends nothing
-      for disabled channels — all under a single hold of `this->mutex`. In the normal path it
-      also marks each `on = false`; in the `stateMutex`-timeout fallback it leaves state alone
-      and `CheckServos` clears it with a redundant off within one deadline. No `0x9F` byte
-      leaves the module.
+      for disabled channels — all under a single hold of `this->mutex`. It marks `on = false`
+      only for channels whose frame was enqueued; a failed enqueue leaves the channel `on`
+      and logs an error naming it (verified by reading the code — the clear happens after the
+      enqueue result). In the `stateMutex`-timeout fallback it leaves state alone and
+      `CheckServos` clears it with a redundant off within one deadline. No `0x9F` byte leaves
+      the module.
 - [ ] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
       reaches every module in `maestroModules` without holding the map mutex across a send
       (verified by reading the code against the snapshot pattern).
