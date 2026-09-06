@@ -72,14 +72,21 @@ task depends on T-003.
 
 ## Task
 
-1. Rewrite `MaestroModule::Panic()` as a T-003 command-path operation: take `this->mutex`
-   (bounded-retry loop) → take `stateMutex` (50 ms; WARN and still send the offs on timeout —
-   de-energizing is the priority) → for every channel with `enabled == true` (servo **and**
+1. Rewrite `MaestroModule::Panic()` as a T-003 command-path operation: `takeSendMutex()` (T-003's
+   bounded take; on `false`, `ESP_LOGE("Panic: send mutex timeout on module %d — offs NOT
+   sent")` and return — the serial path is wedged and nothing could reach the Maestro anyway)
+   → take `stateMutex` (50 ms) → for every channel with `enabled == true` (servo **and**
    GPIO-type — panic means "no signal on every configured output") set `on = false`,
-   `currentPos = 0` → give `stateMutex` → `enqueueFrame(0x84 ch 0 0, 500 ms)` per enabled channel
-   → give `this->mutex`. One `ESP_LOGI` per module (`"Panic: de-energizing module %d"`), not
-   per channel. Delete the `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND`
-   define alone.
+   `currentPos = 0` and remember it in a local 24-entry flag array → give `stateMutex` →
+   `enqueueFrame(0x84 ch 0 0, 500 ms)` for each remembered channel → give `this->mutex`.
+   **Fallback if the `stateMutex` take times out** (practically unreachable under T-003's
+   lock order — the only other holders are `CheckServos` and `LoadConfig`, for microseconds):
+   WARN, read `enabled` for each channel *without* the lock — it is config-only, written by
+   `LoadConfig` alone, a single byte so it cannot tear — send the offs for those channels, and
+   leave `on` / `currentPos` untouched. `CheckServos` then sends one redundant off per channel
+   within a deadline and clears the state itself; nothing is left energized or untracked.
+   One `ESP_LOGI` per module (`"Panic: de-energizing module %d"`), not per channel. Delete the
+   `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
    with a zero-timeout `xQueueReceive` loop, freeing each message's payload; log the count
    dropped at INFO. Then snapshot `maestroModules` under `maestroModulesMutex`
@@ -92,9 +99,11 @@ task depends on T-003.
 
 ## Acceptance criteria
 
-- [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel, marks each
-      `on = false`, and sends nothing for disabled channels — all under a single hold of
-      `this->mutex`. No `0x9F` byte leaves the module.
+- [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel and sends nothing
+      for disabled channels — all under a single hold of `this->mutex`. In the normal path it
+      also marks each `on = false`; in the `stateMutex`-timeout fallback it leaves state alone
+      and `CheckServos` clears it with a redundant off within one deadline. No `0x9F` byte
+      leaves the module.
 - [ ] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
       reaches every module in `maestroModules` without holding the map mutex across a send
       (verified by reading the code against the snapshot pattern).
