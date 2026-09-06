@@ -1,6 +1,7 @@
 # QA: Maestro servo release (auto de-energize)
 
-Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001).
+Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001) and the
+per-instance channel state that backs it (T-002).
 
 Deadline model: `ServoReleaseDeadlineMs(speed, accel)` = max(`WorstCaseTravelMs`, 20 s floor).
 `WorstCaseTravelMs` is the physical trapezoid over the 0–3000 µs guard range using true
@@ -25,9 +26,12 @@ Reference deadlines (model, floored at 20 s):
 
 ## Preconditions
 
-- Board flashed with a build containing T-001 (amended: trapezoid model + floor); serial monitor
-  attached (115200). Log lines carry ms-since-boot; subtract `Setting servo N …` from
-  `Turning off servo N` to get the observed release time.
+- Board flashed with a build containing T-001 (amended: trapezoid model + floor) and T-002;
+  serial monitor attached (115200). Log lines carry ms-since-boot; subtract
+  `Setting servo N …` from `Turning off servo N` to get the observed release time. Both lines
+  carry the module id right after the servo number (T-002): `Setting servo N on module M
+  (min: …` and `Turning off servo N on module M`. The short forms quoted in cases 1–7 are
+  prefixes of the full lines.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
@@ -78,10 +82,39 @@ Reference deadlines (model, floored at 20 s):
    - Toggle a non-servo (GPIO) channel on.
    - Expected: no `Turning off servo N` for that channel at any point; output holds.
 
-7. **Panic overrides the timer**
+7. **Panic stop does not reach the Maestro (documents current behavior)**
    - Start a slow scripted move, then send panic stop.
-   - Expected: all channels off immediately; no stray `Turning off servo N`
-     afterward for the panicked channels.
+   - Expected today: the script halts (no further commands dispatched), but the in-flight
+     servo move completes to its target and releases on the normal deadline.
+     `handlePanicStop` only calls the animation controller's panic; `MaestroModule::Panic()`
+     (all channels off) has no caller. Verified 2026-09-06 during T-002 review. T-004 wires
+     panic to the Maestro; it rewrites this case when it lands.
+
+8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
+   Maestro being wired to serial channel 2)
+   - **Run this on a padawan.** The master reserves UART 1 for the server link, and
+     `loadMaestroConfigs` rejects a Maestro module on UART 1 there — on a master only module 1
+     would be created and the case would prove nothing.
+   - Configure two Maestro modules (idx 0 on serial 1, idx 1 on serial 2) with different servo
+     configs — e.g. module 0 channel 0 as a servo with home 1500, module 1 channel 0 as a servo
+     with home 2000 and a different min/max.
+   - Power the node; wait for homing.
+   - Expected: each module homes *its own* channel 0 to *its own* home value. Pre-T-002, the
+     second `LoadConfig` overwrote the shared array, so both modules homed to the last-loaded
+     config.
+   - **Wait for the boot-homing releases to land on both modules** (`Turning off servo 0 on
+     module 0` and `… on module 1`, ~20 s after homing — case 1). Only then continue;
+     otherwise the boot release will be mistaken for a failure below.
+   - Send a script move to module 0 channel 0 only.
+   - Expected: `Setting servo 0 on module 0 …`; only module 0's servo moves. **Exactly one**
+     `Turning off servo 0 on module 0` ~20 s after the script move, and no
+     `Turning off servo 0 on module 1` at all; module 1's servo neither moves nor
+     re-energizes. Pre-T-002, both modules' `CheckServos` advanced the same accumulator, so
+     release came in half the time, and `HomeServos` on one module flipped state observed by
+     the other.
+   - Send a slider move to module 1 channel 0.
+   - Expected: only module 1's servo moves; exactly one `Turning off servo 0 on module 1`
+     ~20 s after; module 0's servo stays released.
 
 ## Edge cases / negative tests
 

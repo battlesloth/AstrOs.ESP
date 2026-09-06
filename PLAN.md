@@ -5,8 +5,8 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-002 — not started (branch `feature/T-002-maestro-channels-per-instance` when work begins)
-Next:    T-003 (state locking; depends on T-002)
+Now:     T-002 — PR #56 open on develop (channels moved to a private member; native tests + both builds green; PR-toolkit reviewed twice, doc findings fixed); bench single-module regression pending, then merge + close out
+Next:    T-003 (stateMutex + per-operation send mutex; design amended 2026-09-06 after PR #56 review), then T-004 (panic → Maestro off; depends on T-003)
 Blocked: none
 Last:    2026-09-06 — T-001 complete: merged to develop via PRs #52, #54, #55; bench-verified
 
@@ -15,6 +15,7 @@ Last:    2026-09-06 — T-001 complete: merged to develop via PRs #52, #54, #55;
 - [x] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/completed/T-001-checkservos-release-timeout.md`) — done 2026-09-06
 - [ ] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/T-002-maestro-channels-per-instance.md`)
 - [ ] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/T-003-maestro-channel-state-sync.md`) — depends on T-002
+- [ ] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/T-004-panic-stop-maestro-deenergize.md`) — depends on T-002 and T-003 (Panic is one more operation under T-003's per-operation send mutex)
 
 ## Backlog (unscheduled candidates)
 
@@ -22,6 +23,8 @@ Last:    2026-09-06 — T-001 complete: merged to develop via PRs #52, #54, #55;
 - Queue consumers that fail to `free()` embedded pointers (same review catalog) — sweepable as one task or per-consumer.
 - Upgrade to espressif32 7.x / ESP-IDF 6.x deliberately: migrate both `sdkconfig.<env>` files (IDF 6.1 kconfgen crashes on the committed IDF-5-era files — the 2026-08-31 CI outage), then lift the `espressif32@6.13.0` pin in `platformio.ini`. Own task; touches both boards.
 - `MaestroModule::QueueCommand` passes a stale `lastPos` when re-arming a released servo — `lastPos` is only ever set by `HomeServos`, so the pre-speed/accel position command replays the home position, not the last commanded one. Found 2026-08-31 during the servo-release investigation; needs its own investigation before a fix task.
+- **Panic stop does not reach PCA9685 (I²C) servo channels.** T-004 covers the Maestro; the I²C servo path has the same gap. Found 2026-09-06.
+- **`MaestroModule` hygiene** (all pre-existing, found by T-002 review 2026-09-06): destructor never `vSemaphoreDelete`s `mutex` (leaks when `loadMaestroConfigs` erases a dropped module); `LoadConfig` ignores `loadMaestroServos`'s return and copies the parsed file over entries 0..maxId only, so entries above the file's highest id (and every entry when the file is missing/unparseable) keep stale state on reload (fix belongs with T-003's lock — clearing opens a window against the timer); `QueueCommand` lacks the `loading` gate `SetServoPosition` has and treats a pre-config channel as GPIO; six hard-coded `24`s including the `Panic` frame math (`cmd[74]`) want one named channel-count constant.
 
 Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
