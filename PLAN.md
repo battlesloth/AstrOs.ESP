@@ -5,14 +5,14 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-001 — PR #52 merged to develop 2026-09-06 (model + floor). Follow-up PR #54 carries slider arming (94cb2c5) + int-channel validation (a3a84c7, push pending); slider re-bench pending, then merge and close out T-001 (move task file, flip checkbox)
-Next:    T-002 (channels per-instance), then T-003 (state locking; depends on T-002)
+Now:     T-002 — not started (branch `feature/T-002-maestro-channels-per-instance` when work begins)
+Next:    T-003 (state locking; depends on T-002)
 Blocked: none
-Last:    2026-09-05 — T-001 amended: accel-as-speed model was a dimensional error (4-min deadlines); replaced with physical trapezoid + floor, slack multiplier dropped
+Last:    2026-09-06 — T-001 complete: merged to develop via PRs #52, #54, #55; bench-verified
 
 ## Standalone tasks
 
-- [ ] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/T-001-checkservos-release-timeout.md`)
+- [x] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/completed/T-001-checkservos-release-timeout.md`) — done 2026-09-06
 - [ ] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/T-002-maestro-channels-per-instance.md`)
 - [ ] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/T-003-maestro-channel-state-sync.md`) — depends on T-002
 
@@ -30,6 +30,12 @@ Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findi
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-06 T-001 complete — CheckServos release math (PRs #52, #54, #55 → develop)
+  - `CheckServos` accumulates integer ms per channel; deadline = max(physical trapezoid/triangle model of the Maestro speed + accel units, 20 s floor). No multiplier — the 3000 µs guard range vs ≤2000 µs real sweep is the margin
+  - slider path (`SetServoPosition`) now arms release tracking (was never turned off after a release) and validates the channel as the parsed `int` before narrowing to the wire byte
+  - bench: speed 20 / accel 2 releases ~20 s (floor), speed 5 / accel 1 ~24.7 s (model), slider re-arm on a released channel; QA plan `.docs/qa/maestro-servo-release.md`
+  - declined: measured timer delta in `servoShutdownTimerCallback` (constant 300 ms undercounts → late release only, accepted)
 
 - 2026-09-05 T-001 amendment (pre-PR review)
   - the accel-for-speed substitution carried over from the old code was a dimensional error: Maestro accel is speed-units per 80 ms, not a speed cap. Accel 2 reaches speed 25 in 1 s; modeling it as speed 2 made a speed-20/accel-2 move (physically ~6.8 s) wait 240 s

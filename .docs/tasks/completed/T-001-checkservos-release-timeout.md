@@ -1,6 +1,6 @@
 # T-001: Fix CheckServos release math so scripted moves de-energize servos
 
-<!-- File: .docs/tasks/T-001-checkservos-release-timeout.md. Branch: feature/T-001-checkservos-release-timeout.
+<!-- File: .docs/tasks/completed/T-001-checkservos-release-timeout.md (completed 2026-09-06; PRs #52, #54, #55). Branch: feature/T-001-checkservos-release-timeout.
      PR title: "T-001: Fix CheckServos release math so scripted moves de-energize servos". -->
 
 ## Context
@@ -109,7 +109,7 @@ traced in-session:
       → "Turning off servo N" ~20 s after the command (floor) and the servo is free by hand.
 - [x] Bench (human-gated, 2026-09-05): scripted move with speed 5 / accel 1 → release ~24.7 s
       (model above the floor), proving the max() is wired.
-- [ ] Bench (human-gated): slider move on a channel that has **already been released** turns
+- [x] Bench (human-gated, 2026-09-06): slider move on a channel that has **already been released** turns
       off ~20 s after the last slider message; a continuous drag produces no release mid-drag
       and no per-message log lines; linear actuators complete their stroke before release.
 
