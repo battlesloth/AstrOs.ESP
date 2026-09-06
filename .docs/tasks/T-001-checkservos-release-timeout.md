@@ -121,6 +121,9 @@ traced in-session:
 - `lastPos` never updated after moves (stale re-arm position in `QueueCommand`) — PLAN.md Backlog.
 - Per-channel release-time setting (removes the global floor) — PLAN.md Backlog.
 - A hold-tension option (see comment above `servoShutdownTimerCallback`) — future feature.
+- Measured timer delta instead of the constant 300 ms passed to `CheckServos` (PR #52 review) —
+  declined 2026-09-05: the undercount only delays release, never advances it, and that is
+  acceptable. Revisit only if late release is ever observed to matter.
 
 ## Verification
 
