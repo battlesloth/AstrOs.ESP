@@ -128,4 +128,16 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-<!-- Added when work starts. -->
+- [ ] `stateMutex` member created in the constructor (same failure handling as `mutex`)
+- [ ] `takeSendMutex()` (≤20 × 100 ms, `ESP_LOGE` on failure) and lock-free `enqueueFrame(cmd, size, wait)`;
+      `sendQueueMsg` reduced to take → enqueue(500 ms) → give
+- [ ] `setServoPosition` / `setServoOff` enqueue frames only (caller holds `this->mutex`);
+      `setServoOff` takes a wait and returns the enqueue result
+- [ ] `QueueCommand`, `SetServoPosition`, `HomeServos`: send-mutex once per operation, state writes
+      under `stateMutex` (50 ms, abort on timeout), enqueues with `stateMutex` released
+- [ ] `LoadConfig` copies under `stateMutex`; `Panic` state writes under `stateMutex` (frame untouched — T-004)
+- [ ] `CheckServos`: zero-wait `stateMutex`, zero-wait send try-take, zero-timeout enqueue, clear state only on success
+- [ ] Lock-order read-through: no path waits on `this->mutex` while holding `stateMutex`
+- [ ] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
+- [ ] QA plan: rapid-slider case and move-at-release-deadline case added
+- [ ] PLAN.md Status updated; bench (human-gated) pending
