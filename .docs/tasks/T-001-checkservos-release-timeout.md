@@ -44,6 +44,16 @@ traced in-session:
   adding nothing where it matters. The model already carries a proportional margin — the guard
   range is 3000 µs against a real sweep of ≤2000 µs — and the 20 s floor covers everything at
   speed ≥ 10. Deadline is simply `max(model, floor)`.
+- Third pass (PR #52 review, Copilot): slider/direct moves go through `SetServoPosition`, which
+  never armed release tracking — `on`, `currentPos`, `speed`, `acceleration` were untouched — so
+  a slider move on an already-released channel was never turned off. Pre-existing, but this
+  task's acceptance criteria claim slider release, so it is fixed here: arm in
+  `SetServoPosition` with the same block the script and homing paths use. Slider input is a
+  stream (tens of messages per second during a drag); each re-arm only resets the clock, so the
+  servo releases 20 s after the *last* message and never mid-drag. No INFO log on this path (it
+  would spam at drag rate). `SetServoPosition` previously never indexed `channels[]`, so a bad
+  channel was harmless; with arming it would be an out-of-bounds write, so it is bounds-checked
+  first, like `QueueCommand`.
 
 ## Contract (pinned — do not change)
 
@@ -79,6 +89,8 @@ traced in-session:
    `currentPos >= ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration)`. No new
    struct fields; no `/ 100` or `/ 4` divisions anywhere on the path.
 4. `CheckServos` comment block describes the ms-accumulator model and points at the helpers.
+5. `SetServoPosition` (slider/direct path): reject `channel > 23`, then set `currentPos = 0`,
+   `speed = 0`, `acceleration = 0`, `on = true` before sending the move. No INFO log.
 
 ## Acceptance criteria
 
@@ -93,17 +105,19 @@ traced in-session:
 - [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean.
 - [x] QA plan `.docs/qa/maestro-servo-release.md` updated with the new reference deadlines and a
       floor case.
-- [ ] Bench (human-gated): scripted move with speed 20 / accel 2 (the reported bug) →
-      "Turning off servo N" ~20 s after the command (floor) and the servo is free by hand.
-- [ ] Bench (human-gated): scripted move with speed 5 / accel 1 → release ~24.7 s (model above
-      the floor), proving the max() is wired.
-- [ ] Bench (human-gated): full-speed slider move releases at ~20 s (floor), matching pre-fix
-      behavior; linear actuators complete their stroke before release.
+- [x] Bench (human-gated, 2026-09-05): scripted move with speed 20 / accel 2 (the reported bug)
+      → "Turning off servo N" ~20 s after the command (floor) and the servo is free by hand.
+- [x] Bench (human-gated, 2026-09-05): scripted move with speed 5 / accel 1 → release ~24.7 s
+      (model above the floor), proving the max() is wired.
+- [ ] Bench (human-gated): slider move on a channel that has **already been released** turns
+      off ~20 s after the last slider message; a continuous drag produces no release mid-drag
+      and no per-message log lines; linear actuators complete their stroke before release.
 
 ## Out of scope
 
 - File-scope `channels[24]` shared across module instances — T-002.
-- Locking between the timer and command paths — T-003.
+- Locking between the timer and command paths — T-003 (the slider path is now a third writer
+  of the same fields, same pattern as `QueueCommand`; no new race class).
 - `lastPos` never updated after moves (stale re-arm position in `QueueCommand`) — PLAN.md Backlog.
 - Per-channel release-time setting (removes the global floor) — PLAN.md Backlog.
 - A hold-tension option (see comment above `servoShutdownTimerCallback`) — future feature.
@@ -146,3 +160,10 @@ Amendment, second pass (2026-09-05, drop the multiplier):
 - [x] GREEN: `MAESTRO_RELEASE_SLACK` deleted; `WorstCaseTravelMs` returns the physical model
 - [x] `pio test -e test` fully green; both boards build clean; clang-format clean
 - [x] QA plan reference table + cases updated; PLAN.md Status + Log updated
+
+Third pass (2026-09-05, PR #52 review — slider arming):
+
+- [ ] `SetServoPosition` bounds-checks the channel and arms release tracking; no INFO log
+- [ ] both boards build clean; clang-format clean
+- [ ] QA plan: released-channel slider case + noisy-drag case added
+- [ ] PLAN.md Status + Log updated
