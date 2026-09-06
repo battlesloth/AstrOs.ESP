@@ -46,6 +46,16 @@ private:
         QueueFull,
         NoMemory
     };
+    // How far setServoPosition got. Frames go out in this order, and the
+    // Maestro keeps whatever limit was in force for any frame that did not.
+    enum class SendStage
+    {
+        None = 0,
+        LastPos = 1,
+        Speed = 2,
+        Accel = 3,
+        Target = 4
+    };
 
     bool loading;
     int idx;
@@ -77,11 +87,17 @@ private:
     SemaphoreHandle_t stateMutex = nullptr; // guards channels[]
     void SendCommand(uint8_t *cmd);
     // Frame builders; the caller holds `mutex`. setServoPosition enqueues up
-    // to four frames with a 500 ms wait each and stops at the first drop
-    // (returns false; the caller logs with identity). setServoOff enqueues one
+    // to four frames with a 500 ms wait each and stops at the first drop,
+    // returning the last stage that went out (Target = complete); the caller
+    // logs with identity and calls reconcileLimits. setServoOff enqueues one
     // frame with `wait` and returns the result -- CheckServos calls it with
     // stateMutex held and wait 0.
-    bool setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
+    SendStage setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
+    // After a partial send, make the tracked speed/accel match what the
+    // Maestro is actually using so the release deadline models the real
+    // move: a frame that did not go out leaves the previous value in force.
+    // Caller holds `mutex`; takes stateMutex briefly.
+    void reconcileLimits(int channel, SendStage stage, int oldSpeed, int oldAccel);
     EnqueueResult setServoOff(uint8_t channel, TickType_t wait);
     int getServoPosition(uint8_t channel);
     // Takes `mutex` itself via sendQueueMsg -- never call with `mutex` held.

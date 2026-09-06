@@ -136,8 +136,9 @@ Reference deadlines (model, floored at 20 s):
      module M` ~20 s after the last message each time; no task-watchdog warning. Occasional
      `CheckServos: state busy on module M, skipping tick` or `CheckServos: send busy on module
      M, channels 0x… retry next tick` WARNs are acceptable — they are the timer yielding to a
-     command, not a fault. A `SetServoPosition: serial queue full, move … dropped` WARN means
-     the drag out-ran the UART; the next message re-sends everything.
+     command, not a fault. A `SetServoPosition: frame not queued (serial queue full or no memory)
+     after stage N of 3, move for channel C on module M dropped` WARN means the drag out-ran the
+     UART; the next message re-sends everything.
 
 10. **Move issued exactly as a release is due** (T-003; the PR #56 review scenario)
    - Send a slider move; wait ~20 s watching the monitor; send another slider move just as
@@ -173,10 +174,12 @@ Reference deadlines (model, floored at 20 s):
   the same window is ignored silently by the pre-existing `loading` guard (no log line) and
   the next slider message after the reload applies.
 - **Dropped frame inside a move** (T-003; needs the UART saturated, e.g. a hard slider drag):
-  `QueueCommand: serial queue full, move for channel N on module M incomplete (still tracked
-  on)` or the `SetServoPosition … dropped` WARN. The channel stays tracked as on and releases
-  on its normal deadline; a move never continues past a dropped frame, so the servo cannot run
-  at a stale speed against a new deadline.
+  `QueueCommand: frame not queued (serial queue full or no memory) after stage N of 4, move for
+  channel C on module M incomplete (still tracked on)` or the `SetServoPosition … after stage N
+  of 3 … dropped` WARN. The channel stays tracked as on and releases on its normal deadline; a
+  move never continues past a dropped frame, and the tracked speed/accel are reconciled to the
+  stage reached (a frame that did not go out leaves the Maestro's previous limit in force), so
+  the deadline always models the limits the servo is really moving under.
 - **Wedged serial path** (T-003, hard to provoke): if the send mutex cannot be taken for ~2 s
   the operation logs `Send mutex timeout on module M after 20 attempts` and drops the command
   without touching channel state. Pre-T-003 the caller spun forever.

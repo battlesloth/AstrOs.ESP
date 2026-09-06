@@ -174,6 +174,11 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, requestPos);
     }
 
+    // Limits the Maestro currently holds for this channel; restored by
+    // reconcileLimits for any frame that fails to go out.
+    int oldSpeed = channels[ch].speed;
+    int oldAccel = channels[ch].acceleration;
+
     channels[ch].currentPos = 0;
     channels[ch].speed = servoCmd.speed;
     channels[ch].acceleration = servoCmd.acceleration;
@@ -192,12 +197,14 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     ESP_LOGI(TAG, "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d",
              ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted);
 
-    if (!this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration))
+    SendStage stage = this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration);
+    if (stage != SendStage::Target)
     {
         ESP_LOGE(TAG,
-                 "QueueCommand: frame not queued (serial queue full or no memory), move for channel %d on module %d "
-                 "incomplete (still tracked on)",
-                 ch, this->idx);
+                 "QueueCommand: frame not queued (serial queue full or no memory) after stage %d of 4, move for "
+                 "channel %d on module %d incomplete (still tracked on)",
+                 static_cast<int>(stage), ch, this->idx);
+        this->reconcileLimits(ch, stage, oldSpeed, oldAccel);
     }
 
     xSemaphoreGive(this->mutex);
@@ -237,6 +244,9 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     // resets the clock, so CheckServos turns the servo off 20 s (the floor)
     // after the *last* message and never mid-drag. Deliberately no INFO log
     // here -- it would spam the monitor at drag rate.
+    int oldSpeed = channels[channel].speed;
+    int oldAccel = channels[channel].acceleration;
+
     channels[channel].currentPos = 0;
     channels[channel].speed = 0;
     channels[channel].acceleration = 0;
@@ -244,14 +254,17 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
     xSemaphoreGive(this->stateMutex);
 
-    if (!this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0))
+    SendStage stage = this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0);
+    if (stage != SendStage::Target)
     {
         // WARN, not ERROR: a saturated slider drag can hit this at message rate,
-        // and the next message re-sends everything.
+        // and the next message re-sends everything. No pre-position frame on
+        // this path, so nothing new is moving; reconcile anyway for uniformity.
         ESP_LOGW(TAG,
-                 "SetServoPosition: frame not queued (serial queue full or no memory), move for channel %d on module "
-                 "%d dropped",
-                 channel, this->idx);
+                 "SetServoPosition: frame not queued (serial queue full or no memory) after stage %d of 3, move for "
+                 "channel %d on module %d dropped",
+                 static_cast<int>(stage), channel, this->idx);
+        this->reconcileLimits(channel, stage, oldSpeed, oldAccel);
     }
 
     xSemaphoreGive(this->mutex);
@@ -305,6 +318,8 @@ void MaestroModule::HomeServos()
     {
         bool send;
         int ms;
+        int oldSpeed;
+        int oldAccel;
     };
     HomeMove moves[24] = {};
 
@@ -323,6 +338,8 @@ void MaestroModule::HomeServos()
         }
 
         moves[i].send = true;
+        moves[i].oldSpeed = channels[i].speed;
+        moves[i].oldAccel = channels[i].acceleration;
 
         if (!channels[i].isServo)
         {
@@ -349,9 +366,11 @@ void MaestroModule::HomeServos()
         {
             // lastPos 0 (not -1): homing sends an explicit target-0 frame first,
             // as it always has.
-            if (!this->setServoPosition(i, moves[i].ms, 0, 0, 0))
+            SendStage stage = this->setServoPosition(i, moves[i].ms, 0, 0, 0);
+            if (stage != SendStage::Target)
             {
                 failed++;
+                this->reconcileLimits(i, stage, moves[i].oldSpeed, moves[i].oldAccel);
             }
         }
     }
@@ -467,16 +486,19 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     }
 }
 
-bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed, int acceleration)
+MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed,
+                                                         int acceleration)
 {
     uint8_t cmd[4] = {};
     const TickType_t wait = pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS);
+    SendStage stage = SendStage::None;
 
     cmd[1] = channel;
 
-    // Stop at the first dropped frame: a delivered target after a dropped
-    // speed frame would move at the Maestro's previous speed while the
-    // release deadline assumes the new one.
+    // Stop at the first dropped frame and report how far we got: a delivered
+    // target after a dropped speed frame would move at the Maestro's previous
+    // speed while the release deadline assumes the new one, so the caller
+    // reconciles the tracked limits to the stage reached.
 
     // we need to send the last requested position
     // before we send speed/accel commands if the servo
@@ -490,8 +512,9 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
 
         if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
         {
-            return false;
+            return stage;
         }
+        stage = SendStage::LastPos;
     }
 
     cmd[0] = SET_SERVO_SPEED_COMMAND;
@@ -500,8 +523,9 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
 
     if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
-        return false;
+        return stage;
     }
+    stage = SendStage::Speed;
 
     cmd[0] = SET_SERVO_ACCELERATION_COMMAND;
     cmd[2] = acceleration & 0x7F;
@@ -509,8 +533,9 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
 
     if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
-        return false;
+        return stage;
     }
+    stage = SendStage::Accel;
 
     // .25us resolution
     int target = ms * 4;
@@ -521,11 +546,36 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
 
     if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
-        return false;
+        return stage;
     }
 
     ESP_LOGD(TAG, "command sent to channel: %d", channel);
-    return true;
+    return SendStage::Target;
+}
+
+void MaestroModule::reconcileLimits(int channel, SendStage stage, int oldSpeed, int oldAccel)
+{
+    // Speed and accel both went out => the tracked limits already match the
+    // wire, whatever happened to the target frame.
+    if (static_cast<int>(stage) >= static_cast<int>(SendStage::Accel))
+    {
+        return;
+    }
+
+    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "reconcileLimits: state mutex timeout, deadline for channel %d on module %d may run short",
+                 channel, this->idx);
+        return;
+    }
+
+    if (static_cast<int>(stage) < static_cast<int>(SendStage::Speed))
+    {
+        channels[channel].speed = oldSpeed;
+    }
+    channels[channel].acceleration = oldAccel;
+
+    xSemaphoreGive(this->stateMutex);
 }
 
 MaestroModule::EnqueueResult MaestroModule::setServoOff(uint8_t channel, TickType_t wait)

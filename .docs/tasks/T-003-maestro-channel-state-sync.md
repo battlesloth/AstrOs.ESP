@@ -147,6 +147,11 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: rapid-slider case and move-at-release-deadline case added
 - [x] PLAN.md Status updated
+- [x] PR #57 review round 2 (Copilot): `setServoPosition` returns the last `SendStage` reached
+      and the callers call `reconcileLimits`, restoring the tracked speed/accel for any frame
+      that did not go out (the Maestro keeps its previous limit), so a partial send can no
+      longer leave the deadline modelling limits the servo is not using; QA quotes the exact
+      drop messages
 - [x] PR #57 review (Copilot): `IsValid()` + creator-side check, semaphores deleted in the
       destructor, `enqueueFrame` never logs (returns `EnqueueResult`; `CheckServos` aggregates
       an out-of-memory mask and logs after the lock), two stale path comments in `src/main.cpp`
