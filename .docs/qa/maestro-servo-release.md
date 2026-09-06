@@ -35,6 +35,15 @@ Reference deadlines (model, floored at 20 s):
   prefixes of the full lines.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
+- For T-003 cases 9–11 in one run: the **`T-003 QA`** script in the server's local database
+  (`AstrOs.Server/.data/database.sqlite3`, id `s1788696QAq`, four body-Maestro servos):
+  phase A (0–35 s) moves all four at t=0, then hammers channel 1 every 0.5 s while channels 2–4
+  come due together at ~20 s; phase B (40–123 s) moves all four at 40 s, then each channel
+  again every 20.0 / 20.1 / 20.2 / 20.3 s (ch1–ch4) so a move lands inside the release tick each
+  round; home at 123 s. Deploy it to the body location and run it with the monitor attached.
+  Pass: no `Turning off servo N on module 0` within 20 s after a `Setting servo N on module 0`
+  for that channel; channels 2–4 release once at ~20 s during phase A; no `state mutex timeout`
+  line anywhere; all four home at 123 s and release ~20 s later.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
   Status tab. When the release lands, the channel's target drops to 0 and its Enabled box
   unchecks — proof the Maestro received the off command, not just that the ESP sent it.
