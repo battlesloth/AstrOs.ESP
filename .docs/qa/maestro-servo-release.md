@@ -1,6 +1,7 @@
 # QA: Maestro servo release (auto de-energize)
 
-Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001).
+Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001) and the
+per-instance channel state that backs it (T-002).
 
 Deadline model: `ServoReleaseDeadlineMs(speed, accel)` = max(`WorstCaseTravelMs`, 20 s floor).
 `WorstCaseTravelMs` is the physical trapezoid over the 0–3000 µs guard range using true
@@ -82,6 +83,24 @@ Reference deadlines (model, floored at 20 s):
    - Start a slow scripted move, then send panic stop.
    - Expected: all channels off immediately; no stray `Turning off servo N`
      afterward for the panicked channels.
+
+8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
+   Maestro being wired to serial channel 2)
+   - Configure two Maestro modules (idx 0 on serial 1, idx 1 on serial 2) with different servo
+     configs — e.g. module 0 channel 0 as a servo with home 1500, module 1 channel 0 as a servo
+     with home 2000 and a different min/max.
+   - Power the node; wait for homing.
+   - Expected: each module homes *its own* channel 0 to *its own* home value. Pre-T-002, the
+     second `LoadConfig` overwrote the shared array, so both modules homed to the last-loaded
+     config.
+   - Send a script move to module 0 channel 0 only.
+   - Expected: only module 0's servo moves; `Turning off servo 0` appears once for that module,
+     ~20 s later. Module 1's channel 0 is untouched — no move, no release log — because its
+     release accumulator is separate. Pre-T-002, both modules' `CheckServos` advanced the same
+     accumulator, so release came in half the time, and `Panic`/`HomeServos` on one module
+     flipped state observed by the other.
+   - Send a slider move to module 1 channel 0.
+   - Expected: only module 1's servo moves and releases ~20 s after; module 0 unaffected.
 
 ## Edge cases / negative tests
 

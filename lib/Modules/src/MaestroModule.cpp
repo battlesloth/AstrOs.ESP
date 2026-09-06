@@ -16,8 +16,6 @@
 static const char *TAG = "MaestroModule";
 static const int RX_BUF_SIZE = 1024;
 
-servo_channel channels[24] = {};
-
 MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
 {
 

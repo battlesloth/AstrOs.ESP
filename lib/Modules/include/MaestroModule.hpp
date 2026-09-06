@@ -1,6 +1,7 @@
 #ifndef MAESTROMODULE_HPP
 #define MAESTROMODULE_HPP
 
+#include <AstrOsStructs.h>
 #include <esp_err.h>
 #include <hal/uart_types.h>
 #include <string>
@@ -40,6 +41,12 @@ private:
     bool loading;
     int idx;
     int baudRate;
+
+    // Per-instance channel state (config + release tracking). Zero-initialized;
+    // populated by LoadConfig(). Written from the command paths (QueueCommand,
+    // SetServoPosition, HomeServos, Panic) and read-modify-written by
+    // CheckServos() on the esp_timer task -- synchronization is T-003.
+    servo_channel channels[24] = {};
 
     QueueHandle_t serialQueue;
     SemaphoreHandle_t mutex;

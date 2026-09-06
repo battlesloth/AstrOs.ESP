@@ -36,11 +36,11 @@ in `MaestroModule.cpp`. Pure ownership refactor — no behavior change for singl
 
 ## Acceptance criteria
 
-- [ ] No file-scope channel state remains in `MaestroModule.cpp`; each instance owns its array.
-- [ ] `pio test -e test` green; both board environments build clean.
+- [x] No file-scope channel state remains in `MaestroModule.cpp`; each instance owns its array.
+- [x] `pio test -e test` green; both board environments build clean.
 - [ ] Bench regression (single module, human-gated): home-on-boot, scripted move, and release
       behave exactly as before.
-- [ ] QA plan `.docs/qa/maestro-servo-release.md` gains a multi-module config case (execution
+- [x] QA plan `.docs/qa/maestro-servo-release.md` gains a multi-module config case (execution
       human-gated on second-module hardware availability).
 
 ## Out of scope
@@ -59,11 +59,12 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-- [ ] `channels` becomes a private zero-initialized member of `MaestroModule` (header gains the
+- [x] `channels` becomes a private zero-initialized member of `MaestroModule` (header gains the
       `servo_channel` include); file-scope global removed
-- [ ] every reference in `MaestroModule.cpp` resolves to the member (no code change needed
+- [x] every reference in `MaestroModule.cpp` resolves to the member (no code change needed
       beyond the declaration move — verify by diff)
-- [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` + `pio run -e metro_s3` clean, no
+- [x] `pio test -e test` green; `pio run -e lolin_d32_pro` + `pio run -e metro_s3` clean, no
       new warnings in changed files; clang-format clean
-- [ ] QA plan: multi-module config case added (human-gated on second-module hardware)
-- [ ] PLAN.md Status updated; bench single-module regression (human-gated)
+- [x] QA plan: multi-module config case added (human-gated on second-module hardware)
+- [x] PLAN.md Status updated
+- [ ] bench single-module regression (human-gated)
