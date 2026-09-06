@@ -107,9 +107,9 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
         channels[ch].requestedPos = GetRelativeRequestedPosition(channels[ch].minPos, channels[ch].maxPos, requestPos);
     }
 
-    ESP_LOGI(TAG, "Setting servo %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d", ch,
-             channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position, servoCmd.speed,
-             servoCmd.acceleration, channels[ch].inverted);
+    ESP_LOGI(TAG, "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d",
+             ch, this->idx, channels[ch].minPos, channels[ch].maxPos, channels[ch].requestedPos, servoCmd.position,
+             servoCmd.speed, servoCmd.acceleration, channels[ch].inverted);
 
     channels[ch].currentPos = 0;
     channels[ch].speed = servoCmd.speed;
@@ -221,7 +221,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
 
             if (channels[i].currentPos >= ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration))
             {
-                ESP_LOGI(TAG, "Turning off servo %d", i);
+                ESP_LOGI(TAG, "Turning off servo %d on module %d", i, this->idx);
                 this->setServoOff(i);
                 channels[i].on = false;
                 channels[i].currentPos = 0;

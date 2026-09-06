@@ -27,12 +27,21 @@ must cover it when it adds the lock.
 - `servo_channel` layout and the persisted text config format unchanged.
 - Maestro wire protocol unchanged.
 - Public `MaestroModule` API unchanged (`LoadConfig`, `QueueCommand`, `SetServoPosition`,
-  `Panic`, `HomeServos`, `CheckServos`, `UpdateConfig`, constructor signature).
+  `Panic`, `HomeServos`, `CheckServos`, `UpdateConfig`, constructor signature). Amendment
+  2026-09-06, authorized at PR-toolkit review: copy constructor and copy assignment are
+  **deleted** — nothing copies today, and a copy would fork channel state and share the mutex
+  handle. Not an API a caller relied on; it makes per-instance ownership compiler-enforced.
 
 ## Task
 
 Make `channels` a private zero-initialized member array of `MaestroModule`; update all references
 in `MaestroModule.cpp`. Pure ownership refactor — no behavior change for single-module setups.
+
+Added at review (2026-09-06):
+
+- Delete copy ctor / copy assignment (see Contract amendment).
+- Quick-tier logging tweak: `Setting servo N …` and `Turning off servo N` gain `on module M`
+  so the two-module QA case is attributable from the monitor. Prefix unchanged.
 
 ## Acceptance criteria
 
@@ -67,4 +76,6 @@ pio run -e metro_s3
       new warnings in changed files; clang-format clean
 - [x] QA plan: multi-module config case added (human-gated on second-module hardware)
 - [x] PLAN.md Status updated
+- [x] Review follow-ups: copy ops deleted; `on module M` added to the two Maestro log lines;
+      QA case 8 made attributable
 - [ ] bench single-module regression (human-gated)

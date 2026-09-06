@@ -64,6 +64,11 @@ public:
     MaestroModule(QueueHandle_t queue, int idx, int baud);
     ~MaestroModule();
 
+    // One instance per physical Maestro. A copy would fork the per-instance
+    // channel state below and share the FreeRTOS mutex handle.
+    MaestroModule(const MaestroModule &) = delete;
+    MaestroModule &operator=(const MaestroModule &) = delete;
+
     void UpdateConfig(QueueHandle_t queue, int baud);
     void LoadConfig();
     void HomeServos();

@@ -97,19 +97,19 @@ Reference deadlines (model, floored at 20 s):
    - Expected: each module homes *its own* channel 0 to *its own* home value. Pre-T-002, the
      second `LoadConfig` overwrote the shared array, so both modules homed to the last-loaded
      config.
-   - **Wait for the boot-homing releases to land on both modules** (two `Turning off servo 0`
-     lines, ~20 s after homing — case 1). Only then continue; otherwise the boot release will
-     be mistaken for a failure below.
+   - **Wait for the boot-homing releases to land on both modules** (`Turning off servo 0 on
+     module 0` and `… on module 1`, ~20 s after homing — case 1). Only then continue;
+     otherwise the boot release will be mistaken for a failure below.
    - Send a script move to module 0 channel 0 only.
-   - Expected: only module 0's servo moves (watch the hardware — the log line carries no
-     module index, both instances log under the same tag). **Exactly one** `Turning off
-     servo 0` line appears, ~20 s after the script move; module 1's servo neither moves nor
+   - Expected: `Setting servo 0 on module 0 …`; only module 0's servo moves. **Exactly one**
+     `Turning off servo 0 on module 0` ~20 s after the script move, and no
+     `Turning off servo 0 on module 1` at all; module 1's servo neither moves nor
      re-energizes. Pre-T-002, both modules' `CheckServos` advanced the same accumulator, so
      release came in half the time, and `HomeServos` on one module flipped state observed by
      the other.
    - Send a slider move to module 1 channel 0.
-   - Expected: only module 1's servo moves; exactly one `Turning off servo 0` ~20 s after;
-     module 0's servo stays released.
+   - Expected: only module 1's servo moves; exactly one `Turning off servo 0 on module 1`
+     ~20 s after; module 0's servo stays released.
 
 ## Edge cases / negative tests
 
