@@ -73,7 +73,8 @@ pio run -e metro_s3
 - [x] every reference in `MaestroModule.cpp` resolves to the member (no code change needed
       beyond the declaration move — verify by diff)
 - [x] `pio test -e test` green; `pio run -e lolin_d32_pro` + `pio run -e metro_s3` clean, no
-      new warnings in changed files; clang-format clean
+      new warnings in changed files; clang-format clean (re-run after every code commit,
+      last after the copy-delete / log-line change and the final comment edit)
 - [x] QA plan: multi-module config case added (human-gated on second-module hardware)
 - [x] PLAN.md Status updated
 - [x] Review follow-ups: copy ops deleted; `on module M` added to the two Maestro log lines;

@@ -25,9 +25,9 @@ Targets* (`0x9F`) frame with a channel number every third byte. The real format 
 `0x9F, count, firstChannel, then two target bytes per consecutive channel`, so a Maestro would
 read target 0 for channel 0, target 1 (0.25 µs → clamped to the channel's minimum) for channel
 1, and so on, then 23 trailing bytes as garbage commands. It has never run, which is why this
-was never seen. `0x9F` is also Mini Maestro 12/18/24 only, and a count past the physical channel
-count is a serial protocol error. The per-channel off (`setServoOff` → `0x84 ch 0 0`) is the
-path `CheckServos` exercises on every release, so panic uses that.
+was never seen. `0x9F` is also Mini Maestro 12/18/24 only, and the ESP does not know the physical
+channel count, so the count byte would be a guess. The per-channel off (`setServoOff` →
+`0x84 ch 0 0`) is the path `CheckServos` exercises on every release, so panic uses that.
 
 Known limitation, accepted: a servo command already dequeued into `servoQueue` at the instant
 panic fires still executes after the off; that one servo re-energizes and releases on the
@@ -40,8 +40,9 @@ normal deadline. Flushing the queue is out of scope.
 - Maestro wire protocol: release stays `SET_SERVO_COMMAND` (`0x84`) with target 0 per channel
   via the existing private `setServoOff`. No `0x9F` frame is sent.
 - Public `MaestroModule` API unchanged: `void Panic()` keeps its signature.
-- `handlePanicStop` never holds `maestroModulesMutex` across `Panic()` — `sendQueueMsg` takes
-  the per-module mutex and can block up to 500 ms on `xQueueSend`. Use the snapshot pattern
+- `handlePanicStop` never holds `maestroModulesMutex` across `Panic()` — `sendQueueMsg` retries
+  the per-module mutex take (100 ms timeout) without bound and then blocks up to 500 ms on
+  `xQueueSend`, so its worst case is unbounded. Use the snapshot pattern
   documented above `servoShutdownTimerCallback` in `src/main.cpp` (bounded take, `ESP_LOGW`
   on timeout, copy the `shared_ptr`s, release, then call).
 - Queue-message ownership unchanged: `sendQueueMsg` mallocs per message; the serial task frees.
@@ -62,6 +63,8 @@ normal deadline. Flushing the queue is out of scope.
    timeout), release the mutex, then call `Panic()` on each module in the snapshot.
 3. Update QA: rewrite case 7 in `.docs/qa/maestro-servo-release.md` to the new behavior and
    add the GPIO-channel and padawan cases below.
+4. Update the `channels` comment in `lib/Modules/include/MaestroModule.hpp`: `Panic()` now
+   writes on `interfaceResponseQueueTask`; drop "has no caller today".
 
 ## Acceptance criteria
 

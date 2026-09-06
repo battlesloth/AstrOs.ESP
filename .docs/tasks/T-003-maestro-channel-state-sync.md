@@ -22,8 +22,9 @@ during the servo-release investigation (see T-001 Context).
 
 ## Contract (pinned — do not change)
 
-- Never hold a state lock across `sendQueueMsg` — it takes `this->mutex` (non-recursive) and can
-  block up to 500 ms on `xQueueSend`; the esp_timer task must not block (see the snapshot pattern
+- Never hold a state lock across `sendQueueMsg` — it retries `this->mutex` (non-recursive, 100 ms
+  timeout) without bound and then can block up to 500 ms on `xQueueSend`, so its worst case is
+  unbounded; the esp_timer task must not block (see the snapshot pattern
   documented above `servoShutdownTimerCallback` in `src/main.cpp`).
 - Existing `this->mutex` (serial-send mutex) semantics unchanged.
 - Public `MaestroModule` API unchanged; Maestro wire protocol unchanged.

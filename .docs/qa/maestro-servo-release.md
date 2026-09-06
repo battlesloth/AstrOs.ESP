@@ -26,9 +26,11 @@ Reference deadlines (model, floored at 20 s):
 
 ## Preconditions
 
-- Board flashed with a build containing T-001 (amended: trapezoid model + floor); serial monitor
-  attached (115200). Log lines carry ms-since-boot; subtract `Setting servo N …` from
-  `Turning off servo N` to get the observed release time.
+- Board flashed with a build containing T-001 (amended: trapezoid model + floor) and T-002;
+  serial monitor attached (115200). Log lines carry ms-since-boot; subtract
+  `Setting servo N …` from `Turning off servo N` to get the observed release time. Both lines
+  end with `on module M` (T-002); the short forms quoted in cases 1–7 are prefixes of the
+  full line.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
@@ -84,9 +86,8 @@ Reference deadlines (model, floored at 20 s):
    - Expected today: the script halts (no further commands dispatched), but the in-flight
      servo move completes to its target and releases on the normal deadline.
      `handlePanicStop` only calls the animation controller's panic; `MaestroModule::Panic()`
-     (all channels off) has no caller. Verified 2026-09-06 during T-002 review. Whether panic
-     should also de-energize servos is a PLAN.md Backlog decision — update this case when
-     that lands.
+     (all channels off) has no caller. Verified 2026-09-06 during T-002 review. T-004 wires
+     panic to the Maestro; it rewrites this case when it lands.
 
 8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
    Maestro being wired to serial channel 2)

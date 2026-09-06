@@ -43,11 +43,13 @@ private:
     int baudRate;
 
     // Per-instance channel state (config + release tracking). Zero-initialized
-    // at construction. LoadConfig() overlays the stored config without clearing
-    // (entries past the parsed count keep prior state on reload) and its
-    // HomeServos() re-arms release tracking -- both on the boot / RELOAD_CONFIG
-    // path. Written by QueueCommand and SetServoPosition on task context
-    // (Panic() also writes but has no caller today); read-modify-written by
+    // at construction. LoadConfig() copies the parsed file over entries
+    // 0..maxId as whole structs (release tracking there is reset, then
+    // HomeServos() re-arms it); entries above the file's highest id -- and all
+    // entries if the file is missing or unparseable -- keep prior state on
+    // reload. Both run on the boot / RELOAD_CONFIG path. Written by
+    // QueueCommand and SetServoPosition on task context (Panic() also writes
+    // but has no caller today -- T-004 wires it); read-modify-written by
     // CheckServos() on the esp_timer task -- synchronization is T-003.
     servo_channel channels[24] = {};
 
@@ -65,7 +67,7 @@ public:
     ~MaestroModule();
 
     // One instance per physical Maestro. A copy would fork the per-instance
-    // channel state below and share the FreeRTOS mutex handle.
+    // channel state (channels) and share the FreeRTOS mutex handle.
     MaestroModule(const MaestroModule &) = delete;
     MaestroModule &operator=(const MaestroModule &) = delete;
 
