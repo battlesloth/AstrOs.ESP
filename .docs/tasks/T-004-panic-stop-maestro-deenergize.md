@@ -2,8 +2,8 @@
 
 <!-- File: .docs/tasks/T-004-panic-stop-maestro-deenergize.md. Branch: feature/T-004-panic-stop-maestro-deenergize.
      PR title: "T-004: Make panic stop de-energize every configured Maestro channel".
-     Depends on: T-002 (per-instance channel state). If T-003 lands first, Panic() takes
-     stateMutex per T-003's rules. -->
+     Depends on: T-002 (per-instance channel state) and T-003 (per-operation send mutex +
+     stateMutex). Panic() is one more command-path operation under T-003's pattern. -->
 
 ## Context
 
@@ -34,11 +34,17 @@ Queued work must be dropped, not just future dispatch. `servoQueue` holds 20 ent
 burst queued at the instant panic fires; each entry would be encoded and sent *after* the off
 frames and re-energize its channel (PR #56 review). `handlePanicStop` therefore drains
 `servoQueue` before sending the offs. Frames already in the serial queues are harmless: the
-off frames enter the same FIFO behind them, so the off wins. Accepted residual: a single
-message that `servoQueueTask` dequeued just before the drain, or one a producer was already
-blocked inside `xQueueSend` with, can still land after the offs. That is one servo, it
-releases on the normal deadline, and the log makes it visible (a `Setting servo` line after
-the `Panic:` line).
+off frames enter the same FIFO behind them, so the off wins.
+
+A command that is already past the drain — dequeued by `servoQueueTask` just before it, or a
+producer already blocked inside `xQueueSend` — is serialized against `Panic()` by T-003's
+per-operation send mutex: it either completes entirely *before* the offs (offs win, channel
+`on = false`) or runs entirely *after* them with its state update intact (the servo
+re-energizes with `on = true` and releases on the normal 20 s deadline; visible as a
+`Setting servo` line after the `Panic:` line). Without T-003 the command's frames each took the
+send mutex separately, so panic could slip its off between the speed frame and the target
+frame and leave a servo energized with `on = false` forever (PR #56 review). That is why this
+task depends on T-003.
 
 ## Contract (pinned — do not change)
 
@@ -58,16 +64,22 @@ the `Panic:` line).
   touched (serial queues self-heal by FIFO order; `i2cQueue` is the PCA9685 path, out of scope).
 - Order inside `handlePanicStop`: `AnimationCtrl.panicStop()` first (stop dispatching), then
   drain `servoQueue`, then the Maestro offs.
-- Depends on T-002 merged. If T-003 is merged first, `Panic()` takes `stateMutex` around its
-  `channels[]` writes and sends outside the lock, per T-003's Contract.
+- `Panic()` follows T-003's command-path pattern exactly: hold `this->mutex` once across its
+  state update and all of its off frames, with `stateMutex` nested briefly inside (lock order
+  send → state). It runs on `interfaceResponseQueueTask`, never on the esp_timer task, so it
+  may block on the sends.
+- Depends on T-002 and T-003 merged.
 
 ## Task
 
-1. Rewrite `MaestroModule::Panic()`: for every channel with `enabled == true` (servo **and**
-   GPIO-type — panic means "no signal on every configured output"), set `on = false` and
-   `currentPos = 0`, then call `setServoOff(i)`. One `ESP_LOGI` per module
-   (`"Panic: de-energizing module %d"`), not per channel. Delete the `0x9F` frame construction.
-   Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
+1. Rewrite `MaestroModule::Panic()` as a T-003 command-path operation: take `this->mutex`
+   (bounded-retry loop) → take `stateMutex` (50 ms; WARN and still send the offs on timeout —
+   de-energizing is the priority) → for every channel with `enabled == true` (servo **and**
+   GPIO-type — panic means "no signal on every configured output") set `on = false`,
+   `currentPos = 0` → give `stateMutex` → `enqueueFrame(0x84 ch 0 0, 500 ms)` per enabled channel
+   → give `this->mutex`. One `ESP_LOGI` per module (`"Panic: de-energizing module %d"`), not
+   per channel. Delete the `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND`
+   define alone.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
    with a zero-timeout `xQueueReceive` loop, freeing each message's payload; log the count
    dropped at INFO. Then snapshot `maestroModules` under `maestroModulesMutex`
@@ -81,7 +93,8 @@ the `Panic:` line).
 ## Acceptance criteria
 
 - [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel, marks each
-      `on = false`, and sends nothing for disabled channels. No `0x9F` byte leaves the module.
+      `on = false`, and sends nothing for disabled channels — all under a single hold of
+      `this->mutex`. No `0x9F` byte leaves the module.
 - [ ] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
       reaches every module in `maestroModules` without holding the map mutex across a send
       (verified by reading the code against the snapshot pattern).
@@ -95,7 +108,8 @@ the `Panic:` line).
 - [ ] Bench, queued burst (human-gated): run a script whose first event moves ≥4 servos at
       speed 5; send panic within ~1 s. All four go slack; the monitor shows
       `Panic: dropped N queued servo commands` and at most one `Setting servo` line after the
-      `Panic:` line (the accepted in-flight residual).
+      `Panic:` line. If one appears, that channel logs `Turning off servo N on module M`
+      ~20 s later — its state survived, so the normal release still fires.
 - [ ] Bench, recovery (human-gated): after panic, a script or slider move re-energizes and
       moves the servo normally, and it releases on the normal deadline.
 - [ ] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
@@ -104,7 +118,8 @@ the `Panic:` line).
 
 - Flushing the serial queues (`serialCh1Queue` / `serialCh2Queue`) — FIFO order already makes
   the off frames win; see Context.
-- The single in-flight message residual described in Context.
+- The single in-flight message residual described in Context (fail-safe under T-003; a
+  zero-residual frame-generation scheme is T-003's documented fallback).
 - PCA9685 (I²C) servo channels — panic does not reach them today either. Backlog.
 - Locking between timer and command paths — T-003.
 - `lastPos` staleness on re-arm after an off — PLAN.md Backlog.
