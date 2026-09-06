@@ -95,7 +95,8 @@ restructure sends so one operation holds `this->mutex` once:
 - [x] `pio test -e test` green; both board environments build clean; clang-format clean.
 - [ ] Bench (human-gated): hammer one servo with slider commands for ~30 s while the 300 ms
       shutdown timer runs — no premature release mid-move, no task-watchdog warning.
-      Occasional `CheckServos: send busy, retry next tick` WARNs are acceptable.
+      Occasional `CheckServos: send busy on module M, channels 0x… retry next tick` WARNs are
+      acceptable.
 - [ ] Bench (human-gated, the PR #56 scenario): issue a move exactly as a release is due (a
       slider move ~20 s after the previous one, repeated a dozen times) — the servo always
       completes the new move and stays energized for a fresh 20 s; never a
@@ -141,4 +142,9 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: rapid-slider case and move-at-release-deadline case added
 - [x] PLAN.md Status updated
+- [x] PR-toolkit review (code, silent-failure, comments): `CheckServos` logs after releasing
+      `stateMutex` (all channels come due together after homing); `setServoPosition` returns
+      false at the first dropped frame and callers log with identity; `enqueueFrame` no longer
+      logs anonymously; `currentPos` stops accumulating once due; handles default to nullptr;
+      stale "spins on a per-module mutex" comments in `src/main.cpp` reworded
 - [ ] bench (human-gated) pending

@@ -834,8 +834,8 @@ void animationDispatchTask(void *arg)
 static void servoShutdownTimerCallback(void *arg)
 {
     // Snapshot module handles under the mutex, then release it before calling
-    // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
-    // which spins on a per-module mutex. Holding maestroModulesMutex across
+    // CheckServos(): CheckServos try-takes the per-module send mutex (zero
+    // wait) to enqueue an off frame. Holding maestroModulesMutex across
     // that would block the esp_timer task and any other caller of the map.
     // shared_ptr ownership keeps each module alive for the duration of the
     // snapshot even if loadMaestroConfigs removes it concurrently.
@@ -1466,7 +1466,7 @@ void servoQueueTask(void *arg)
 
             // Snapshot the target module under maestroModulesMutex, then
             // release before calling QueueCommand(): QueueCommand ultimately
-            // calls sendQueueMsg() which spins on a per-module mutex and
+            // calls sendQueueMsg() which takes the per-module send mutex (bounded, ~2.2 s worst case) and
             // blocks on queue sends. Holding the map mutex across that would
             // stall loadMaestroConfigs() and other callers of the map. The
             // shared_ptr keeps the module alive for the duration of the call
@@ -2190,7 +2190,7 @@ static void handleServoTest(astros_interface_response_t msg)
 
         // Snapshot the target module under maestroModulesMutex, then release
         // before calling SetServoPosition(): that path reaches sendQueueMsg()
-        // which spins on a per-module mutex and blocks on queue sends.
+        // which takes the per-module send mutex (bounded, ~2.2 s worst case) and blocks on queue sends.
         // Holding the map mutex across it would stall loadMaestroConfigs()
         // and other callers. The shared_ptr keeps the module alive for the
         // call even if a concurrent config reload removes it from the map.

@@ -19,7 +19,7 @@ static const int RX_BUF_SIZE = 1024;
 // T-003 lock/queue timing. Command paths (task context) may block on these;
 // CheckServos (esp_timer task) never does -- every take there is zero-wait.
 static const int SEND_MUTEX_WAIT_MS = 100;
-static const int SEND_MUTEX_ATTEMPTS = 20; // ~2 s worst case, then ESP_LOGE + abort
+static const int SEND_MUTEX_ATTEMPTS = 20; // ~2.2 s worst case, then ESP_LOGE and the operation returns
 static const int STATE_MUTEX_WAIT_MS = 50;
 static const int SEND_QUEUE_WAIT_MS = 500;
 
@@ -81,9 +81,11 @@ void MaestroModule::LoadConfig()
     ESP_LOGI(TAG, "Loading Maestro servos for module %d", this->idx);
 
     // loadMaestroServos copies straight into channels[], so the file read is
-    // under stateMutex as well. Boot / RELOAD_CONFIG path only: CheckServos
-    // skips ticks (zero-wait take) and a command arriving now aborts with a
-    // warning -- visible and safe.
+    // under stateMutex as well (a local copy would cost ~1 KB of main-task
+    // stack). Boot / RELOAD_CONFIG path only. Meanwhile: CheckServos skips
+    // ticks (zero-wait take); slider moves are dropped silently by the
+    // `loading` guard in SetServoPosition; a script command waits up to
+    // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN.
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
         AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
@@ -91,7 +93,8 @@ void MaestroModule::LoadConfig()
     }
     else
     {
-        ESP_LOGE(TAG, "LoadConfig: state mutex timeout on module %d, config not loaded", this->idx);
+        ESP_LOGE(TAG, "LoadConfig: state mutex timeout on module %d, config not loaded, homing with previous config",
+                 this->idx);
     }
 
     this->HomeServos();
@@ -114,6 +117,8 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     // One send-mutex hold across the state update and every frame, so a
     // concurrent CheckServos or Panic cannot slip an off between our frames.
+    // (Panic's state write is not serialized against us until T-004; the
+    // failure direction is a redundant off later, never a stuck servo.)
     if (!this->takeSendMutex())
     {
         ESP_LOGE(TAG, "QueueCommand: dropping command for channel %d on module %d", ch, this->idx);
@@ -166,7 +171,11 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     ESP_LOGI(TAG, "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d",
              ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted);
 
-    this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration);
+    if (!this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration))
+    {
+        ESP_LOGE(TAG, "QueueCommand: serial queue full, move for channel %d on module %d incomplete (still tracked on)",
+                 ch, this->idx);
+    }
 
     xSemaphoreGive(this->mutex);
 }
@@ -212,7 +221,13 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
     xSemaphoreGive(this->stateMutex);
 
-    this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0);
+    if (!this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0))
+    {
+        // WARN, not ERROR: a saturated slider drag can hit this at message rate,
+        // and the next message re-sends everything.
+        ESP_LOGW(TAG, "SetServoPosition: serial queue full, move for channel %d on module %d dropped", channel,
+                 this->idx);
+    }
 
     xSemaphoreGive(this->mutex);
 }
@@ -302,14 +317,24 @@ void MaestroModule::HomeServos()
 
     xSemaphoreGive(this->stateMutex);
 
+    int failed = 0;
     for (size_t i = 0; i < 24; i++)
     {
         if (moves[i].send)
         {
             // lastPos 0 (not -1): homing sends an explicit target-0 frame first,
             // as it always has.
-            this->setServoPosition(i, moves[i].ms, 0, 0, 0);
+            if (!this->setServoPosition(i, moves[i].ms, 0, 0, 0))
+            {
+                failed++;
+            }
         }
+    }
+
+    if (failed > 0)
+    {
+        ESP_LOGE(TAG, "HomeServos: serial queue full on module %d, %d channel(s) not homed (still tracked on)",
+                 this->idx, failed);
     }
 
     xSemaphoreGive(this->mutex);
@@ -329,6 +354,10 @@ void MaestroModule::HomeServos()
 /// enqueued with zero timeout. Any failure leaves the channel on and it
 /// is re-checked next tick. The decision and the enqueue happen under
 /// stateMutex so a new command cannot land its target between them.
+/// Outcomes are logged only after stateMutex is released: a console line
+/// is a multi-ms blocking write, and every channel homed together comes
+/// due on the same tick (they all hit the 20 s floor), so logging inside
+/// the lock would hold it past the command paths' 50 ms wait.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
 {
@@ -338,6 +367,10 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
         return;
     }
 
+    uint32_t turnedOff = 0;
+    uint32_t sendBusy = 0;
+    uint32_t queueFull = 0;
+
     for (size_t i = 0; i < 24; i++)
     {
         if (!channels[i].isServo || !channels[i].on)
@@ -345,16 +378,21 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
             continue;
         }
 
-        channels[i].currentPos += msSinceLastCheck;
+        int deadline = ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration);
 
-        if (channels[i].currentPos < ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration))
+        // Stop accumulating once due, so a wedged send path cannot overflow it.
+        if (channels[i].currentPos < deadline)
+        {
+            channels[i].currentPos += msSinceLastCheck;
+        }
+        if (channels[i].currentPos < deadline)
         {
             continue;
         }
 
         if (xSemaphoreTake(this->mutex, 0) != pdTRUE)
         {
-            ESP_LOGW(TAG, "CheckServos: send busy, servo %d on module %d retries next tick", i, this->idx);
+            sendBusy |= 1u << i;
             continue;
         }
 
@@ -363,25 +401,47 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
 
         if (queued)
         {
-            ESP_LOGI(TAG, "Turning off servo %d on module %d", i, this->idx);
             channels[i].on = false;
             channels[i].currentPos = 0;
+            turnedOff |= 1u << i;
         }
         else
         {
-            ESP_LOGW(TAG, "CheckServos: serial queue full, servo %d on module %d retries next tick", i, this->idx);
+            queueFull |= 1u << i;
         }
     }
 
     xSemaphoreGive(this->stateMutex);
+
+    for (size_t i = 0; i < 24; i++)
+    {
+        if (turnedOff & (1u << i))
+        {
+            ESP_LOGI(TAG, "Turning off servo %d on module %d", i, this->idx);
+        }
+    }
+    if (sendBusy != 0)
+    {
+        ESP_LOGW(TAG, "CheckServos: send busy on module %d, channels 0x%06X retry next tick", this->idx,
+                 (unsigned)sendBusy);
+    }
+    if (queueFull != 0)
+    {
+        ESP_LOGW(TAG, "CheckServos: serial queue full on module %d, channels 0x%06X retry next tick", this->idx,
+                 (unsigned)queueFull);
+    }
 }
 
-void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed, int acceleration)
+bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed, int acceleration)
 {
     uint8_t cmd[4] = {};
     const TickType_t wait = pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS);
 
     cmd[1] = channel;
+
+    // Stop at the first dropped frame: a delivered target after a dropped
+    // speed frame would move at the Maestro's previous speed while the
+    // release deadline assumes the new one.
 
     // we need to send the last requested position
     // before we send speed/accel commands if the servo
@@ -393,20 +453,29 @@ void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
         cmd[2] = lastpos & 0x7F;
         cmd[3] = (lastpos >> 7) & 0x7F;
 
-        this->enqueueFrame(cmd, 4, wait);
+        if (!this->enqueueFrame(cmd, 4, wait))
+        {
+            return false;
+        }
     }
 
     cmd[0] = SET_SERVO_SPEED_COMMAND;
     cmd[2] = speed & 0x7F;
     cmd[3] = (speed >> 7) & 0x7F;
 
-    this->enqueueFrame(cmd, 4, wait);
+    if (!this->enqueueFrame(cmd, 4, wait))
+    {
+        return false;
+    }
 
     cmd[0] = SET_SERVO_ACCELERATION_COMMAND;
     cmd[2] = acceleration & 0x7F;
     cmd[3] = (acceleration >> 7) & 0x7F;
 
-    this->enqueueFrame(cmd, 4, wait);
+    if (!this->enqueueFrame(cmd, 4, wait))
+    {
+        return false;
+    }
 
     // .25us resolution
     int target = ms * 4;
@@ -415,9 +484,13 @@ void MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[2] = target & 0x7F;
     cmd[3] = (target >> 7) & 0x7F;
 
-    this->enqueueFrame(cmd, 4, wait);
+    if (!this->enqueueFrame(cmd, 4, wait))
+    {
+        return false;
+    }
 
     ESP_LOGD(TAG, "command sent to channel: %d", channel);
+    return true;
 }
 
 bool MaestroModule::setServoOff(uint8_t channel, TickType_t wait)
@@ -465,7 +538,7 @@ bool MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wai
     msg.data = (uint8_t *)malloc(size);
     if (msg.data == NULL)
     {
-        ESP_LOGE(TAG, "enqueueFrame: out of memory");
+        ESP_LOGE(TAG, "enqueueFrame: out of memory on module %d", this->idx);
         return false;
     }
     memcpy(msg.data, cmd, size);
@@ -473,7 +546,8 @@ bool MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wai
 
     if (xQueueSend(this->serialQueue, &msg, wait) != pdTRUE)
     {
-        ESP_LOGW(TAG, "Send serial queue fail");
+        // No log here: callers report the drop with channel/module identity
+        // (and CheckServos does so outside its lock).
         free(msg.data);
         return false;
     }
@@ -489,7 +563,10 @@ void MaestroModule::sendQueueMsg(uint8_t cmd[], size_t size)
         return;
     }
 
-    this->enqueueFrame(cmd, size, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS));
+    if (!this->enqueueFrame(cmd, size, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS)))
+    {
+        ESP_LOGW(TAG, "sendQueueMsg: frame 0x%02X dropped on module %d, serial queue full", cmd[0], this->idx);
+    }
 
     xSemaphoreGive(this->mutex);
 }

@@ -121,8 +121,10 @@ Reference deadlines (model, floored at 20 s):
    - Drag a slider continuously for ~30 s, then hold it still; repeat three times.
    - Expected: the servo never goes slack mid-drag; exactly one `Turning off servo N on
      module M` ~20 s after the last message each time; no task-watchdog warning. Occasional
-     `CheckServos: state busy … skipping tick` or `send busy … retries next tick` WARNs are
-     acceptable — they are the timer yielding to a command, not a fault.
+     `CheckServos: state busy on module M, skipping tick` or `CheckServos: send busy on module
+     M, channels 0x… retry next tick` WARNs are acceptable — they are the timer yielding to a
+     command, not a fault. A `SetServoPosition: serial queue full, move … dropped` WARN means
+     the drag out-ran the UART; the next message re-sends everything.
 
 10. **Move issued exactly as a release is due** (T-003; the PR #56 review scenario)
    - Send a slider move; wait ~20 s watching the monitor; send another slider move just as
@@ -130,6 +132,14 @@ Reference deadlines (model, floored at 20 s):
    - Expected: every move completes and the servo stays energized for a fresh 20 s. Never a
      `Turning off servo N on module M` within 20 s *after* a move to that channel. Pre-T-003
      a stale off could land after the new target and drop the servo mid-move.
+
+11. **All channels come due on the same tick while a slider is active** (T-003)
+   - Boot (or `RELOAD_CONFIG`) with ≥4 enabled servo channels; ~15 s after homing start
+     dragging a slider on one of them and keep dragging through the 20 s mark.
+   - Expected: one `Turning off servo N on module M` line per *other* channel, all on the same
+     tick; the dragged servo stays energized; no `QueueCommand`/`SetServoPosition: state mutex
+     timeout` line — the timer logs only after releasing the lock, so the burst cannot starve
+     the command paths.
 
 ## Edge cases / negative tests
 
@@ -143,10 +153,17 @@ Reference deadlines (model, floored at 20 s):
   on the same deadline — the model is time-based, not motion-based.
 - **Tuning knob** lives in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` only:
   `MAESTRO_RELEASE_FLOOR_MS` (slow loads). Do not hand-edit deadlines elsewhere.
-- **Command during config reload** (T-003): send a slider move while a `RELOAD_CONFIG` is in
+- **Command during config reload** (T-003): send a *script* move while a `RELOAD_CONFIG` is in
   progress. Expected: either the move applies normally or the monitor shows
-  `SetServoPosition: state mutex timeout, dropping move …` — a dropped move is visible, never
-  a silent half-applied one. No crash, no watchdog.
+  `QueueCommand: state mutex timeout, dropping command for channel N on module M` — a dropped
+  move is visible, never a silent half-applied one. No crash, no watchdog. A *slider* move in
+  the same window is ignored silently by the pre-existing `loading` guard (no log line) and
+  the next slider message after the reload applies.
+- **Dropped frame inside a move** (T-003; needs the UART saturated, e.g. a hard slider drag):
+  `QueueCommand: serial queue full, move for channel N on module M incomplete (still tracked
+  on)` or the `SetServoPosition … dropped` WARN. The channel stays tracked as on and releases
+  on its normal deadline; a move never continues past a dropped frame, so the servo cannot run
+  at a stale speed against a new deadline.
 - **Wedged serial path** (T-003, hard to provoke): if the send mutex cannot be taken for ~2 s
   the operation logs `Send mutex timeout on module M after 20 attempts` and drops the command
   without touching channel state. Pre-T-003 the caller spun forever.

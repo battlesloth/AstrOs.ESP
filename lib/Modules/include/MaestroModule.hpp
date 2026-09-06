@@ -52,30 +52,38 @@ private:
     // but has no caller today -- T-004 wires it); read-modify-written by
     // CheckServos() on the esp_timer task.
     //
-    // Locking (T-003): every access is under stateMutex. Command-path
-    // operations hold `mutex` (the send mutex) once across their state update
-    // and all of their frames, taking stateMutex briefly inside -- lock order
-    // send -> state, and stateMutex is never held across an enqueue.
-    // CheckServos runs on the esp_timer task and uses only zero-wait takes and
-    // a zero-timeout enqueue; the inverted order there cannot deadlock because
-    // a try-take never waits.
+    // Locking (T-003): every access is under stateMutex. QueueCommand,
+    // SetServoPosition and HomeServos each hold `mutex` (the send mutex) once
+    // across their state update and all of their frames, taking stateMutex
+    // briefly inside -- lock order send -> state, and stateMutex is never held
+    // across a *blocking* enqueue. CheckServos runs on the esp_timer task and
+    // uses only zero-wait takes and a zero-timeout enqueue (that one is under
+    // stateMutex by design); the inverted order there cannot deadlock because
+    // a try-take never waits. Panic still writes state and sends separately
+    // (no caller; T-004 makes it a proper operation).
     servo_channel channels[24] = {};
 
     QueueHandle_t serialQueue;
-    SemaphoreHandle_t mutex;      // send mutex: one hold per operation (T-003)
-    SemaphoreHandle_t stateMutex; // guards channels[]
+    SemaphoreHandle_t mutex = nullptr;      // send mutex: one hold per operation (T-003)
+    SemaphoreHandle_t stateMutex = nullptr; // guards channels[]
     void SendCommand(uint8_t *cmd);
-    // Frame builders. The caller holds `mutex`; frames are enqueued with the
-    // given wait and stateMutex released.
-    void setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
+    // Frame builders; the caller holds `mutex`. setServoPosition enqueues up
+    // to four frames with a 500 ms wait each and stops at the first drop
+    // (returns false; the caller logs with identity). setServoOff enqueues one
+    // frame with `wait` and returns the result -- CheckServos calls it with
+    // stateMutex held and wait 0.
+    bool setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
     bool setServoOff(uint8_t channel, TickType_t wait);
     int getServoPosition(uint8_t channel);
+    // Takes `mutex` itself via sendQueueMsg -- never call with `mutex` held.
     void getError();
-    // Bounded take of `mutex` (retries a 100 ms take at most 20 times). false
-    // after ESP_LOGE; callers abort before touching channel state.
+    // Bounded take of `mutex`: a 100 ms take retried at most 20 times (~2.2 s),
+    // then ESP_LOGE and false. The command paths return before touching any
+    // channel state when this fails.
     bool takeSendMutex();
-    // Lock-free: mallocs a copy of cmd and xQueueSends it with `wait`. false
-    // (payload freed) if the serial queue stays full.
+    // Takes no lock: mallocs a copy of cmd and xQueueSends it with `wait`.
+    // false (nothing left allocated) on out-of-memory or if the serial queue
+    // stays full; the caller logs, with channel/module identity.
     bool enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait);
     // Single-frame convenience: takeSendMutex -> enqueueFrame(500 ms) -> give.
     void sendQueueMsg(uint8_t cmd[], size_t size);
