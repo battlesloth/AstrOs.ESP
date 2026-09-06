@@ -86,13 +86,13 @@ restructure sends so one operation holds `this->mutex` once:
 
 ## Acceptance criteria
 
-- [ ] Every `channels` access is under `stateMutex`.
-- [ ] Each command-path operation performs its state update and all of its frames under one
+- [x] Every `channels` access is under `stateMutex`.
+- [x] Each command-path operation performs its state update and all of its frames under one
       hold of `this->mutex`, acquired via the bounded `takeSendMutex()`; an aborted operation
       touches no channel state. `CheckServos` uses only zero-wait takes and a zero-timeout
       enqueue and calls no blocking primitive (verified by reading every path).
-- [ ] Lock order verified by reading: no path waits on `this->mutex` while holding `stateMutex`.
-- [ ] `pio test -e test` green; both board environments build clean; clang-format clean.
+- [x] Lock order verified by reading: no path waits on `this->mutex` while holding `stateMutex`.
+- [x] `pio test -e test` green; both board environments build clean; clang-format clean.
 - [ ] Bench (human-gated): hammer one servo with slider commands for ~30 s while the 300 ms
       shutdown timer runs — no premature release mid-move, no task-watchdog warning.
       Occasional `CheckServos: send busy, retry next tick` WARNs are acceptable.
@@ -100,7 +100,7 @@ restructure sends so one operation holds `this->mutex` once:
       slider move ~20 s after the previous one, repeated a dozen times) — the servo always
       completes the new move and stays energized for a fresh 20 s; never a
       `Turning off servo N on module M` within 20 s after a `Setting servo N on module M`.
-- [ ] QA plan `.docs/qa/maestro-servo-release.md` gains both cases above.
+- [x] QA plan `.docs/qa/maestro-servo-release.md` gains both cases above.
 
 ## Out of scope
 
@@ -128,16 +128,17 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-- [ ] `stateMutex` member created in the constructor (same failure handling as `mutex`)
-- [ ] `takeSendMutex()` (≤20 × 100 ms, `ESP_LOGE` on failure) and lock-free `enqueueFrame(cmd, size, wait)`;
+- [x] `stateMutex` member created in the constructor (same failure handling as `mutex`)
+- [x] `takeSendMutex()` (≤20 × 100 ms, `ESP_LOGE` on failure) and lock-free `enqueueFrame(cmd, size, wait)`;
       `sendQueueMsg` reduced to take → enqueue(500 ms) → give
-- [ ] `setServoPosition` / `setServoOff` enqueue frames only (caller holds `this->mutex`);
+- [x] `setServoPosition` / `setServoOff` enqueue frames only (caller holds `this->mutex`);
       `setServoOff` takes a wait and returns the enqueue result
-- [ ] `QueueCommand`, `SetServoPosition`, `HomeServos`: send-mutex once per operation, state writes
+- [x] `QueueCommand`, `SetServoPosition`, `HomeServos`: send-mutex once per operation, state writes
       under `stateMutex` (50 ms, abort on timeout), enqueues with `stateMutex` released
-- [ ] `LoadConfig` copies under `stateMutex`; `Panic` state writes under `stateMutex` (frame untouched — T-004)
-- [ ] `CheckServos`: zero-wait `stateMutex`, zero-wait send try-take, zero-timeout enqueue, clear state only on success
-- [ ] Lock-order read-through: no path waits on `this->mutex` while holding `stateMutex`
-- [ ] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
-- [ ] QA plan: rapid-slider case and move-at-release-deadline case added
-- [ ] PLAN.md Status updated; bench (human-gated) pending
+- [x] `LoadConfig` copies under `stateMutex`; `Panic` state writes under `stateMutex` (frame untouched — T-004)
+- [x] `CheckServos`: zero-wait `stateMutex`, zero-wait send try-take, zero-timeout enqueue, clear state only on success
+- [x] Lock-order read-through: no path waits on `this->mutex` while holding `stateMutex`
+- [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
+- [x] QA plan: rapid-slider case and move-at-release-deadline case added
+- [x] PLAN.md Status updated
+- [ ] bench (human-gated) pending

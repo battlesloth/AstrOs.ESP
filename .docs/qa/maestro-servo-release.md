@@ -1,7 +1,8 @@
 # QA: Maestro servo release (auto de-energize)
 
-Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001) and the
-per-instance channel state that backs it (T-002).
+Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001), the
+per-instance channel state that backs it (T-002), and the locking between the shutdown timer
+and the command paths (T-003).
 
 Deadline model: `ServoReleaseDeadlineMs(speed, accel)` = max(`WorstCaseTravelMs`, 20 s floor).
 `WorstCaseTravelMs` is the physical trapezoid over the 0–3000 µs guard range using true
@@ -116,6 +117,20 @@ Reference deadlines (model, floored at 20 s):
    - Expected: only module 1's servo moves; exactly one `Turning off servo 0 on module 1`
      ~20 s after; module 0's servo stays released.
 
+9. **Rapid slider hammering with the timer active** (T-003)
+   - Drag a slider continuously for ~30 s, then hold it still; repeat three times.
+   - Expected: the servo never goes slack mid-drag; exactly one `Turning off servo N on
+     module M` ~20 s after the last message each time; no task-watchdog warning. Occasional
+     `CheckServos: state busy … skipping tick` or `send busy … retries next tick` WARNs are
+     acceptable — they are the timer yielding to a command, not a fault.
+
+10. **Move issued exactly as a release is due** (T-003; the PR #56 review scenario)
+   - Send a slider move; wait ~20 s watching the monitor; send another slider move just as
+     the release is expected (within a second either side). Repeat a dozen times.
+   - Expected: every move completes and the servo stays energized for a fresh 20 s. Never a
+     `Turning off servo N on module M` within 20 s *after* a move to that channel. Pre-T-003
+     a stale off could land after the new target and drop the servo mid-move.
+
 ## Edge cases / negative tests
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
@@ -128,3 +143,10 @@ Reference deadlines (model, floored at 20 s):
   on the same deadline — the model is time-based, not motion-based.
 - **Tuning knob** lives in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` only:
   `MAESTRO_RELEASE_FLOOR_MS` (slow loads). Do not hand-edit deadlines elsewhere.
+- **Command during config reload** (T-003): send a slider move while a `RELOAD_CONFIG` is in
+  progress. Expected: either the move applies normally or the monitor shows
+  `SetServoPosition: state mutex timeout, dropping move …` — a dropped move is visible, never
+  a silent half-applied one. No crash, no watchdog.
+- **Wedged serial path** (T-003, hard to provoke): if the send mutex cannot be taken for ~2 s
+  the operation logs `Send mutex timeout on module M after 20 attempts` and drops the command
+  without touching channel state. Pre-T-003 the caller spun forever.

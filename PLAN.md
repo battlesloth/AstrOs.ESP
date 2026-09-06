@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-003 — starting on `feature/T-003-maestro-channel-state-sync` (stateMutex + per-operation send mutex; design pinned 2026-09-06 through PR #56 review)
+Now:     T-003 — implemented on `feature/T-003-maestro-channel-state-sync` (stateMutex + per-operation send mutex + bounded send take; native tests green, builds pending); bench + PR pending
 Next:    T-004 (panic → Maestro off; depends on T-003)
 Blocked: none
 Last:    2026-09-06 — T-002 complete: merged to develop via PR #56; bench-verified
