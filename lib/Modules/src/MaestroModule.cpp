@@ -128,6 +128,22 @@ void MaestroModule::SetServoPosition(uint8_t channel, int ms)
         return;
     }
 
+    if (channel > 23)
+    {
+        ESP_LOGE(TAG, "Invalid channel %d", channel);
+        return;
+    }
+
+    // Direct (slider) moves arrive as a stream at full speed. Arm release
+    // tracking on every one, exactly as QueueCommand does: each re-arm just
+    // resets the clock, so CheckServos turns the servo off 20 s (the floor)
+    // after the *last* message and never mid-drag. Deliberately no INFO log
+    // here -- it would spam the monitor at drag rate.
+    channels[channel].currentPos = 0;
+    channels[channel].speed = 0;
+    channels[channel].acceleration = 0;
+    channels[channel].on = true;
+
     this->setServoPosition(channel, ms, -1, 0, 0);
 }
 

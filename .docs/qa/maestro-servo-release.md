@@ -41,12 +41,21 @@ Reference deadlines (model, floored at 20 s):
    - Expected: servos move home; ~20.3 s after `Homing Servos` each enabled servo logs
      `Turning off servo N` and is free to move by hand (no holding torque).
 
-2. **Full-speed move releases at the floor**
-   - Send a slider/direct move (speed 0, accel 0).
-   - Expected: move completes; `Turning off servo N` ~20.3 s after the command; servo free by
-     hand. Same as pre-T-001 (~19 s). **On linear actuators:** the stroke must complete well
-     before release — if it is cut short, that is the tuning signal for the floor / per-channel
-     setting (PLAN.md Backlog).
+2. **Slider move on an already-released channel re-arms release**
+   - Wait for a servo to log `Turning off servo N` (e.g. ~20 s after boot homing). Then send a
+     single slider move to that servo.
+   - Expected: servo moves; `Turning off servo N` ~20.3 s after the slider message; servo free
+     by hand. Pre-T-001 (third pass) the slider path never armed tracking, so a released
+     servo stayed energized indefinitely after a slider move. **On linear actuators:** the
+     stroke must complete well before release — if it is cut short, that is the tuning signal
+     for the floor / per-channel setting (PLAN.md Backlog).
+
+2b. **Continuous slider drag (noisy stream)**
+   - Drag the slider back and forth for ~30 s (well past the 20 s floor), then stop.
+   - Expected: no `Turning off servo N` for that channel during the drag — every message
+     resets the clock; exactly one `Turning off servo N` ~20.3 s after the *last* slider
+     message; no per-message log lines from `MaestroModule` during the drag (only the
+     interface-level ones that already existed).
 
 3. **Scripted move with low accel (the reported bug)**
    - Run a script move with speed 20, accel 2.
@@ -78,6 +87,8 @@ Reference deadlines (model, floored at 20 s):
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
   inputs are clamped; servo releases at the floor (~20 s).
+- **Slider message with channel ≥ 24** (hand-crafted): `Invalid channel N` error logged, no
+  command sent, no crash (the arming write is bounds-checked).
 - **Servo commanded to its current position** (no physical motion): still releases
   on the same deadline — the model is time-based, not motion-based.
 - **Tuning knob** lives in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` only:

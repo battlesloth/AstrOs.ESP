@@ -163,7 +163,7 @@ Amendment, second pass (2026-09-05, drop the multiplier):
 
 Third pass (2026-09-05, PR #52 review — slider arming):
 
-- [ ] `SetServoPosition` bounds-checks the channel and arms release tracking; no INFO log
-- [ ] both boards build clean; clang-format clean
-- [ ] QA plan: released-channel slider case + noisy-drag case added
-- [ ] PLAN.md Status + Log updated
+- [x] `SetServoPosition` bounds-checks the channel and arms release tracking; no INFO log
+- [x] both boards build clean; clang-format clean
+- [x] QA plan: released-channel slider case + noisy-drag case added
+- [x] PLAN.md Status + Log updated
