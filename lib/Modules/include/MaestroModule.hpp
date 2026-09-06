@@ -38,6 +38,15 @@
 class MaestroModule
 {
 private:
+    // Result of enqueueFrame. It never logs -- CheckServos calls it under
+    // stateMutex on the esp_timer task -- so the caller reports the reason.
+    enum class EnqueueResult
+    {
+        Queued,
+        QueueFull,
+        NoMemory
+    };
+
     bool loading;
     int idx;
     int baudRate;
@@ -73,7 +82,7 @@ private:
     // frame with `wait` and returns the result -- CheckServos calls it with
     // stateMutex held and wait 0.
     bool setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
-    bool setServoOff(uint8_t channel, TickType_t wait);
+    EnqueueResult setServoOff(uint8_t channel, TickType_t wait);
     int getServoPosition(uint8_t channel);
     // Takes `mutex` itself via sendQueueMsg -- never call with `mutex` held.
     void getError();
@@ -81,10 +90,9 @@ private:
     // then ESP_LOGE and false. The command paths return before touching any
     // channel state when this fails.
     bool takeSendMutex();
-    // Takes no lock: mallocs a copy of cmd and xQueueSends it with `wait`.
-    // false (nothing left allocated) on out-of-memory or if the serial queue
-    // stays full; the caller logs, with channel/module identity.
-    bool enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait);
+    // Takes no lock and never logs: mallocs a copy of cmd and xQueueSends it
+    // with `wait`. Nothing is left allocated on failure.
+    EnqueueResult enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait);
     // Single-frame convenience: takeSendMutex -> enqueueFrame(500 ms) -> give.
     void sendQueueMsg(uint8_t cmd[], size_t size);
 
@@ -96,6 +104,11 @@ public:
     // channel state (channels) and share the FreeRTOS mutex handles.
     MaestroModule(const MaestroModule &) = delete;
     MaestroModule &operator=(const MaestroModule &) = delete;
+
+    // false if a mutex could not be created (heap exhaustion). The constructor
+    // cannot fail in this codebase (no exceptions), so the creator must check
+    // this before keeping the instance -- every method assumes both handles.
+    bool IsValid() const;
 
     void UpdateConfig(QueueHandle_t queue, int baud);
     void LoadConfig();

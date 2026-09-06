@@ -53,7 +53,12 @@ design covers both races, so T-004 depends on this task.
   `ESP_LOGE` and the operation aborts *before* touching channel state, so an aborted operation
   leaves state consistent. Repo convention: bounded takes with a log-on-failure path.
 - `servo_channel` layout unchanged (no generation/epoch fields; T-002 Contract).
-- Public `MaestroModule` API unchanged; Maestro wire protocol unchanged.
+- Public `MaestroModule` API unchanged; Maestro wire protocol unchanged. Amendment 2026-09-06
+  (PR #57 review): one additive public method, `bool IsValid() const` — the constructor cannot
+  fail without exceptions, so `loadMaestroConfigs` checks it and drops a module whose mutexes
+  could not be created instead of storing a half-built instance. The destructor now deletes
+  both semaphores (safe: it runs when the last `shared_ptr` drops, so nothing can be blocked
+  on them).
 - Prerequisite: T-002 merged (state is per-instance, so both locks are per-instance).
 
 ## Task
@@ -142,6 +147,10 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: rapid-slider case and move-at-release-deadline case added
 - [x] PLAN.md Status updated
+- [x] PR #57 review (Copilot): `IsValid()` + creator-side check, semaphores deleted in the
+      destructor, `enqueueFrame` never logs (returns `EnqueueResult`; `CheckServos` aggregates
+      an out-of-memory mask and logs after the lock), two stale path comments in `src/main.cpp`
+      rewritten
 - [x] PR-toolkit review (code, silent-failure, comments): `CheckServos` logs after releasing
       `stateMutex` (all channels come due together after homing); `setServoPosition` returns
       false at the first dropped frame and callers log with identity; `enqueueFrame` no longer

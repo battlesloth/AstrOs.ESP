@@ -26,27 +26,48 @@ static const int SEND_QUEUE_WAIT_MS = 500;
 MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
 {
 
+    this->idx = idx;
+    this->baudRate = baudRate;
+    this->serialQueue = serialQueue;
+    this->loading = false;
+
+    // Either handle missing => IsValid() is false and the creator must drop
+    // this instance (loadMaestroConfigs does). Nothing else guards the handles.
     this->mutex = xSemaphoreCreateMutex();
     if (this->mutex == NULL)
     {
-        ESP_LOGE(TAG, "Failed to create mutex");
+        ESP_LOGE(TAG, "Failed to create send mutex for module %d", idx);
         return;
     }
 
     this->stateMutex = xSemaphoreCreateMutex();
     if (this->stateMutex == NULL)
     {
-        ESP_LOGE(TAG, "Failed to create state mutex");
+        ESP_LOGE(TAG, "Failed to create state mutex for module %d", idx);
+        vSemaphoreDelete(this->mutex);
+        this->mutex = nullptr;
         return;
     }
-
-    this->idx = idx;
-    this->baudRate = baudRate;
-    this->serialQueue = serialQueue;
-    this->loading = false;
 }
 
-MaestroModule::~MaestroModule() {}
+MaestroModule::~MaestroModule()
+{
+    // Runs when the last shared_ptr drops, so no task can be blocked on
+    // these handles (a blocked task would hold a shared_ptr).
+    if (this->stateMutex != nullptr)
+    {
+        vSemaphoreDelete(this->stateMutex);
+    }
+    if (this->mutex != nullptr)
+    {
+        vSemaphoreDelete(this->mutex);
+    }
+}
+
+bool MaestroModule::IsValid() const
+{
+    return this->mutex != nullptr && this->stateMutex != nullptr;
+}
 
 void MaestroModule::UpdateConfig(QueueHandle_t serialQueue, int baudRate)
 {
@@ -173,7 +194,9 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     if (!this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration))
     {
-        ESP_LOGE(TAG, "QueueCommand: serial queue full, move for channel %d on module %d incomplete (still tracked on)",
+        ESP_LOGE(TAG,
+                 "QueueCommand: frame not queued (serial queue full or no memory), move for channel %d on module %d "
+                 "incomplete (still tracked on)",
                  ch, this->idx);
     }
 
@@ -225,8 +248,10 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     {
         // WARN, not ERROR: a saturated slider drag can hit this at message rate,
         // and the next message re-sends everything.
-        ESP_LOGW(TAG, "SetServoPosition: serial queue full, move for channel %d on module %d dropped", channel,
-                 this->idx);
+        ESP_LOGW(TAG,
+                 "SetServoPosition: frame not queued (serial queue full or no memory), move for channel %d on module "
+                 "%d dropped",
+                 channel, this->idx);
     }
 
     xSemaphoreGive(this->mutex);
@@ -333,7 +358,7 @@ void MaestroModule::HomeServos()
 
     if (failed > 0)
     {
-        ESP_LOGE(TAG, "HomeServos: serial queue full on module %d, %d channel(s) not homed (still tracked on)",
+        ESP_LOGE(TAG, "HomeServos: frames not queued on module %d, %d channel(s) not homed (still tracked on)",
                  this->idx, failed);
     }
 
@@ -370,6 +395,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     uint32_t turnedOff = 0;
     uint32_t sendBusy = 0;
     uint32_t queueFull = 0;
+    uint32_t noMemory = 0;
 
     for (size_t i = 0; i < 24; i++)
     {
@@ -396,18 +422,22 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
             continue;
         }
 
-        bool queued = this->setServoOff(i, 0);
+        EnqueueResult result = this->setServoOff(i, 0);
         xSemaphoreGive(this->mutex);
 
-        if (queued)
+        if (result == EnqueueResult::Queued)
         {
             channels[i].on = false;
             channels[i].currentPos = 0;
             turnedOff |= 1u << i;
         }
-        else
+        else if (result == EnqueueResult::QueueFull)
         {
             queueFull |= 1u << i;
+        }
+        else
+        {
+            noMemory |= 1u << i;
         }
     }
 
@@ -429,6 +459,11 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     {
         ESP_LOGW(TAG, "CheckServos: serial queue full on module %d, channels 0x%06X retry next tick", this->idx,
                  (unsigned)queueFull);
+    }
+    if (noMemory != 0)
+    {
+        ESP_LOGE(TAG, "CheckServos: out of memory on module %d, channels 0x%06X retry next tick", this->idx,
+                 (unsigned)noMemory);
     }
 }
 
@@ -453,7 +488,7 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
         cmd[2] = lastpos & 0x7F;
         cmd[3] = (lastpos >> 7) & 0x7F;
 
-        if (!this->enqueueFrame(cmd, 4, wait))
+        if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
         {
             return false;
         }
@@ -463,7 +498,7 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[2] = speed & 0x7F;
     cmd[3] = (speed >> 7) & 0x7F;
 
-    if (!this->enqueueFrame(cmd, 4, wait))
+    if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
         return false;
     }
@@ -472,7 +507,7 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[2] = acceleration & 0x7F;
     cmd[3] = (acceleration >> 7) & 0x7F;
 
-    if (!this->enqueueFrame(cmd, 4, wait))
+    if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
         return false;
     }
@@ -484,7 +519,7 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     cmd[2] = target & 0x7F;
     cmd[3] = (target >> 7) & 0x7F;
 
-    if (!this->enqueueFrame(cmd, 4, wait))
+    if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
         return false;
     }
@@ -493,7 +528,7 @@ bool MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int s
     return true;
 }
 
-bool MaestroModule::setServoOff(uint8_t channel, TickType_t wait)
+MaestroModule::EnqueueResult MaestroModule::setServoOff(uint8_t channel, TickType_t wait)
 {
     uint8_t cmd[4] = {};
 
@@ -529,8 +564,11 @@ bool MaestroModule::takeSendMutex()
     return false;
 }
 
-bool MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait)
+MaestroModule::EnqueueResult MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait)
 {
+    // Never logs: CheckServos calls this under stateMutex on the esp_timer
+    // task. Callers report the result with channel/module identity, outside
+    // any lock.
     queue_serial_msg_t msg;
 
     msg.message_id = 1;
@@ -538,21 +576,18 @@ bool MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wai
     msg.data = (uint8_t *)malloc(size);
     if (msg.data == NULL)
     {
-        ESP_LOGE(TAG, "enqueueFrame: out of memory on module %d", this->idx);
-        return false;
+        return EnqueueResult::NoMemory;
     }
     memcpy(msg.data, cmd, size);
     msg.dataSize = size;
 
     if (xQueueSend(this->serialQueue, &msg, wait) != pdTRUE)
     {
-        // No log here: callers report the drop with channel/module identity
-        // (and CheckServos does so outside its lock).
         free(msg.data);
-        return false;
+        return EnqueueResult::QueueFull;
     }
 
-    return true;
+    return EnqueueResult::Queued;
 }
 
 void MaestroModule::sendQueueMsg(uint8_t cmd[], size_t size)
@@ -563,9 +598,11 @@ void MaestroModule::sendQueueMsg(uint8_t cmd[], size_t size)
         return;
     }
 
-    if (!this->enqueueFrame(cmd, size, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS)))
+    EnqueueResult result = this->enqueueFrame(cmd, size, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS));
+    if (result != EnqueueResult::Queued)
     {
-        ESP_LOGW(TAG, "sendQueueMsg: frame 0x%02X dropped on module %d, serial queue full", cmd[0], this->idx);
+        ESP_LOGW(TAG, "sendQueueMsg: frame 0x%02X dropped on module %d (%s)", cmd[0], this->idx,
+                 result == EnqueueResult::NoMemory ? "no memory" : "serial queue full");
     }
 
     xSemaphoreGive(this->mutex);
