@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-003 — PR #57 open on develop (stateMutex + per-operation send mutex + bounded send take; PR-toolkit reviewed, findings fixed); bench cases 9–11 pending, then merge + close out
+Now:     T-003 — PR #57 open on develop; bench passed 2026-09-06 (`T-003 QA` script, serial log analyzed: 0 stale releases, 0 WARN/ERROR); awaiting review + merge, then close out
 Next:    T-004 (panic → Maestro off; depends on T-003)
 Blocked: none
 Last:    2026-09-06 — T-002 complete: merged to develop via PR #56; bench-verified

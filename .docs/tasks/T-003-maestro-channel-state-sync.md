@@ -93,11 +93,11 @@ restructure sends so one operation holds `this->mutex` once:
       enqueue and calls no blocking primitive (verified by reading every path).
 - [x] Lock order verified by reading: no path waits on `this->mutex` while holding `stateMutex`.
 - [x] `pio test -e test` green; both board environments build clean; clang-format clean.
-- [ ] Bench (human-gated): hammer one servo with slider commands for ~30 s while the 300 ms
+- [x] Bench (human-gated, 2026-09-06, via the `T-003 QA` script — 2 Hz command stream + burst of three releases on one tick, 0 WARN): hammer one servo with slider commands for ~30 s while the 300 ms
       shutdown timer runs — no premature release mid-move, no task-watchdog warning.
       Occasional `CheckServos: send busy on module M, channels 0x… retry next tick` WARNs are
       acceptable.
-- [ ] Bench (human-gated, the PR #56 scenario): issue a move exactly as a release is due (a
+- [x] Bench (human-gated, 2026-09-06, via the `T-003 QA` script — 16 attempts, 0 stale releases, gaps 19.81–20.04 s): issue a move exactly as a release is due (a
       slider move ~20 s after the previous one, repeated a dozen times) — the servo always
       completes the new move and stays energized for a fresh 20 s; never a
       `Turning off servo N on module M` within 20 s after a `Setting servo N on module M`.
@@ -147,4 +147,4 @@ pio run -e metro_s3
       false at the first dropped frame and callers log with identity; `enqueueFrame` no longer
       logs anonymously; `currentPos` stops accumulating once due; handles default to nullptr;
       stale "spins on a per-module mutex" comments in `src/main.cpp` reworded
-- [ ] bench (human-gated) pending
+- [x] bench (human-gated) — passed 2026-09-06 with the `T-003 QA` script; serial log analyzed: 89 moves, 22 releases, 0 stale, 0 WARN/ERROR
