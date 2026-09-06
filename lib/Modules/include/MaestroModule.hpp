@@ -42,9 +42,12 @@ private:
     int idx;
     int baudRate;
 
-    // Per-instance channel state (config + release tracking). Zero-initialized;
-    // populated by LoadConfig(). Written from the command paths (QueueCommand,
-    // SetServoPosition, HomeServos, Panic) and read-modify-written by
+    // Per-instance channel state (config + release tracking). Zero-initialized
+    // at construction. LoadConfig() overlays the stored config without clearing
+    // (entries past the parsed count keep prior state on reload) and its
+    // HomeServos() re-arms release tracking -- both on the boot / RELOAD_CONFIG
+    // path. Written by QueueCommand and SetServoPosition on task context
+    // (Panic() also writes but has no caller today); read-modify-written by
     // CheckServos() on the esp_timer task -- synchronization is T-003.
     servo_channel channels[24] = {};
 

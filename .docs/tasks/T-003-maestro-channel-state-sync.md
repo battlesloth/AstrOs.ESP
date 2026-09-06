@@ -6,8 +6,10 @@
 
 ## Context
 
-Maestro channel state is mutated from the serial-command path (`QueueCommand`, `HomeServos`,
-`LoadConfig` — task context) and read-modify-written from `servoShutdownTimerCallback` →
+Maestro channel state is mutated from task context (`QueueCommand` and `SetServoPosition` —
+the script and slider command paths; `HomeServos` / `LoadConfig` on the boot and
+RELOAD_CONFIG path; `Panic` writes too but has no caller today) and read-modify-written from
+`servoShutdownTimerCallback` →
 `CheckServos` (esp_timer task) with no synchronization. Concrete races:
 
 - `QueueCommand` resets the release accumulator and sets `on = true`; an interleaved
@@ -35,7 +37,7 @@ Add a per-instance `stateMutex` (`SemaphoreHandle_t`) guarding the `channels` me
    timeout — never block the esp_timer task); advance accumulators and mark due channels off
    under the lock while collecting their indices; release; then send the off commands via
    `setServoOff` outside the lock.
-2. `QueueCommand` / `HomeServos` / `LoadConfig`: take `stateMutex` around their channel
+2. `QueueCommand` / `SetServoPosition` / `HomeServos` / `LoadConfig`: take `stateMutex` around their channel
    read-modify-write sections; issue UART sends outside the lock where practical.
 3. Follow the repo convention: bounded takes with a log-on-failure path, no `portMAX_DELAY`.
 
