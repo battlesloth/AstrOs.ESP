@@ -29,9 +29,16 @@ was never seen. `0x9F` is also Mini Maestro 12/18/24 only, and the ESP does not 
 channel count, so the count byte would be a guess. The per-channel off (`setServoOff` →
 `0x84 ch 0 0`) is the path `CheckServos` exercises on every release, so panic uses that.
 
-Known limitation, accepted: a servo command already dequeued into `servoQueue` at the instant
-panic fires still executes after the off; that one servo re-energizes and releases on the
-normal deadline. Flushing the queue is out of scope.
+Queued work must be dropped, not just future dispatch. `servoQueue` holds 20 entries and
+`servoQueueTask` drains one per pass, so a script event that moves several servos can leave a
+burst queued at the instant panic fires; each entry would be encoded and sent *after* the off
+frames and re-energize its channel (PR #56 review). `handlePanicStop` therefore drains
+`servoQueue` before sending the offs. Frames already in the serial queues are harmless: the
+off frames enter the same FIFO behind them, so the off wins. Accepted residual: a single
+message that `servoQueueTask` dequeued just before the drain, or one a producer was already
+blocked inside `xQueueSend` with, can still land after the offs. That is one servo, it
+releases on the normal deadline, and the log makes it visible (a `Setting servo` line after
+the `Panic:` line).
 
 ## Contract (pinned — do not change)
 
@@ -46,8 +53,11 @@ normal deadline. Flushing the queue is out of scope.
   documented above `servoShutdownTimerCallback` in `src/main.cpp` (bounded take, `ESP_LOGW`
   on timeout, copy the `shared_ptr`s, release, then call).
 - Queue-message ownership unchanged: `sendQueueMsg` mallocs per message; the serial task frees.
+  The drain in `handlePanicStop` becomes the consumer for every `servoQueue` message it removes
+  and frees its payload exactly as `servoQueueTask` does after processing. No other queue is
+  touched (serial queues self-heal by FIFO order; `i2cQueue` is the PCA9685 path, out of scope).
 - Order inside `handlePanicStop`: `AnimationCtrl.panicStop()` first (stop dispatching), then
-  the Maestro offs.
+  drain `servoQueue`, then the Maestro offs.
 - Depends on T-002 merged. If T-003 is merged first, `Panic()` takes `stateMutex` around its
   `channels[]` writes and sends outside the lock, per T-003's Contract.
 
@@ -58,9 +68,11 @@ normal deadline. Flushing the queue is out of scope.
    `currentPos = 0`, then call `setServoOff(i)`. One `ESP_LOGI` per module
    (`"Panic: de-energizing module %d"`), not per channel. Delete the `0x9F` frame construction.
    Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
-2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, snapshot
-   `maestroModules` under `maestroModulesMutex` (`pdMS_TO_TICKS(100)`, warn and skip on
-   timeout), release the mutex, then call `Panic()` on each module in the snapshot.
+2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
+   with a zero-timeout `xQueueReceive` loop, freeing each message's payload; log the count
+   dropped at INFO. Then snapshot `maestroModules` under `maestroModulesMutex`
+   (`pdMS_TO_TICKS(100)`, warn and skip on timeout), release the mutex, and call `Panic()` on
+   each module in the snapshot.
 3. Update QA: rewrite case 7 in `.docs/qa/maestro-servo-release.md` to the new behavior and
    add the GPIO-channel and padawan cases below.
 4. Update the `channels` comment in `lib/Modules/include/MaestroModule.hpp`: `Panic()` now
@@ -70,8 +82,9 @@ normal deadline. Flushing the queue is out of scope.
 
 - [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel, marks each
       `on = false`, and sends nothing for disabled channels. No `0x9F` byte leaves the module.
-- [ ] `handlePanicStop` reaches every module in `maestroModules` without holding the map mutex
-      across a send (verified by reading the code against the snapshot pattern).
+- [ ] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
+      reaches every module in `maestroModules` without holding the map mutex across a send
+      (verified by reading the code against the snapshot pattern).
 - [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
       clean; clang-format clean.
 - [ ] Bench, master (human-gated): start a slow scripted move (speed 5); send panic stop from
@@ -79,14 +92,19 @@ normal deadline. Flushing the queue is out of scope.
       shows target 0); no `Turning off servo N on module M` for that channel afterward.
 - [ ] Bench, padawan (human-gated): same via ESP-NOW from the master.
 - [ ] Bench, GPIO channel (human-gated): GPIO-type channel on → panic → output drops.
+- [ ] Bench, queued burst (human-gated): run a script whose first event moves ≥4 servos at
+      speed 5; send panic within ~1 s. All four go slack; the monitor shows
+      `Panic: dropped N queued servo commands` and at most one `Setting servo` line after the
+      `Panic:` line (the accepted in-flight residual).
 - [ ] Bench, recovery (human-gated): after panic, a script or slider move re-energizes and
       moves the servo normally, and it releases on the normal deadline.
 - [ ] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
 
 ## Out of scope
 
-- Flushing `servoQueue` / serial queues on panic (queue-ownership change; see Context
-  limitation).
+- Flushing the serial queues (`serialCh1Queue` / `serialCh2Queue`) — FIFO order already makes
+  the off frames win; see Context.
+- The single in-flight message residual described in Context.
 - PCA9685 (I²C) servo channels — panic does not reach them today either. Backlog.
 - Locking between timer and command paths — T-003.
 - `lastPos` staleness on re-arm after an off — PLAN.md Backlog.

@@ -29,8 +29,9 @@ Reference deadlines (model, floored at 20 s):
 - Board flashed with a build containing T-001 (amended: trapezoid model + floor) and T-002;
   serial monitor attached (115200). Log lines carry ms-since-boot; subtract
   `Setting servo N …` from `Turning off servo N` to get the observed release time. Both lines
-  end with `on module M` (T-002); the short forms quoted in cases 1–7 are prefixes of the
-  full line.
+  carry the module id right after the servo number (T-002): `Setting servo N on module M
+  (min: …` and `Turning off servo N on module M`. The short forms quoted in cases 1–7 are
+  prefixes of the full lines.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
@@ -91,6 +92,9 @@ Reference deadlines (model, floored at 20 s):
 
 8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
    Maestro being wired to serial channel 2)
+   - **Run this on a padawan.** The master reserves UART 1 for the server link, and
+     `loadMaestroConfigs` rejects a Maestro module on UART 1 there — on a master only module 1
+     would be created and the case would prove nothing.
    - Configure two Maestro modules (idx 0 on serial 1, idx 1 on serial 2) with different servo
      configs — e.g. module 0 channel 0 as a servo with home 1500, module 1 channel 0 as a servo
      with home 2000 and a different min/max.
