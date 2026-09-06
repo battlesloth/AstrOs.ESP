@@ -1,6 +1,6 @@
 # T-002: Move Maestro channel state into MaestroModule instances
 
-<!-- File: .docs/tasks/T-002-maestro-channels-per-instance.md. Branch: feature/T-002-maestro-channels-per-instance.
+<!-- File: .docs/tasks/completed/T-002-maestro-channels-per-instance.md (completed 2026-09-06; PR #56). Branch: feature/T-002-maestro-channels-per-instance.
      PR title: "T-002: Move Maestro channel state into MaestroModule instances". -->
 
 ## Context
@@ -47,7 +47,7 @@ Added at review (2026-09-06):
 
 - [x] No file-scope channel state remains in `MaestroModule.cpp`; each instance owns its array.
 - [x] `pio test -e test` green; both board environments build clean.
-- [ ] Bench regression (single module, human-gated): home-on-boot, scripted move, and release
+- [x] Bench regression (single module, human-gated, 2026-09-06): home-on-boot, scripted move, and release
       behave exactly as before.
 - [x] QA plan `.docs/qa/maestro-servo-release.md` gains a multi-module config case (execution
       human-gated on second-module hardware availability).
@@ -79,4 +79,4 @@ pio run -e metro_s3
 - [x] PLAN.md Status updated
 - [x] Review follow-ups: copy ops deleted; `on module M` added to the two Maestro log lines;
       QA case 8 made attributable
-- [ ] bench single-module regression (human-gated)
+- [x] bench single-module regression (human-gated, 2026-09-06)
