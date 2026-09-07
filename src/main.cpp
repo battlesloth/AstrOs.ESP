@@ -2145,7 +2145,66 @@ static void handleRunCommand(astros_interface_response_t msg)
 
 static void handlePanicStop(astros_interface_response_t msg)
 {
+    // 1. Stop dispatching: no further script events reach the servo queue.
     AnimationCtrl.panicStop();
+
+    // 2. Drop what is already queued. servoQueue holds up to 20 entries and
+    //    servoQueueTask drains one per pass, so a multi-servo script event can
+    //    leave a burst that would otherwise be encoded and sent AFTER the offs.
+    //    This loop becomes the consumer for each message it removes and frees
+    //    the payload exactly as servoQueueTask does. The serial queues are left
+    //    alone: the off frames enter the same FIFO behind anything already
+    //    there, so the off wins.
+    queue_msg_t pending;
+    int dropped = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        dropped++;
+    }
+    ESP_LOGI(TAG, "Panic: dropped %d queued servo commands", dropped);
+
+    // 3. De-energize every configured Maestro channel. Snapshot the modules
+    //    under maestroModulesMutex and release it before calling Panic():
+    //    Panic() takes the per-module send mutex (bounded, ~2.2 s) and then
+    //    blocks up to 500 ms per off frame, so it can take seconds. Same
+    //    pattern as servoShutdownTimerCallback, but with the 1 s bound the
+    //    other task-context users of this mutex use: missing the snapshot
+    //    means NO module is de-energized, the worst outcome this handler has.
+    std::vector<std::shared_ptr<MaestroModule>> snapshot;
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        snapshot.reserve(maestroModules.size());
+        for (const auto &entry : maestroModules)
+        {
+            snapshot.push_back(entry.second);
+        }
+        xSemaphoreGive(maestroModulesMutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "handlePanicStop: maestroModulesMutex timeout - Maestro offs NOT sent on any module");
+    }
+
+    for (auto &maestroMod : snapshot)
+    {
+        maestroMod->Panic();
+    }
+
+    // 4. One more zero-wait drain: a command the dispatch task had already
+    //    fetched before the halt can land in servoQueue after step 2. Catching
+    //    it here keeps it from being sent after the offs. A command that
+    //    servoQueueTask had already dequeued is the accepted residual.
+    int late = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        late++;
+    }
+    if (late > 0)
+    {
+        ESP_LOGI(TAG, "Panic: dropped %d late servo command(s) after the offs", late);
+    }
 }
 
 static void handleFormatSD(std::string id)

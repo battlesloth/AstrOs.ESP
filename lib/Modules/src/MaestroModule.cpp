@@ -106,7 +106,8 @@ void MaestroModule::LoadConfig()
     // stack). Boot / RELOAD_CONFIG path only. Meanwhile: CheckServos skips
     // ticks (zero-wait take); slider moves are dropped silently by the
     // `loading` guard in SetServoPosition; a script command waits up to
-    // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN.
+    // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN; Panic waits
+    // the same and then sends its offs from an unlocked read of `enabled`.
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
         AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
@@ -138,8 +139,6 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     // One send-mutex hold across the state update and every frame, so a
     // concurrent CheckServos or Panic cannot slip an off between our frames.
-    // (Panic's state write is not serialized against us until T-004; the
-    // failure direction is a redundant off later, never a stuck servo.)
     if (!this->takeSendMutex())
     {
         ESP_LOGE(TAG, "QueueCommand: dropping command for channel %d on module %d", ch, this->idx);
@@ -272,34 +271,98 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
 void MaestroModule::Panic()
 {
-    ESP_LOGI(TAG, "Panic");
-
-    // No caller today; T-004 rewrites this as a proper command-path operation
-    // (per-channel 0x84 offs, state cleared only after a successful enqueue).
-    // T-003 only puts the state write under stateMutex.
-    uint8_t cmd[74] = {};
-    cmd[0] = SET_MULTIPLE_SERVOS_COMMAND;
-    cmd[1] = 24;
-
-    for (size_t i = 0; i < 24; i++)
+    // Operator kill-switch. Panic is a STOP, not a reset: every enabled servo
+    // channel is de-energized (motion halts, holding torque drops); GPIO-type
+    // channels are left exactly as they are, because driving one anywhere --
+    // its rest state or target 0 -- is itself a state change that could move
+    // something. A T-003 command-path operation -- one send-mutex hold across
+    // the state read, every off frame, and the state clear -- except that
+    // tracking is cleared only AFTER an off was actually queued: the one
+    // failure direction that must never happen is a servo left energized
+    // while tracking says off. Runs on interfaceResponseQueueTask.
+    if (!this->takeSendMutex())
     {
-        cmd[2 + (i * 3)] = i;
+        ESP_LOGE(TAG, "Panic: send mutex timeout on module %d - offs NOT sent", this->idx);
+        return;
     }
 
+    bool enabled[24] = {};
+    bool haveStateLock = xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE;
+    if (!haveStateLock)
+    {
+        // Reachable during a config reload: LoadConfig holds stateMutex across
+        // its SD read on serviceQueueTask. Every other taker (QueueCommand,
+        // SetServoPosition, HomeServos, reconcileLimits) runs under the send
+        // mutex we already hold, and CheckServos holds it for microseconds.
+        // `enabled` is config-only, written by LoadConfig alone and a single
+        // byte, so an unlocked read cannot tear: send the offs anyway. The
+        // clear below is still attempted after the sends.
+        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d, reading config unlocked and sending offs anyway",
+                 this->idx);
+    }
+    for (size_t i = 0; i < 24; i++)
+    {
+        enabled[i] = channels[i].enabled && channels[i].isServo;
+    }
+    if (haveStateLock)
+    {
+        xSemaphoreGive(this->stateMutex);
+    }
+
+    bool queued[24] = {};
+    int queuedCount = 0;
+    int failedCount = 0;
+    for (size_t i = 0; i < 24; i++)
+    {
+        if (!enabled[i])
+        {
+            continue;
+        }
+        EnqueueResult result = this->setServoOff(i, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS));
+        if (result == EnqueueResult::Queued)
+        {
+            queued[i] = true;
+            queuedCount++;
+        }
+        else
+        {
+            // Stays exactly as it was: the channel is still `on`, so
+            // CheckServos retries within one deadline.
+            failedCount++;
+            ESP_LOGE(TAG,
+                     "Panic: off NOT queued for servo %d on module %d (%s) - stays energized until the timer retry", i,
+                     this->idx, result == EnqueueResult::NoMemory ? "no memory" : "serial queue full");
+        }
+    }
+
+    // Clear tracking only for channels whose off went out. Attempted even if
+    // the first take failed: the sends took time and nothing about the clear
+    // depends on how `enabled` was read.
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
         for (size_t i = 0; i < 24; i++)
         {
-            channels[i].on = false;
+            if (queued[i])
+            {
+                channels[i].on = false;
+                channels[i].currentPos = 0;
+            }
         }
         xSemaphoreGive(this->stateMutex);
     }
     else
     {
-        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d", this->idx);
+        // Physically off, tracking says on. CheckServos sends one redundant
+        // off per channel within a deadline and clears it.
+        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d after sending offs; tracking clears on the next release",
+                 this->idx);
     }
 
-    this->sendQueueMsg(cmd, 74);
+    // Neutral wording: frames are queued, not yet on the wire, and failedCount
+    // may be nonzero. The per-channel ERRORs above carry the failures.
+    ESP_LOGI(TAG, "Panic: module %d complete, %d off(s) queued, %d failed", this->idx, queuedCount, failedCount);
+
+    xSemaphoreGive(this->mutex);
 }
 
 void MaestroModule::HomeServos()
