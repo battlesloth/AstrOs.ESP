@@ -170,6 +170,19 @@ task depends on T-003.
   candidate fix (offs on a dedicated task); QA 7a measures it.
 - A `PANIC_STOP` ACK/NAK to the server and a `Panic()` result for aggregation — wire-format
   change shared with AstrOs.Server; PLAN.md Backlog.
+- **Accepted limitations (decided 2026-09-07, PR #58 review):** three orderings can leave an
+  output energized or delay the kill, all requiring a second operator action or contention to
+  overlap the panic within about a second: (1) a config reload already in progress homes every
+  channel after the offs (the reload releases `stateMutex` before homing, and homing waits for
+  the send mutex Panic holds); (2) panic is not serialized with module initialization, so it can
+  snapshot a freshly inserted module before `LoadConfig`, or send offs before that module's
+  homing; (3) `AnimationCtrl.panicStop()` can wait up to 5 s on `animationMutex` before the
+  drain and offs start. In every case the servos still release on their normal deadline, so
+  nothing is left energized untracked. This is not industrial control software; the more likely
+  real-world scenario — a controller crashing and restarting during a panic — cannot be covered
+  at all, because the restarted node does not know it was in panic. PLAN.md Backlog holds the
+  candidate fixes (a reload barrier mutex; a split `haltDispatch()` so the offs run before the
+  bounded queue-clear wait) as a future-version enhancement.
 - PCA9685 (I²C) servo channels — panic does not reach them today either. Backlog.
 - Locking between timer and command paths — T-003.
 - `lastPos` staleness on re-arm after an off — PLAN.md Backlog.

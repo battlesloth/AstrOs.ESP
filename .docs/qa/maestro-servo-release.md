@@ -209,6 +209,11 @@ Reference deadlines (model, floored at 20 s):
   signal. If the module map cannot be snapshotted within 1 s, `handlePanicStop:
   maestroModulesMutex timeout - Maestro offs NOT sent on any module` at ERROR: the script is
   stopped and the queue drained but no hardware was de-energized.
+- **Panic concurrent with a config reload or module init** (T-004, accepted limitation): if a
+  `RELOAD_CONFIG` overlaps the panic within ~1 s, channels may be homed *after* the offs and
+  stay energized until their normal release (~20 s); panic may also miss a module whose config
+  was being loaded at that instant. Not a bench case — the servos still release on the normal
+  deadline, and the ordering fix is a Backlog enhancement.
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
   would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
   logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`
