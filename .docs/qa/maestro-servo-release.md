@@ -118,19 +118,23 @@ Reference deadlines (model, floored at 20 s):
      serial path: seconds). Record the observed delay — it decides whether the Backlog item
      "panic offs on a dedicated task" gets scheduled.
 
-7b. **Panic drops a GPIO-type channel** (T-004)
+7b. **Panic holds a GPIO-type channel** (T-004; panic is a stop, not a reset)
    - Turn a GPIO-type Maestro channel on (script or slider), then send panic.
-   - Expected: the output drops at once (relay opens / LED off). Panic sends target 0 to every
-     *enabled* channel, servo or not. Nothing is sent for disabled channels.
+   - Expected: the output does **not** change — the relay stays closed / LED stays on. Panic
+     sends offs to enabled *servo* channels only; a GPIO output "stops" by holding its state,
+     since driving it anywhere could itself move something. The per-module line counts servo
+     channels only (7 on the bench Maestro: channels 1–7).
 
 7c. **Panic against a queued burst** (T-004)
    - Run a script whose first event moves ≥4 servos at speed 5; send panic within ~1 s.
    - Expected: all four go slack. Monitor shows `Panic: dropped N queued servo commands` with
-     N ≥ 1 if any command was still queued, and normally at most one `Setting servo N on
-     module M` line *after* the `Panic:` lines (a command already dequeued when panic fired; a
-     second is possible if the dispatch task was between fetching a command and enqueueing it).
-     Each such channel logs `Turning off servo N on module M` ~20 s later — its state survived,
-     so the normal release still fires. Never a servo left energized with no later release.
+     N ≥ 1 if any command was still queued, and at most one `Setting servo N on module M` line
+     *after* the `Panic:` lines (a command `servoQueueTask` had already dequeued when panic
+     fired; a command the dispatch task enqueued late is caught by the second drain and shows
+     as `Panic: dropped 1 late servo command(s) after the offs`). A late servo residual logs
+     `Turning off servo N on module M` ~20 s later — its state survived, so the normal release
+     still fires. A late GPIO residual applies once and then holds. Never a servo left
+     energized with no later release.
 
 7d. **Recovery after panic** (T-004)
    - After 7, run a script or slider move on the same servo.
@@ -202,11 +206,10 @@ Reference deadlines (model, floored at 20 s):
 - **Panic with a wedged serial path** (T-004; hard to provoke): if the module's send mutex
   cannot be taken within ~2.2 s the monitor shows `Panic: send mutex timeout on module M - offs
   NOT sent` at ERROR and no off frames go out — the serial path could not have delivered them
-  anyway. If an individual off cannot be queued (`Panic: off NOT queued for channel N on module
-  M (serial queue full|no memory) - output stays energized until the next command or, for a
-  servo, the timer retry`), that channel keeps its tracking: a servo channel is released by the
-  timer within one deadline; a GPIO-type channel has no timer retry, so the ERROR line is the
-  signal. If the module map cannot be snapshotted within 1 s, `handlePanicStop:
+  anyway. If an individual off cannot be queued (`Panic: off NOT queued for servo N on module
+  M (serial queue full|no memory) - stays energized until the timer retry`), that channel keeps
+  its tracking and is released by the timer within one deadline. If the module map cannot be
+  snapshotted within 1 s, `handlePanicStop:
   maestroModulesMutex timeout - Maestro offs NOT sent on any module` at ERROR: the script is
   stopped and the queue drained but no hardware was de-energized.
 - **Panic concurrent with a config reload or module init** (T-004, accepted limitation): if a

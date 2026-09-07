@@ -80,8 +80,9 @@ private:
     // stateMutex by design); the inverted order there cannot deadlock because
     // a try-take never waits. Panic is a command-path operation too, with two
     // differences: it clears tracking only after an off frame was queued, and
-    // on a stateMutex timeout it still sends the offs (reading `enabled`
-    // unlocked) rather than aborting.
+    // on a stateMutex timeout it still sends the offs (reading `enabled` and
+    // `isServo` unlocked) rather than aborting. It touches servo channels
+    // only -- panic is a stop, and a GPIO output "stops" by holding its state.
     servo_channel channels[24] = {};
 
     QueueHandle_t serialQueue;

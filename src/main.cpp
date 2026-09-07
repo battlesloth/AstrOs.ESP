@@ -2190,6 +2190,21 @@ static void handlePanicStop(astros_interface_response_t msg)
     {
         maestroMod->Panic();
     }
+
+    // 4. One more zero-wait drain: a command the dispatch task had already
+    //    fetched before the halt can land in servoQueue after step 2. Catching
+    //    it here keeps it from being sent after the offs. A command that
+    //    servoQueueTask had already dequeued is the accepted residual.
+    int late = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        late++;
+    }
+    if (late > 0)
+    {
+        ESP_LOGI(TAG, "Panic: dropped %d late servo command(s) after the offs", late);
+    }
 }
 
 static void handleFormatSD(std::string id)

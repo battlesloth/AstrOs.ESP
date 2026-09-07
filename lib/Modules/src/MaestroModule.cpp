@@ -271,11 +271,14 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
 void MaestroModule::Panic()
 {
-    // Operator kill-switch: no signal on every configured output (servo and
-    // GPIO-type alike). A T-003 command-path operation -- one send-mutex hold
-    // across the state read, every off frame, and the state clear -- except
-    // that tracking is cleared only AFTER an off was actually queued: the one
-    // failure direction that must never happen is an output left energized
+    // Operator kill-switch. Panic is a STOP, not a reset: every enabled servo
+    // channel is de-energized (motion halts, holding torque drops); GPIO-type
+    // channels are left exactly as they are, because driving one anywhere --
+    // its rest state or target 0 -- is itself a state change that could move
+    // something. A T-003 command-path operation -- one send-mutex hold across
+    // the state read, every off frame, and the state clear -- except that
+    // tracking is cleared only AFTER an off was actually queued: the one
+    // failure direction that must never happen is a servo left energized
     // while tracking says off. Runs on interfaceResponseQueueTask.
     if (!this->takeSendMutex())
     {
@@ -299,7 +302,7 @@ void MaestroModule::Panic()
     }
     for (size_t i = 0; i < 24; i++)
     {
-        enabled[i] = channels[i].enabled;
+        enabled[i] = channels[i].enabled && channels[i].isServo;
     }
     if (haveStateLock)
     {
@@ -323,14 +326,12 @@ void MaestroModule::Panic()
         }
         else
         {
-            // Stays exactly as it was: a servo channel is still `on`, so
-            // CheckServos retries within a deadline; a GPIO-type channel has
-            // no timer retry, so this line is the operator's signal.
+            // Stays exactly as it was: the channel is still `on`, so
+            // CheckServos retries within one deadline.
             failedCount++;
             ESP_LOGE(TAG,
-                     "Panic: off NOT queued for channel %d on module %d (%s) - output stays energized until "
-                     "the next command or, for a servo, the timer retry",
-                     i, this->idx, result == EnqueueResult::NoMemory ? "no memory" : "serial queue full");
+                     "Panic: off NOT queued for servo %d on module %d (%s) - stays energized until the timer retry", i,
+                     this->idx, result == EnqueueResult::NoMemory ? "no memory" : "serial queue full");
         }
     }
 
@@ -352,11 +353,8 @@ void MaestroModule::Panic()
     else
     {
         // Physically off, tracking says on. CheckServos sends one redundant
-        // off per servo channel within a deadline and clears it; a GPIO-type
-        // channel keeps a stale `on` flag, which nothing reads for GPIO.
-        ESP_LOGW(TAG,
-                 "Panic: state mutex timeout on module %d after sending offs; servo tracking clears on the next "
-                 "release, GPIO flags stay stale",
+        // off per channel within a deadline and clears it.
+        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d after sending offs; tracking clears on the next release",
                  this->idx);
     }
 
