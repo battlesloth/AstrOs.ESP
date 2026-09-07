@@ -150,7 +150,8 @@ question of what target 0 means for an inverted or Output-mode GPIO channel.
       `T-004 QA` script (four servos at speed 5 + relay ch0), panic 3 s in → `Panic: dropped 0
       queued servo commands`, `Panic: module 1 …, 8 off(s) queued, 0 failed` (8 → 7 after
       GPIO channels were excluded; re-verified the same day on the servo-only build:
-      `Panic: module 1 complete, 7 off(s) queued, 0 failed`, no release after, 0 WARN/ERROR), no
+      `Panic: module 1 complete, 7 off(s) queued, 0 failed`, no release after, 0 WARN/ERROR;
+      Jeff watched the servo-only re-run: the servos physically stopped on panic), no
       `Turning off servo N on module 1` in the following 30 s, 0 WARN/ERROR. Same firmware
       minus T-004 (run first by mistake): all four released on the normal 24 s deadline.
 - [ ] Bench, padawan (human-gated): same via ESP-NOW from the master. **Not coverable on the
