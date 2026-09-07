@@ -49,14 +49,14 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   the **`T-003 QA`** script in the server's local database
   (`AstrOs.Server/.data/database.sqlite3`, id `s1788696QAq`, four body-Maestro servos):
   phase A (0–35 s) moves all four at t=0, then hammers channel 1 every 0.5 s while channels 2–4
-  come due together at ~20 s; phase B (40–123 s) moves all four at 40 s, then each channel
+  come due together at ~5 s (~20 s when written); phase B (40–123 s) moves all four at 40 s, then each channel
   again every 20.0 / 20.1 / 20.2 / 20.3 s (ch1–ch4) so a move lands inside the release tick each
   round; home at 123 s. Deploy it to the body location and run it with the monitor attached.
   Pass: no `Turning off servo N on module 1` *after* a newer `Setting servo N on module 1` for
   that channel (a release one deadline after the latest move is normal — 19.7–20.1 s on the
   20 s floor that script was written for, 4.7–5.1 s since T-005; the body Maestro is
-  module idx 1); channels 2–4 release once at ~20 s during phase A; no `state mutex timeout`
-  line anywhere; all four home at 123 s and release ~20 s later. First run 2026-09-06:
+  module idx 1); channels 2–4 release once at ~5 s during phase A; no `state mutex timeout`
+  line anywhere; all four home at 123 s and release ~5 s later. First run 2026-09-06 (20 s floor):
   89 moves, 22 releases, gaps 19.81–20.04 s, 0 stale releases, 0 WARN/ERROR — pass.
 - Optional but recommended: Maestro USB to a laptop with Maestro Control Center open on the
   Status tab. When the release lands, the channel's target drops to 0 and its Enabled box
@@ -206,7 +206,7 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
      a stale off could land after the new target and drop the servo mid-move.
 
 11. **All channels come due on the same tick while a slider is active** (T-003)
-   - Boot (or `RELOAD_CONFIG`) with ≥4 enabled servo channels; ~15 s after homing start
+   - Boot (or `RELOAD_CONFIG`) with ≥4 enabled servo channels; ~2 s after homing start
      dragging a slider on one of them and keep dragging through the 5 s mark.
    - Expected: one `Turning off servo N on module M` line per *other* channel, all on the same
      tick; the dragged servo stays energized; no `QueueCommand`/`SetServoPosition: state mutex

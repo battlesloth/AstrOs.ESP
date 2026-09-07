@@ -240,8 +240,8 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
     // Direct (slider) moves arrive as a stream at full speed. Arm release
     // tracking on every one, exactly as QueueCommand does: each re-arm just
-    // resets the clock, so CheckServos turns the servo off 20 s (the floor)
-    // after the *last* message and never mid-drag. Deliberately no INFO log
+    // resets the clock, so CheckServos turns the servo off one deadline (the
+    // 5 s floor at full speed) after the *last* message and never mid-drag. Deliberately no INFO log
     // here -- it would spam the monitor at drag rate.
     int oldSpeed = channels[channel].speed;
     int oldAccel = channels[channel].acceleration;
@@ -454,7 +454,8 @@ void MaestroModule::HomeServos()
 /// While a move is active, currentPos serves as the elapsed-ms
 /// accumulator; the deadline comes from ServoReleaseDeadlineMs
 /// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp): the physical
-/// worst case for the channel's speed/accel, floored at 20 s.
+/// worst case for the channel's speed/accel plus 10 %, or a 5 s floor,
+/// whichever is greater (T-005).
 ///
 /// Runs on the esp_timer task, so nothing here may block: stateMutex and
 /// the send mutex are try-taken with zero wait and the off frame is
@@ -463,7 +464,7 @@ void MaestroModule::HomeServos()
 /// stateMutex so a new command cannot land its target between them.
 /// Outcomes are logged only after stateMutex is released: a console line
 /// is a multi-ms blocking write, and every channel homed together comes
-/// due on the same tick (they all hit the 20 s floor), so logging inside
+/// due on the same tick (they all hit the 5 s floor), so logging inside
 /// the lock would hold it past the command paths' 50 ms wait.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
