@@ -92,12 +92,17 @@ int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
     return std::clamp(move, minPos, maxPos);
 }
 
-// Floor on the release deadline for loads whose slew the Maestro speed model
-// does not describe (linear actuators run at their own rate regardless of the
-// commanded pulse ramp). 20 s matches the ~19 s full-speed hold the old math
-// produced, which those loads were living with. Stand-in until a per-channel
-// release setting exists.
-constexpr int MAESTRO_RELEASE_FLOOR_MS = 20000;
+// Floor on the release deadline: covers full-speed moves and loads whose
+// slew the Maestro speed model does not describe (linear actuators run at
+// their own rate regardless of the commanded pulse ramp). Was 20 s (T-001,
+// matching the old math's full-speed hold); 5 s since T-005. Stand-in until
+// a per-channel release setting exists.
+constexpr int MAESTRO_RELEASE_FLOOR_MS = 5000;
+
+// Proportional margin on the modelled travel time (T-005). The guard range
+// already gives 1.5x on distance; this covers everything else that scales
+// with the move (accel quantization, servo lag at low speed).
+constexpr int MAESTRO_RELEASE_MARGIN_PERCENT = 10;
 
 /// @brief ceil(a / b) for a >= 0, b > 0
 constexpr int CeilDiv(int a, int b)
@@ -158,14 +163,17 @@ int WorstCaseTravelMs(int speed, int acceleration)
     return CeilSqrt(CeilDiv(38400000, acceleration));
 }
 
-/// @brief The release deadline CheckServos uses: the physical worst case
-/// (WorstCaseTravelMs) floored at MAESTRO_RELEASE_FLOOR_MS.
+/// @brief The release deadline CheckServos uses: the greater of
+/// MAESTRO_RELEASE_FLOOR_MS and the physical worst case (WorstCaseTravelMs)
+/// plus MAESTRO_RELEASE_MARGIN_PERCENT, ceiling.
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
 /// @return deadline in milliseconds
 int ServoReleaseDeadlineMs(int speed, int acceleration)
 {
-    return std::max(WorstCaseTravelMs(speed, acceleration), MAESTRO_RELEASE_FLOOR_MS);
+    int travel = WorstCaseTravelMs(speed, acceleration);
+    int withMargin = travel + CeilDiv(travel * MAESTRO_RELEASE_MARGIN_PERCENT, 100);
+    return std::max(withMargin, MAESTRO_RELEASE_FLOOR_MS);
 }
 
 #endif
