@@ -8,7 +8,8 @@ AstrOs.ESP is ESP-IDF firmware (built via PlatformIO) for the AstrOs astromech a
 
 ## Branching and merge workflow
 
-- **`develop` is the integration branch.** Feature work branches off `develop` (use names like `feature/...`, `ci/...`, `fix/...`) and merges back via pull request.
+- **`develop` is the integration branch.** Feature work branches off `develop` and merges back via pull request. Branch names carry the task ID: `feature/T-NNN-<slug>` (`ci/...` and `fix/...` prefixes keep working for their kinds of work). One task per branch. PR title: `T-NNN: <task title>`, with verification evidence in the body.
+- **Doc-only carve-out:** changes limited to `CLAUDE.md`, `README.md`, `PLAN.md`, `.docs/`, or other prose files may be committed directly to `develop`. Anything build-affecting always rides a branch + PR.
 - **`main` is reserved for release-candidate cuts.** Direct commits to `main` are forbidden — they bypass the RC build pipeline that fires on `push: branches: [main]` and would pollute the RC stream. Always integrate through PR.
 - **`release/rel_X.Y` branches** are cut from `main` when a version is ready to ship. Bug fixes for a released line target the relevant `release/rel_*` branch; forward-port vs backport is decided case-by-case.
 - **PR validation** (`.github/workflows/pr-validation.yml`) runs on pull requests targeting `main`, `develop`, or `release/rel_*`. All four checks — native unit tests, both-board build matrix, AstrOsMessaging native-purity guard, and clang-format on changed files — must pass before merge.
@@ -141,55 +142,35 @@ When touching these files, prefer fixes that also resolve the relevant review it
 - No Cursor / Copilot rules.
 - A pre-commit hook at `.githooks/pre-commit` auto-formats staged C/C++ files with clang-format. Activate once per clone: `git config core.hooksPath .githooks`. The hook is opt-in — it does nothing until `core.hooksPath` is set.
 - No submodules (`.gitmodules` is empty).
-- GitHub Actions CI lives under `.github/workflows/` — PR validation exists today; RC and release artifact workflows are planned for Phase 3 of the CI pipeline design in `.docs/plans/20260411-0905-ci-pipeline-design.md`.
+- GitHub Actions CI lives under `.github/workflows/` — PR validation, RC builds, release builds, and weekly cache warming (see the Release workflow section; design history in `.docs/completed-plans/2026-04/20260411-0905-ci-pipeline-design.md`).
 
-## Planning (MANDATORY)
+## Workflow (MANDATORY)
 
-**NEVER write implementation code without a written, committed plan.** This is a hard rule, with the exceptions below.
+**NEVER write implementation code without a committed task file.** Quick-tier fixes are the only exception. Rationale and templates: [`.docs/agentic-workflow.md`](./.docs/agentic-workflow.md). Task IDs are per-repo (independent of AstrOs.Server's sequence).
 
-> **Note on plan storage:** Claude Code's in-session plan mode writes ephemeral working drafts to `~/.claude/plans/<session>.md`. Those are scratch. Before leaving plan mode and starting implementation, copy the finalized plan to `.docs/plans/<YYYYMMDD-HHmm>-<name>.md` and commit it. The in-repo location is the source of truth.
+> **Note on plan mode:** Claude Code's in-session plan mode writes ephemeral working drafts to `~/.claude/plans/<session>.md`. Those are scratch. The committed task file in `.docs/tasks/` is the source of truth.
 
-### Quick feedback mode
+### Session ritual
 
-No plan is required for small, minimally invasive changes made while reviewing a completed feature. Examples: logging tweaks, wording/copy changes, spacing fixes, typo corrections, and stack-size bumps driven by an observed high-water-mark warning. Just make the change directly. If a "quick" change starts growing in scope, stop and write a plan.
+- **Open:** read `PLAN.md` (repo root) and state current status — active project, in-progress task, what's next — before touching code.
+- **Close:** update the `PLAN.md` Status block; append a Log entry (dated header + short sub-bullets) for any completed task. Quick fixes stay out of the Log. A session that ends without this is not finished.
+- `PLAN.md` is authoritative over agent memory: when they disagree, `PLAN.md` wins.
 
-### Light plan mode
+### Three tiers
 
-For medium-sized changes that are straightforward but span more than a trivial tweak — e.g., adding a new queue item, or a self-contained bug fix touching 2-3 files — use a light plan:
+- **Quick** — small, minimally invasive fixes during bench testing or feature review: logging tweaks, wording/copy changes, typo corrections, stack-size bumps driven by an observed high-water-mark warning. No artifact; fix directly on the active branch. If it grows, stop and promote to a task.
+- **Task** — anything else that passes the five sizing rules as one unit. One file: `.docs/tasks/T-NNN-<slug>.md` from [`.docs/templates/task.md`](./.docs/templates/task.md).
+- **Project** — work that fails the sizing rules. Run a seam-discovery session (`superpowers:brainstorming`) to split it into task files + a `PLAN.md` section before implementing anything. Split at the natural firmware seams — wire format + native tests, then queue producer/consumer wiring, then hardware integration + QA — so each task compiles and ships on its own.
 
-1. Write a brief plan (a short description + a checklist of 3-5 tasks) and save to `.docs/plans/` using the `YYYYMMDD-HHmm-feature-name.md` convention described in the full-plan section below.
-2. **Commit the plan file before writing implementation code.**
-3. Check off tasks as completed and commit updates.
+### Task rules
 
-Light plans skip the brainstorming skill and don't require a scope guard evaluation. If the plan grows beyond ~5 tasks or starts spanning many layers, escalate to a full plan.
-
-### Full plan workflow
-
-For larger features or work that spans multiple layers:
-
-1. Brainstorm the feature with the user (using `superpowers:brainstorming`).
-2. Write the plan using `superpowers:writing-plans` and save to `.docs/plans/` with a timestamped filename including time (e.g., `20260327-1500-feature-name.md` using `YYYYMMDD-HHmm` format).
-3. The plan must include a checklist of discrete tasks with checkboxes (`- [ ]`). Each task should be small enough to complete and commit independently.
-4. **Commit the plan file to the repo before writing any implementation code.** This ensures the plan survives crashes, context loss, or session restarts.
-5. As each task is completed, update the plan file to check off the box (`- [x]`) and commit the update. This makes the plan the single source of truth for progress.
-6. If a session is interrupted, the next session should read the plan file to determine what has been done and what remains.
-
-### Scope guard — break up large work
-
-During planning, evaluate the total scope. If a feature involves **more than ~8 discrete tasks** it is probably too large for a single plan. In that case:
-
-- **Warn the user** that the work should be broken into phases.
-- **Propose separate plan files** for each phase (e.g., `20260330-ota-upgrades-phase1-api.md`, `20260330-ota-upgrades-phase2-ui.md`).
-- Each phase should be independently shippable and testable.
-- Get user approval on the phasing before proceeding.
-
-For firmware features that span multiple layers, break at natural queue/task seams rather than at arbitrary task counts. Typical phasing:
-
-- **Phase 1** — wire format + native tests (`lib/AstrOsMessaging` + `test/test_native/`)
-- **Phase 2** — queue producer/consumer wiring (`src/main.cpp`, `lib/Modules`)
-- **Phase 3** — hardware integration + QA plan
-
-Each phase should compile, ship, and be testable on its own.
+- The task file's Context / Contract / Task / Acceptance criteria / Out of scope / Verification sections are written and **committed before implementation code**. The Implementation checklist is added when work starts; check off + commit as work proceeds.
+- **Sizing rules** (all must hold, else split): one session with headroom; zero unmade architectural decisions; independently verifiable; pinned interfaces; a diff small enough that it will actually be read.
+- Treat the **Contract** section as immutable — wire formats shared with AstrOs.Server, NVS layouts on already-flashed boards, queue-ownership rules, PURE-lib purity. If it seems wrong, stop and raise it — do not adapt it silently. If a needed contract doesn't exist, designing it is its own task.
+- Respect **Out of scope**. Adjacent improvements — including tempting fixes from the code-review catalog in files the task touches — go in a note or the `PLAN.md` Backlog, not the diff, unless the task is about that finding.
+- Never make an architectural decision mid-task. If one surfaces, stop, state the options, and wait.
+- A task is done only when its **Verification** section runs green — never claim completion without running it. Done also includes updating the owning feature's QA plan in `.docs/qa/`, moving the task file to `.docs/tasks/completed/`, and flipping the `PLAN.md` checkbox.
+- If the diff is ballooning past what the task implies, stop and propose a split.
 
 ## QA Test Plans
 
@@ -200,7 +181,7 @@ For each feature, create a manual QA test plan in `.docs/qa/` with a descriptive
 - **Expected results**: what should happen after each step or group of steps
 - **Edge cases / negative tests**: invalid inputs, error states, boundary conditions
 
-QA plans should be committed alongside the feature work they cover.
+QA plans should be committed alongside the feature work they cover. Completing a task includes updating the owning feature's QA plan (or creating it if the feature is new) — the feature plans are the living regression suite; there is no per-task QA intermediate.
 
 For features that touch native-testable code (`lib/AstrOsMessaging`, pure utilities in `lib/AstrOsUtility`), add or extend native unit tests in `test/test_native/` as the first line of defense. QA plans cover the end-to-end hardware behavior on top of that — they don't replace native test coverage.
 
@@ -208,8 +189,8 @@ For features that touch native-testable code (`lib/AstrOsMessaging`, pure utilit
 
 Use the following skills and subagents as part of the development workflow:
 
-- **Brainstorming** (`superpowers:brainstorming`): Always brainstorm before building new features. Explore intent, requirements, and design before writing code.
-- **Write Plan** (`superpowers:writing-plans`): Write a plan before any multi-step implementation. Save plans to `.docs/plans/`.
+- **Brainstorming** (`superpowers:brainstorming`): Always brainstorm before building new features — this is also the vehicle for seam-discovery sessions that decompose project-tier work into tasks.
+- **Write Plan** (`superpowers:writing-plans`): Use when authoring project-tier task sets. The output lands as task files in `.docs/tasks/` (template: `.docs/templates/task.md`), not standalone plan documents.
 - **Execute Plan** (`superpowers:executing-plans`): Use to execute written implementation plans with review checkpoints.
 - **TDD** (`superpowers:test-driven-development`): Applies to code that compiles under `[env:test]` — today that is primarily `lib/AstrOsMessaging` and pure utility code in `lib/AstrOsUtility`. When adding new logic that *could* live in a native-testable lib, default to putting it there so tests can cover it. For code that touches FreeRTOS, ESP-IDF drivers, or hardware, use QA plans instead.
 - **Feature Dev** (`feature-dev:feature-dev`): Use for guided feature development with codebase understanding and architecture focus.

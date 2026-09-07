@@ -834,8 +834,8 @@ void animationDispatchTask(void *arg)
 static void servoShutdownTimerCallback(void *arg)
 {
     // Snapshot module handles under the mutex, then release it before calling
-    // CheckServos(): CheckServos can enqueue UART commands via sendQueueMsg,
-    // which spins on a per-module mutex. Holding maestroModulesMutex across
+    // CheckServos(): CheckServos try-takes the per-module send mutex (zero
+    // wait) to enqueue an off frame. Holding maestroModulesMutex across
     // that would block the esp_timer task and any other caller of the map.
     // shared_ptr ownership keeps each module alive for the duration of the
     // snapshot even if loadMaestroConfigs removes it concurrently.
@@ -1465,10 +1465,11 @@ void servoQueueTask(void *arg)
             ESP_LOGD(TAG, "Servo Command received on queue => %s", msg.data);
 
             // Snapshot the target module under maestroModulesMutex, then
-            // release before calling QueueCommand(): QueueCommand ultimately
-            // calls sendQueueMsg() which spins on a per-module mutex and
-            // blocks on queue sends. Holding the map mutex across that would
-            // stall loadMaestroConfigs() and other callers of the map. The
+            // release before calling QueueCommand(): QueueCommand takes the
+            // per-module send mutex once (bounded, ~2.2 s worst case) and then
+            // enqueues up to four frames, each blocking up to 500 ms on the
+            // serial queue. Holding the map mutex across that would stall
+            // loadMaestroConfigs() and other callers of the map. The
             // shared_ptr keeps the module alive for the duration of the call
             // even if a concurrent config reload removes it from the map.
             std::shared_ptr<MaestroModule> target;
@@ -1839,13 +1840,18 @@ static void loadMaestroConfigs()
                 ESP_LOGE(TAG, "Master node cannot use UART channel 1 for Maestro module %d", cfg.idx);
                 continue; // skip invalid configurations
             }
-            if (cfg.uartChannel == 1)
+            if (cfg.uartChannel == 1 || cfg.uartChannel == 2)
             {
-                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh1Queue, cfg.idx, cfg.baudrate);
-            }
-            else if (cfg.uartChannel == 2)
-            {
-                maestroModules[cfg.idx] = std::make_shared<MaestroModule>(serialCh2Queue, cfg.idx, cfg.baudrate);
+                QueueHandle_t queue = cfg.uartChannel == 1 ? serialCh1Queue : serialCh2Queue;
+                auto module = std::make_shared<MaestroModule>(queue, cfg.idx, cfg.baudrate);
+                if (!module->IsValid())
+                {
+                    // Mutex creation failed (heap). Keeping the instance would
+                    // dereference a null handle later; drop it and keep running.
+                    ESP_LOGE(TAG, "Maestro module %d not created: out of memory for its mutexes", cfg.idx);
+                    continue;
+                }
+                maestroModules[cfg.idx] = module;
             }
             else
             {
@@ -2139,7 +2145,66 @@ static void handleRunCommand(astros_interface_response_t msg)
 
 static void handlePanicStop(astros_interface_response_t msg)
 {
+    // 1. Stop dispatching: no further script events reach the servo queue.
     AnimationCtrl.panicStop();
+
+    // 2. Drop what is already queued. servoQueue holds up to 20 entries and
+    //    servoQueueTask drains one per pass, so a multi-servo script event can
+    //    leave a burst that would otherwise be encoded and sent AFTER the offs.
+    //    This loop becomes the consumer for each message it removes and frees
+    //    the payload exactly as servoQueueTask does. The serial queues are left
+    //    alone: the off frames enter the same FIFO behind anything already
+    //    there, so the off wins.
+    queue_msg_t pending;
+    int dropped = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        dropped++;
+    }
+    ESP_LOGI(TAG, "Panic: dropped %d queued servo commands", dropped);
+
+    // 3. De-energize every configured Maestro channel. Snapshot the modules
+    //    under maestroModulesMutex and release it before calling Panic():
+    //    Panic() takes the per-module send mutex (bounded, ~2.2 s) and then
+    //    blocks up to 500 ms per off frame, so it can take seconds. Same
+    //    pattern as servoShutdownTimerCallback, but with the 1 s bound the
+    //    other task-context users of this mutex use: missing the snapshot
+    //    means NO module is de-energized, the worst outcome this handler has.
+    std::vector<std::shared_ptr<MaestroModule>> snapshot;
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        snapshot.reserve(maestroModules.size());
+        for (const auto &entry : maestroModules)
+        {
+            snapshot.push_back(entry.second);
+        }
+        xSemaphoreGive(maestroModulesMutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "handlePanicStop: maestroModulesMutex timeout - Maestro offs NOT sent on any module");
+    }
+
+    for (auto &maestroMod : snapshot)
+    {
+        maestroMod->Panic();
+    }
+
+    // 4. One more zero-wait drain: a command the dispatch task had already
+    //    fetched before the halt can land in servoQueue after step 2. Catching
+    //    it here keeps it from being sent after the offs. A command that
+    //    servoQueueTask had already dequeued is the accepted residual.
+    int late = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        late++;
+    }
+    if (late > 0)
+    {
+        ESP_LOGI(TAG, "Panic: dropped %d late servo command(s) after the offs", late);
+    }
 }
 
 static void handleFormatSD(std::string id)
@@ -2189,8 +2254,9 @@ static void handleServoTest(astros_interface_response_t msg)
         int ms = std::stoi(parts[3]);
 
         // Snapshot the target module under maestroModulesMutex, then release
-        // before calling SetServoPosition(): that path reaches sendQueueMsg()
-        // which spins on a per-module mutex and blocks on queue sends.
+        // before calling SetServoPosition(): it takes the per-module send
+        // mutex once (bounded, ~2.2 s worst case) and then enqueues three
+        // frames, each blocking up to 500 ms on the serial queue.
         // Holding the map mutex across it would stall loadMaestroConfigs()
         // and other callers. The shared_ptr keeps the module alive for the
         // call even if a concurrent config reload removes it from the map.
