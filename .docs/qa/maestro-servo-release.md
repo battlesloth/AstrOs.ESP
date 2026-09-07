@@ -102,7 +102,7 @@ Reference deadlines (model, floored at 20 s):
    - Expected: the script halts and the servo goes slack *immediately* (Maestro Control Center
      shows target 0; the horn moves freely by hand). Monitor shows, in this order:
      `Panic: dropped N queued servo commands` (N is usually 0 here), then
-     `Panic: de-energizing module M` once per configured module. **No**
+     `Panic: module M de-energized, K off(s) queued, 0 failed` once per configured module. **No**
      `Turning off servo N on module M` for that channel afterward — panic cleared its tracking,
      so the timer has nothing to release. Pre-T-004 the move completed and stayed energized
      until the normal deadline.
@@ -111,7 +111,12 @@ Reference deadlines (model, floored at 20 s):
    - Same as 7 on a servo owned by a padawan; send panic from the server (master relays it
      over ESP-NOW).
    - Expected: identical behavior on the padawan's monitor; the master's monitor also shows its
-     own `Panic:` lines for its modules.
+     own `Panic:` lines for its modules. **Note the delay** between the master's `Panic:` lines
+     and the padawan's: the master relays panic to padawans from the same single-threaded
+     queue that runs its own offs, so if the server lists the master's record first the
+     padawan's kill waits for the master's offs (healthy: ~150 ms per master module; wedged
+     serial path: seconds). Record the observed delay — it decides whether the Backlog item
+     "panic offs on a dedicated task" gets scheduled.
 
 7b. **Panic drops a GPIO-type channel** (T-004)
    - Turn a GPIO-type Maestro channel on (script or slider), then send panic.
@@ -121,10 +126,11 @@ Reference deadlines (model, floored at 20 s):
 7c. **Panic against a queued burst** (T-004)
    - Run a script whose first event moves ≥4 servos at speed 5; send panic within ~1 s.
    - Expected: all four go slack. Monitor shows `Panic: dropped N queued servo commands` with
-     N ≥ 1 if any command was still queued, and at most one `Setting servo N on module M` line
-     *after* the `Panic:` lines (a command already dequeued when panic fired). If one appears,
-     that channel logs `Turning off servo N on module M` ~20 s later — its state survived, so
-     the normal release still fires. Never a servo left energized with no later release.
+     N ≥ 1 if any command was still queued, and normally at most one `Setting servo N on
+     module M` line *after* the `Panic:` lines (a command already dequeued when panic fired; a
+     second is possible if the dispatch task was between fetching a command and enqueueing it).
+     Each such channel logs `Turning off servo N on module M` ~20 s later — its state survived,
+     so the normal release still fires. Never a servo left energized with no later release.
 
 7d. **Recovery after panic** (T-004)
    - After 7, run a script or slider move on the same servo.
@@ -190,8 +196,12 @@ Reference deadlines (model, floored at 20 s):
   cannot be taken within ~2.2 s the monitor shows `Panic: send mutex timeout on module M - offs
   NOT sent` at ERROR and no off frames go out — the serial path could not have delivered them
   anyway. If an individual off cannot be queued (`Panic: off NOT queued for channel N on module
-  M`), that channel keeps its tracking: a servo channel is released by the timer within one
-  deadline; a GPIO-type channel has no timer retry, so the ERROR line is the signal.
+  M (serial queue full|no memory) - output stays energized until the next command or, for a
+  servo, the timer retry`), that channel keeps its tracking: a servo channel is released by the
+  timer within one deadline; a GPIO-type channel has no timer retry, so the ERROR line is the
+  signal. If the module map cannot be snapshotted within 1 s, `handlePanicStop:
+  maestroModulesMutex timeout - Maestro offs NOT sent on any module` at ERROR: the script is
+  stopped and the queue drained but no hardware was de-energized.
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
   would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
   logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`

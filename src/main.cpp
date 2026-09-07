@@ -2168,9 +2168,11 @@ static void handlePanicStop(astros_interface_response_t msg)
     //    under maestroModulesMutex and release it before calling Panic():
     //    Panic() takes the per-module send mutex (bounded, ~2.2 s) and then
     //    blocks up to 500 ms per off frame, so it can take seconds. Same
-    //    pattern as servoShutdownTimerCallback.
+    //    pattern as servoShutdownTimerCallback, but with the 1 s bound the
+    //    other task-context users of this mutex use: missing the snapshot
+    //    means NO module is de-energized, the worst outcome this handler has.
     std::vector<std::shared_ptr<MaestroModule>> snapshot;
-    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         snapshot.reserve(maestroModules.size());
         for (const auto &entry : maestroModules)
@@ -2181,7 +2183,7 @@ static void handlePanicStop(astros_interface_response_t msg)
     }
     else
     {
-        ESP_LOGW(TAG, "handlePanicStop: maestroModulesMutex timeout - Maestro offs NOT sent");
+        ESP_LOGE(TAG, "handlePanicStop: maestroModulesMutex timeout - Maestro offs NOT sent on any module");
     }
 
     for (auto &maestroMod : snapshot)

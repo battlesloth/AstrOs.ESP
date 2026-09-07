@@ -78,8 +78,10 @@ private:
     // across a *blocking* enqueue. CheckServos runs on the esp_timer task and
     // uses only zero-wait takes and a zero-timeout enqueue (that one is under
     // stateMutex by design); the inverted order there cannot deadlock because
-    // a try-take never waits. Panic is a command-path operation too, with one
-    // difference: it clears tracking only after an off frame was queued.
+    // a try-take never waits. Panic is a command-path operation too, with two
+    // differences: it clears tracking only after an off frame was queued, and
+    // on a stateMutex timeout it still sends the offs (reading `enabled`
+    // unlocked) rather than aborting.
     servo_channel channels[24] = {};
 
     QueueHandle_t serialQueue;
@@ -91,7 +93,7 @@ private:
     // returning the last stage that went out (Target = complete); the caller
     // logs with identity and calls reconcileLimits. setServoOff enqueues one
     // frame with `wait` and returns the result -- CheckServos calls it with
-    // stateMutex held and wait 0.
+    // stateMutex held and wait 0; Panic with stateMutex released and 500 ms.
     SendStage setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
     // After a partial send, make the tracked speed/accel match what the
     // Maestro is actually using so the release deadline models the real

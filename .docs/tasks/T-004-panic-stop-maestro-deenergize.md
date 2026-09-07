@@ -56,8 +56,10 @@ task depends on T-003.
 - `handlePanicStop` never holds `maestroModulesMutex` across `Panic()` — the per-module send
   mutex take is bounded by T-003's `takeSendMutex()` (~2.2 s) and each frame can then block up
   to 500 ms on `xQueueSend`, so `Panic()` can take seconds. Use the snapshot pattern
-  documented above `servoShutdownTimerCallback` in `src/main.cpp` (bounded take, `ESP_LOGW`
-  on timeout, copy the `shared_ptr`s, release, then call).
+  documented above `servoShutdownTimerCallback` in `src/main.cpp` (bounded take, copy the
+  `shared_ptr`s, release, then call). Amendment 2026-09-06 (review): the take is 1000 ms, the
+  bound the other task-context users of this mutex already use, and a timeout logs at ERROR
+  — it means no module was de-energized, the worst outcome the handler has.
 - Queue-message ownership unchanged: `sendQueueMsg` mallocs per message; the serial task frees.
   The drain in `handlePanicStop` becomes the consumer for every `servoQueue` message it removes
   and frees its payload exactly as `servoQueueTask` does after processing. No other queue is
@@ -92,15 +94,19 @@ task depends on T-003.
    energized while tracking says off — is the one that must never happen. The single
    send-mutex hold and the no-blocking-under-`stateMutex` rule still apply: the enqueues run
    with `stateMutex` released.
-   **Fallback if the `stateMutex` take times out** (practically unreachable under T-003's
-   lock order — the only other holders are `CheckServos` and `LoadConfig`, for microseconds):
+   **Fallback if the `stateMutex` take times out** (reachable during a config reload —
+   `LoadConfig` holds `stateMutex` across its SD read on `serviceQueueTask`; every other taker
+   runs under the send mutex Panic already holds, and `CheckServos` holds it for microseconds):
    WARN, read `enabled` for each channel *without* the lock — it is config-only, written by
-   `LoadConfig` alone, a single byte so it cannot tear — send the offs for those channels, and
-   leave `on` / `currentPos` untouched (the post-send clear is skipped too). `CheckServos` then
-   sends one redundant off per channel within a deadline and clears the state itself; nothing
+   `LoadConfig` alone, a single byte so it cannot tear — and send the offs for those channels.
+   The post-send clear is still attempted; if that take also fails, `on` / `currentPos` stay as
+   they were: `CheckServos` sends one redundant off per *servo* channel within a deadline and
+   clears it; a GPIO-type channel keeps a stale `on` flag, which nothing reads for GPIO. Nothing
    is left energized or untracked.
-   One `ESP_LOGI` per module (`"Panic: de-energizing module %d"`), not per channel. Delete the
-   `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
+   One `ESP_LOGI` per module, emitted last with counts
+   (`"Panic: module %d de-energized, %d off(s) queued, %d failed"`), not per channel; the
+   per-channel ERROR names the reason (serial queue full / no memory) and the consequence.
+   Delete the `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
    with a zero-timeout `xQueueReceive` loop, freeing each message's payload; log the count
    dropped at INFO. Then snapshot `maestroModules` under `maestroModulesMutex`
@@ -132,9 +138,10 @@ task depends on T-003.
 - [ ] Bench, GPIO channel (human-gated): GPIO-type channel on → panic → output drops.
 - [ ] Bench, queued burst (human-gated): run a script whose first event moves ≥4 servos at
       speed 5; send panic within ~1 s. All four go slack; the monitor shows
-      `Panic: dropped N queued servo commands` and at most one `Setting servo` line after the
-      `Panic:` line. If one appears, that channel logs `Turning off servo N on module M`
-      ~20 s later — its state survived, so the normal release still fires.
+      `Panic: dropped N queued servo commands` and normally at most one `Setting servo` line
+      after the `Panic:` lines (two if the dispatch task was mid-enqueue). Each such channel
+      logs `Turning off servo N on module M` ~20 s later — its state survived, so the normal
+      release still fires.
 - [ ] Bench, recovery (human-gated): after panic, a script or slider move re-energizes and
       moves the servo normally, and it releases on the normal deadline.
 - [x] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
@@ -145,6 +152,12 @@ task depends on T-003.
   the off frames win; see Context.
 - The single in-flight message residual described in Context (fail-safe under T-003; a
   zero-residual frame-generation scheme is T-003's documented fallback).
+- Padawan relay latency: the master's `SEND_PANIC_STOP` relays sit behind its own `PANIC_STOP`
+  in the single-threaded interface-response queue when the server lists the master first, so
+  padawans wait for the master's offs (~150 ms per module healthy). PLAN.md Backlog holds the
+  candidate fix (offs on a dedicated task); QA 7a measures it.
+- A `PANIC_STOP` ACK/NAK to the server and a `Panic()` result for aggregation — wire-format
+  change shared with AstrOs.Server; PLAN.md Backlog.
 - PCA9685 (I²C) servo channels — panic does not reach them today either. Backlog.
 - Locking between timer and command paths — T-003.
 - `lastPos` staleness on re-arm after an off — PLAN.md Backlog.
@@ -172,6 +185,11 @@ pio run -e metro_s3
       count) → snapshot `maestroModules` (100 ms, WARN on timeout) → `Panic()` per module
 - [x] `channels` comment in `MaestroModule.hpp` updated (Panic has a caller on
       `interfaceResponseQueueTask`, follows the command-path pattern)
+- [x] PR-toolkit review (code, silent-failure, comments): post-send clear attempted even after
+      a first-take timeout; per-channel ERROR carries the reason and consequence; per-module
+      INFO carries counts; map-mutex take 1 s + ERROR; fallback comment says when it is
+      reachable and that CheckServos clears servo channels only; stale QueueCommand
+      parenthetical removed; relay-latency and ACK/NAK recorded as Backlog
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
 - [x] PLAN.md Status updated
