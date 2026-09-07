@@ -1,6 +1,6 @@
 # T-004: Make panic stop de-energize every configured Maestro channel
 
-<!-- File: .docs/tasks/T-004-panic-stop-maestro-deenergize.md. Branch: feature/T-004-panic-stop-maestro-deenergize.
+<!-- File: .docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md (completed 2026-09-07; PR #58). Branch: feature/T-004-panic-stop-maestro-deenergize.
      PR title: "T-004: Make panic stop de-energize every configured Maestro channel".
      Depends on: T-002 (per-instance channel state) and T-003 (per-operation send mutex +
      stateMutex). Panic() is one more command-path operation under T-003's pattern. -->

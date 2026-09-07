@@ -4,18 +4,18 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-004 — PR #58 open on develop; bench passed 2026-09-07 via the server API (9 panics, 0 failed offs, no release after, 0 WARN/ERROR; recovery normal), re-verified after panic was narrowed to servo channels (stop, not reset — GPIO holds); 7a not coverable (no Maestro on the padawan); awaiting review + merge, then close out
-Next:    per-channel release-time setting (Backlog → task; needs the server-side contract pinned first) or PCA9685 panic gap
+Active:  none — Maestro servo-release task set (T-001..T-004) complete
+Now:     nothing in progress. Next candidates in Backlog: per-channel servo release-time setting (needs the server-side contract pinned first), panic ordering hardening, PCA9685 panic gap, PANIC_STOP ACK/NAK
+Next:    pick from Backlog; the release-time setting is the one with a user-visible payoff
 Blocked: none
-Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-verified with the `T-003 QA` script
+Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-verified via the server API, servos observed stopping
 
 ## Standalone tasks
 
 - [x] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/completed/T-001-checkservos-release-timeout.md`) — done 2026-09-06
 - [x] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/completed/T-002-maestro-channels-per-instance.md`) — done 2026-09-06
 - [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
-- [ ] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/T-004-panic-stop-maestro-deenergize.md`) — depends on T-002 and T-003 (Panic is one more operation under T-003's per-operation send mutex)
+- [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
 
 ## Backlog (unscheduled candidates)
 
@@ -36,6 +36,13 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-07 T-004 complete — panic stop reaches the Maestro (PR #58 → develop)
+  - `Panic()` rewritten as a T-003 command-path operation: per-channel 0x84 target-0 for enabled *servo* channels, tracking cleared only after the off was queued; GPIO-type channels held (panic is a stop, not a reset — driving a GPIO anywhere could itself move something). The old 0x9F frame was malformed and never sent
+  - `handlePanicStop`: halt → drain `servoQueue` → snapshot modules (1 s, ERROR on miss) → `Panic()` each → second drain for a late-landing command
+  - bench via the server API with both consoles captured: 9 panics, 0 failed offs, no release after, 0 WARN/ERROR, recovery normal; servos observed stopping; relay to padawan 30–50 ms; server serial pipeline adds ~1.0 s HTTP→board (cross-repo note)
+  - accepted as documented limitations (Backlog "panic ordering hardening"): reload/init overlap, animation-mutex wait; fresh-context review added the GPIO residual and inverted-GPIO points that led to the servo-only decision
+  - open: relay physically holding through a panic not yet observed (QA 7b); padawan Maestro case not coverable on this bench
 
 - 2026-09-06 T-003 complete — Maestro channel-state synchronization (PR #57 → develop)
   - per-instance `stateMutex`; command paths hold the send mutex once per operation (state under `stateMutex`, frames enqueued with it released); bounded `takeSendMutex()` (20 × 100 ms, then error, no state touched); `CheckServos` decides and enqueues under `stateMutex` with zero-wait takes only and logs after releasing it
