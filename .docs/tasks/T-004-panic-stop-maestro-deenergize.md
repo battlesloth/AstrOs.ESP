@@ -149,7 +149,8 @@ question of what target 0 means for an inverted or Output-mode GPIO channel.
 - [x] Bench, master (2026-09-07, scripted via the server API with both consoles captured): the
       `T-004 QA` script (four servos at speed 5 + relay ch0), panic 3 s in → `Panic: dropped 0
       queued servo commands`, `Panic: module 1 …, 8 off(s) queued, 0 failed` (8 → 7 after
-      GPIO channels were excluded; re-verified below), no
+      GPIO channels were excluded; re-verified the same day on the servo-only build:
+      `Panic: module 1 complete, 7 off(s) queued, 0 failed`, no release after, 0 WARN/ERROR), no
       `Turning off servo N on module 1` in the following 30 s, 0 WARN/ERROR. Same firmware
       minus T-004 (run first by mistake): all four released on the normal 24 s deadline.
 - [ ] Bench, padawan (human-gated): same via ESP-NOW from the master. **Not coverable on the
@@ -158,9 +159,10 @@ question of what target 0 means for an inverted or Output-mode GPIO channel.
       out 30 ms after its panic starts, with its 8 offs queued in ~10 ms — relay latency is
       negligible in the healthy case.
 - [ ] Bench, GPIO channel (human-gated): GPIO-type channel on → panic → output **holds** (does
-      not drop, does not change). 2026-09-07, before the stop-not-reset decision, the panic's
-      8 queued offs included relay ch0; the code now excludes GPIO channels, so the expected
-      count on this bench is 7. Re-verify: `7 off(s) queued` and the relay state unchanged.
+      not drop, does not change). 2026-09-07: on the servo-only build the panic reported
+      `7 off(s) queued` with relay ch0 switched on by the script, confirming GPIO is excluded;
+      the relay's physical state through the panic was not observed — stays open until someone
+      watches the relay.
 - [x] Bench, queued burst (2026-09-07, 6 attempts with panic 0.15–1.25 s after run): all four
       go slack every time, no post-panic move ever released late, 0 WARN/ERROR. `dropped` was
       0 in every attempt: the server's serial pipeline delivers each message ~1.0 s after the
@@ -235,5 +237,6 @@ pio run -e metro_s3
 - [x] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
 - [x] PLAN.md Status updated
 - [x] bench (2026-09-07): cases 7, 7c, 7d passed via the server API with both consoles
-      captured (see acceptance); 7b's off frame confirmed queued but the relay drop itself not
-      yet observed; 7a not coverable on this bench (no Maestro on the padawan)
+      captured (see acceptance); case 7 re-run on the servo-only build (7 offs, relay excluded,
+      no release after); 7b's physical hold not yet observed; 7a not coverable on this bench
+      (no Maestro on the padawan)

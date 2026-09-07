@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-004 — PR #58 open on develop; bench passed 2026-09-07 via the server API (7 panics: 8 offs queued each, 0 failed, no release after, 0 WARN/ERROR; recovery normal); 7a not coverable (no Maestro on the padawan); awaiting review + merge, then close out
+Now:     T-004 — PR #58 open on develop; bench passed 2026-09-07 via the server API (9 panics, 0 failed offs, no release after, 0 WARN/ERROR; recovery normal), re-verified after panic was narrowed to servo channels (stop, not reset — GPIO holds); 7a not coverable (no Maestro on the padawan); awaiting review + merge, then close out
 Next:    per-channel release-time setting (Backlog → task; needs the server-side contract pinned first) or PCA9685 panic gap
 Blocked: none
 Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-verified with the `T-003 QA` script

@@ -144,7 +144,8 @@ Reference deadlines (model, floored at 20 s):
    First run 2026-09-07 (scripted: `T-004 QA` script in the server DB, id `s1788783HSD`; run and
    panic sent via `GET /api/scripts/run` and `POST /api/panicStop`, both consoles captured):
    7 panics, each `dropped 0`, `8 off(s) queued, 0 failed`, no release in the following 30 s,
-   0 WARN/ERROR; recovery normal — pass. 7a not coverable (padawan has no Maestro); relay to
+   0 WARN/ERROR; recovery normal — pass. Re-run after panic was narrowed to servo channels:
+   `7 off(s) queued, 0 failed` (relay ch0 excluded), no release after — pass. 7a not coverable (padawan has no Maestro); relay to
    the padawan measured at 40 ms. Note the server's serial pipeline adds ~1.0 s between the
    HTTP call and the board for both run and panic — that is server-side latency, not firmware.
 
