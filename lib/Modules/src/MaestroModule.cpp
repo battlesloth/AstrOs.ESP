@@ -360,7 +360,9 @@ void MaestroModule::Panic()
                  this->idx);
     }
 
-    ESP_LOGI(TAG, "Panic: module %d de-energized, %d off(s) queued, %d failed", this->idx, queuedCount, failedCount);
+    // Neutral wording: frames are queued, not yet on the wire, and failedCount
+    // may be nonzero. The per-channel ERRORs above carry the failures.
+    ESP_LOGI(TAG, "Panic: module %d complete, %d off(s) queued, %d failed", this->idx, queuedCount, failedCount);
 
     xSemaphoreGive(this->mutex);
 }

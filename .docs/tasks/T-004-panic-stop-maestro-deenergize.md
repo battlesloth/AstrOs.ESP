@@ -104,7 +104,8 @@ task depends on T-003.
    clears it; a GPIO-type channel keeps a stale `on` flag, which nothing reads for GPIO. Nothing
    is left energized or untracked.
    One `ESP_LOGI` per module, emitted last with counts
-   (`"Panic: module %d de-energized, %d off(s) queued, %d failed"`), not per channel; the
+   (`"Panic: module %d complete, %d off(s) queued, %d failed"` — neutral wording, since frames
+   are queued rather than confirmed on the wire and the failed count may be nonzero), not per channel; the
    per-channel ERROR names the reason (serial queue full / no memory) and the consequence.
    Delete the `0x9F` frame construction. Leave the `SET_MULTIPLE_SERVOS_COMMAND` define alone.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
@@ -123,9 +124,10 @@ task depends on T-003.
       for disabled channels — all under a single hold of `this->mutex`. It marks `on = false`
       only for channels whose frame was enqueued; a failed enqueue leaves the channel `on`
       and logs an error naming it (verified by reading the code — the clear happens after the
-      enqueue result). In the `stateMutex`-timeout fallback it leaves state alone and
-      `CheckServos` clears it with a redundant off within one deadline. No `0x9F` byte leaves
-      the module.
+      enqueue result). If the pre-send `stateMutex` take times out it reads `enabled` unlocked,
+      sends the offs, and still attempts the post-send clear; only if that take also times out
+      is state left as it was, and then `CheckServos` clears servo channels with a redundant off
+      within one deadline. No `0x9F` byte leaves the module.
 - [x] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
       reaches every module in `maestroModules` without holding the map mutex across a send
       (verified by reading the code against the snapshot pattern).
@@ -133,7 +135,7 @@ task depends on T-003.
       clean; clang-format clean.
 - [x] Bench, master (2026-09-07, scripted via the server API with both consoles captured): the
       `T-004 QA` script (four servos at speed 5 + relay ch0), panic 3 s in → `Panic: dropped 0
-      queued servo commands`, `Panic: module 1 de-energized, 8 off(s) queued, 0 failed`, no
+      queued servo commands`, `Panic: module 1 …, 8 off(s) queued, 0 failed`, no
       `Turning off servo N on module 1` in the following 30 s, 0 WARN/ERROR. Same firmware
       minus T-004 (run first by mistake): all four released on the normal 24 s deadline.
 - [ ] Bench, padawan (human-gated): same via ESP-NOW from the master. **Not coverable on the
@@ -141,9 +143,10 @@ task depends on T-003.
       padawan's `Panicing!` lands 40 ms after the master's, and the master's ESP-NOW relay goes
       out 30 ms after its panic starts, with its 8 offs queued in ~10 ms — relay latency is
       negligible in the healthy case.
-- [x] Bench, GPIO channel (2026-09-07): relay ch0 switched on by the script; the panic's
-      8 queued offs include it (channels 0–7 enabled). Physical relay drop not observed by
-      the log — eyeball it once on the next bench visit.
+- [ ] Bench, GPIO channel (human-gated): GPIO-type channel on → panic → output drops.
+      2026-09-07: relay ch0 was switched on by the script and the panic's 8 queued offs include
+      it (channels 0–7 enabled), but the physical relay drop was not observed — stays open until
+      someone watches the relay.
 - [x] Bench, queued burst (2026-09-07, 6 attempts with panic 0.15–1.25 s after run): all four
       go slack every time, no post-panic move ever released late, 0 WARN/ERROR. `dropped` was
       0 in every attempt: the server's serial pipeline delivers each message ~1.0 s after the
@@ -202,5 +205,6 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
 - [x] PLAN.md Status updated
-- [x] bench (2026-09-07): cases 7, 7b, 7c, 7d passed via the server API with both consoles
-      captured (see acceptance); 7a not coverable on this bench (no Maestro on the padawan)
+- [x] bench (2026-09-07): cases 7, 7c, 7d passed via the server API with both consoles
+      captured (see acceptance); 7b's off frame confirmed queued but the relay drop itself not
+      yet observed; 7a not coverable on this bench (no Maestro on the padawan)

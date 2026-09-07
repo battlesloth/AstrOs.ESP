@@ -102,7 +102,7 @@ Reference deadlines (model, floored at 20 s):
    - Expected: the script halts and the servo goes slack *immediately* (Maestro Control Center
      shows target 0; the horn moves freely by hand). Monitor shows, in this order:
      `Panic: dropped N queued servo commands` (N is usually 0 here), then
-     `Panic: module M de-energized, K off(s) queued, 0 failed` once per configured module. **No**
+     `Panic: module M complete, K off(s) queued, 0 failed` once per configured module. **No**
      `Turning off servo N on module M` for that channel afterward — panic cleared its tracking,
      so the timer has nothing to release. Pre-T-004 the move completed and stayed energized
      until the normal deadline.
