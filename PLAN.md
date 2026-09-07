@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-003 — starting on `feature/T-003-maestro-channel-state-sync` (stateMutex + per-operation send mutex; design pinned 2026-09-06 through PR #56 review)
+Now:     T-003 — PR #57 open on develop; bench passed 2026-09-06 (`T-003 QA` script, serial log analyzed: 0 stale releases, 0 WARN/ERROR); awaiting review + merge, then close out
 Next:    T-004 (panic → Maestro off; depends on T-003)
 Blocked: none
 Last:    2026-09-06 — T-002 complete: merged to develop via PR #56; bench-verified
@@ -24,7 +24,7 @@ Last:    2026-09-06 — T-002 complete: merged to develop via PR #56; bench-veri
 - Upgrade to espressif32 7.x / ESP-IDF 6.x deliberately: migrate both `sdkconfig.<env>` files (IDF 6.1 kconfgen crashes on the committed IDF-5-era files — the 2026-08-31 CI outage), then lift the `espressif32@6.13.0` pin in `platformio.ini`. Own task; touches both boards.
 - `MaestroModule::QueueCommand` passes a stale `lastPos` when re-arming a released servo — `lastPos` is only ever set by `HomeServos`, so the pre-speed/accel position command replays the home position, not the last commanded one. Found 2026-08-31 during the servo-release investigation; needs its own investigation before a fix task.
 - **Panic stop does not reach PCA9685 (I²C) servo channels.** T-004 covers the Maestro; the I²C servo path has the same gap. Found 2026-09-06.
-- **`MaestroModule` hygiene** (all pre-existing, found by T-002 review 2026-09-06): destructor never `vSemaphoreDelete`s `mutex` (leaks when `loadMaestroConfigs` erases a dropped module); `LoadConfig` ignores `loadMaestroServos`'s return and copies the parsed file over entries 0..maxId only, so entries above the file's highest id (and every entry when the file is missing/unparseable) keep stale state on reload (fix belongs with T-003's lock — clearing opens a window against the timer); `QueueCommand` lacks the `loading` gate `SetServoPosition` has and treats a pre-config channel as GPIO; six hard-coded `24`s including the `Panic` frame math (`cmd[74]`) want one named channel-count constant.
+- **`MaestroModule` hygiene** (all pre-existing, found by T-002 review 2026-09-06; mutex leak and half-built-object items fixed in T-003): `LoadConfig` ignores `loadMaestroServos`'s return and copies the parsed file over entries 0..maxId only, so entries above the file's highest id (and every entry when the file is missing/unparseable) keep stale state on reload (fix belongs with T-003's lock — clearing opens a window against the timer); `QueueCommand` lacks the `loading` gate `SetServoPosition` has and treats a pre-config channel as GPIO; six hard-coded `24`s including the `Panic` frame math (`cmd[74]`) want one named channel-count constant; `UpdateConfig` still spins unbounded on the send mutex (T-003 bounded the command paths only — switch it to `takeSendMutex()` and decide what a dropped config update should do).
 
 Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 

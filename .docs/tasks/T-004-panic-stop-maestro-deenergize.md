@@ -53,9 +53,9 @@ task depends on T-003.
 - Maestro wire protocol: release stays `SET_SERVO_COMMAND` (`0x84`) with target 0 per channel
   via the existing private `setServoOff`. No `0x9F` frame is sent.
 - Public `MaestroModule` API unchanged: `void Panic()` keeps its signature.
-- `handlePanicStop` never holds `maestroModulesMutex` across `Panic()` — `sendQueueMsg` retries
-  the per-module mutex take (100 ms timeout) without bound and then blocks up to 500 ms on
-  `xQueueSend`, so its worst case is unbounded. Use the snapshot pattern
+- `handlePanicStop` never holds `maestroModulesMutex` across `Panic()` — the per-module send
+  mutex take is bounded by T-003's `takeSendMutex()` (~2.2 s) and each frame can then block up
+  to 500 ms on `xQueueSend`, so `Panic()` can take seconds. Use the snapshot pattern
   documented above `servoShutdownTimerCallback` in `src/main.cpp` (bounded take, `ESP_LOGW`
   on timeout, copy the `shared_ptr`s, release, then call).
 - Queue-message ownership unchanged: `sendQueueMsg` mallocs per message; the serial task frees.

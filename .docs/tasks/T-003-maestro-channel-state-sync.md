@@ -53,7 +53,12 @@ design covers both races, so T-004 depends on this task.
   `ESP_LOGE` and the operation aborts *before* touching channel state, so an aborted operation
   leaves state consistent. Repo convention: bounded takes with a log-on-failure path.
 - `servo_channel` layout unchanged (no generation/epoch fields; T-002 Contract).
-- Public `MaestroModule` API unchanged; Maestro wire protocol unchanged.
+- Public `MaestroModule` API unchanged; Maestro wire protocol unchanged. Amendment 2026-09-06
+  (PR #57 review): one additive public method, `bool IsValid() const` — the constructor cannot
+  fail without exceptions, so `loadMaestroConfigs` checks it and drops a module whose mutexes
+  could not be created instead of storing a half-built instance. The destructor now deletes
+  both semaphores (safe: it runs when the last `shared_ptr` drops, so nothing can be blocked
+  on them).
 - Prerequisite: T-002 merged (state is per-instance, so both locks are per-instance).
 
 ## Task
@@ -86,21 +91,22 @@ restructure sends so one operation holds `this->mutex` once:
 
 ## Acceptance criteria
 
-- [ ] Every `channels` access is under `stateMutex`.
-- [ ] Each command-path operation performs its state update and all of its frames under one
+- [x] Every `channels` access is under `stateMutex`.
+- [x] Each command-path operation performs its state update and all of its frames under one
       hold of `this->mutex`, acquired via the bounded `takeSendMutex()`; an aborted operation
       touches no channel state. `CheckServos` uses only zero-wait takes and a zero-timeout
       enqueue and calls no blocking primitive (verified by reading every path).
-- [ ] Lock order verified by reading: no path waits on `this->mutex` while holding `stateMutex`.
-- [ ] `pio test -e test` green; both board environments build clean; clang-format clean.
-- [ ] Bench (human-gated): hammer one servo with slider commands for ~30 s while the 300 ms
+- [x] Lock order verified by reading: no path waits on `this->mutex` while holding `stateMutex`.
+- [x] `pio test -e test` green; both board environments build clean; clang-format clean.
+- [x] Bench (human-gated, 2026-09-06, via the `T-003 QA` script — 2 Hz command stream + burst of three releases on one tick, 0 WARN): hammer one servo with slider commands for ~30 s while the 300 ms
       shutdown timer runs — no premature release mid-move, no task-watchdog warning.
-      Occasional `CheckServos: send busy, retry next tick` WARNs are acceptable.
-- [ ] Bench (human-gated, the PR #56 scenario): issue a move exactly as a release is due (a
+      Occasional `CheckServos: send busy on module M, channels 0x… retry next tick` WARNs are
+      acceptable.
+- [x] Bench (human-gated, 2026-09-06, via the `T-003 QA` script — 16 attempts, 0 stale releases, gaps 19.81–20.04 s): issue a move exactly as a release is due (a
       slider move ~20 s after the previous one, repeated a dozen times) — the servo always
       completes the new move and stays energized for a fresh 20 s; never a
       `Turning off servo N on module M` within 20 s after a `Setting servo N on module M`.
-- [ ] QA plan `.docs/qa/maestro-servo-release.md` gains both cases above.
+- [x] QA plan `.docs/qa/maestro-servo-release.md` gains both cases above.
 
 ## Out of scope
 
@@ -128,4 +134,31 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-<!-- Added when work starts. -->
+- [x] `stateMutex` member created in the constructor (same failure handling as `mutex`)
+- [x] `takeSendMutex()` (≤20 × 100 ms, `ESP_LOGE` on failure) and lock-free `enqueueFrame(cmd, size, wait)`;
+      `sendQueueMsg` reduced to take → enqueue(500 ms) → give
+- [x] `setServoPosition` / `setServoOff` enqueue frames only (caller holds `this->mutex`);
+      `setServoOff` takes a wait and returns the enqueue result
+- [x] `QueueCommand`, `SetServoPosition`, `HomeServos`: send-mutex once per operation, state writes
+      under `stateMutex` (50 ms, abort on timeout), enqueues with `stateMutex` released
+- [x] `LoadConfig` copies under `stateMutex`; `Panic` state writes under `stateMutex` (frame untouched — T-004)
+- [x] `CheckServos`: zero-wait `stateMutex`, zero-wait send try-take, zero-timeout enqueue, clear state only on success
+- [x] Lock-order read-through: no path waits on `this->mutex` while holding `stateMutex`
+- [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
+- [x] QA plan: rapid-slider case and move-at-release-deadline case added
+- [x] PLAN.md Status updated
+- [x] PR #57 review round 2 (Copilot): `setServoPosition` returns the last `SendStage` reached
+      and the callers call `reconcileLimits`, restoring the tracked speed/accel for any frame
+      that did not go out (the Maestro keeps its previous limit), so a partial send can no
+      longer leave the deadline modelling limits the servo is not using; QA quotes the exact
+      drop messages
+- [x] PR #57 review (Copilot): `IsValid()` + creator-side check, semaphores deleted in the
+      destructor, `enqueueFrame` never logs (returns `EnqueueResult`; `CheckServos` aggregates
+      an out-of-memory mask and logs after the lock), two stale path comments in `src/main.cpp`
+      rewritten
+- [x] PR-toolkit review (code, silent-failure, comments): `CheckServos` logs after releasing
+      `stateMutex` (all channels come due together after homing); `setServoPosition` returns
+      false at the first dropped frame and callers log with identity; `enqueueFrame` no longer
+      logs anonymously; `currentPos` stops accumulating once due; handles default to nullptr;
+      stale "spins on a per-module mutex" comments in `src/main.cpp` reworded
+- [x] bench (human-gated) — passed 2026-09-06 with the `T-003 QA` script; serial log analyzed: 89 moves, 22 releases, 0 stale, 0 WARN/ERROR
