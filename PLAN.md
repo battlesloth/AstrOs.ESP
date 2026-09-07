@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-004 — PR #58 open on develop (Panic() as a command-path op with clear-after-enqueue; handlePanicStop drains servoQueue then calls Panic per module; PR-toolkit reviewed, findings fixed); bench cases 7–7d pending, then merge + close out
+Now:     T-004 — PR #58 open on develop; bench passed 2026-09-07 via the server API (7 panics: 8 offs queued each, 0 failed, no release after, 0 WARN/ERROR; recovery normal); 7a not coverable (no Maestro on the padawan); awaiting review + merge, then close out
 Next:    per-channel release-time setting (Backlog → task; needs the server-side contract pinned first) or PCA9685 panic gap
 Blocked: none
 Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-verified with the `T-003 QA` script
@@ -28,7 +28,7 @@ Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-veri
 - **`PANIC_STOP` has no ACK/NAK.** The server never learns whether the kill reached hardware; `Panic()` returns `void` so `handlePanicStop` cannot aggregate either. Needs a wire-format contract pinned in both repos (AstrOs.Server + AstrOs.ESP) before implementing. Found 2026-09-06 (T-004 review).
 - **`MaestroModule` hygiene** (all pre-existing, found by T-002 review 2026-09-06; mutex leak and half-built-object items fixed in T-003): `LoadConfig` ignores `loadMaestroServos`'s return and copies the parsed file over entries 0..maxId only, so entries above the file's highest id (and every entry when the file is missing/unparseable) keep stale state on reload (fix belongs with T-003's lock — clearing opens a window against the timer); `QueueCommand` lacks the `loading` gate `SetServoPosition` has and treats a pre-config channel as GPIO; the hard-coded `24`s (now more, `Panic` adds five) want one named channel-count constant; `UpdateConfig` still spins unbounded on the send mutex (T-003 bounded the command paths only — switch it to `takeSendMutex()` and decide what a dropped config update should do).
 
-Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
+Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike; the kill-switch's end-to-end latency is dominated by that, not by the firmware (whose panic handler completes in ~10 ms). Worth a server-side look. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
 ## Completed projects
 

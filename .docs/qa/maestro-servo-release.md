@@ -137,6 +137,13 @@ Reference deadlines (model, floored at 20 s):
    - Expected: the servo re-energizes and moves normally, then releases ~20 s later as usual.
      Panic leaves nothing latched.
 
+   First run 2026-09-07 (scripted: `T-004 QA` script in the server DB, id `s1788783HSD`; run and
+   panic sent via `GET /api/scripts/run` and `POST /api/panicStop`, both consoles captured):
+   7 panics, each `dropped 0`, `8 off(s) queued, 0 failed`, no release in the following 30 s,
+   0 WARN/ERROR; recovery normal — pass. 7a not coverable (padawan has no Maestro); relay to
+   the padawan measured at 40 ms. Note the server's serial pipeline adds ~1.0 s between the
+   HTTP call and the board for both run and panic — that is server-side latency, not firmware.
+
 8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
    Maestro being wired to serial channel 2)
    - **Run this on a padawan.** The master reserves UART 1 for the server link, and

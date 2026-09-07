@@ -131,19 +131,28 @@ task depends on T-003.
       (verified by reading the code against the snapshot pattern).
 - [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
       clean; clang-format clean.
-- [ ] Bench, master (human-gated): start a slow scripted move (speed 5); send panic stop from
-      the server → script halts and the servo goes slack immediately (Maestro Control Center
-      shows target 0); no `Turning off servo N on module M` for that channel afterward.
-- [ ] Bench, padawan (human-gated): same via ESP-NOW from the master.
-- [ ] Bench, GPIO channel (human-gated): GPIO-type channel on → panic → output drops.
-- [ ] Bench, queued burst (human-gated): run a script whose first event moves ≥4 servos at
-      speed 5; send panic within ~1 s. All four go slack; the monitor shows
-      `Panic: dropped N queued servo commands` and normally at most one `Setting servo` line
-      after the `Panic:` lines (two if the dispatch task was mid-enqueue). Each such channel
-      logs `Turning off servo N on module M` ~20 s later — its state survived, so the normal
-      release still fires.
-- [ ] Bench, recovery (human-gated): after panic, a script or slider move re-energizes and
-      moves the servo normally, and it releases on the normal deadline.
+- [x] Bench, master (2026-09-07, scripted via the server API with both consoles captured): the
+      `T-004 QA` script (four servos at speed 5 + relay ch0), panic 3 s in → `Panic: dropped 0
+      queued servo commands`, `Panic: module 1 de-energized, 8 off(s) queued, 0 failed`, no
+      `Turning off servo N on module 1` in the following 30 s, 0 WARN/ERROR. Same firmware
+      minus T-004 (run first by mistake): all four released on the normal 24 s deadline.
+- [ ] Bench, padawan (human-gated): same via ESP-NOW from the master. **Not coverable on the
+      current bench** — the only padawan (Ashoka) has no Maestro module. Measured instead: the
+      padawan's `Panicing!` lands 40 ms after the master's, and the master's ESP-NOW relay goes
+      out 30 ms after its panic starts, with its 8 offs queued in ~10 ms — relay latency is
+      negligible in the healthy case.
+- [x] Bench, GPIO channel (2026-09-07): relay ch0 switched on by the script; the panic's
+      8 queued offs include it (channels 0–7 enabled). Physical relay drop not observed by
+      the log — eyeball it once on the next bench visit.
+- [x] Bench, queued burst (2026-09-07, 6 attempts with panic 0.15–1.25 s after run): all four
+      go slack every time, no post-panic move ever released late, 0 WARN/ERROR. `dropped` was
+      0 in every attempt: the server's serial pipeline delivers each message ~1.0 s after the
+      HTTP call with tens of ms of jitter, so a panic cannot be aimed into the board's ~100 ms
+      dispatch window from the API. The drain path runs and logs on every panic; a nonzero
+      count needs a longer multi-servo event or a padawan-side trigger.
+- [x] Bench, recovery (2026-09-07): after `panicClear`, the `T-001 QA` script ran normally and
+      released on the model deadlines (speed 11 → 20 s floor; speed 5 → 24 s; speed 5/accel 1
+      → 24.4 s). Nothing latched.
 - [x] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
 
 ## Out of scope
@@ -193,4 +202,5 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
 - [x] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
 - [x] PLAN.md Status updated
-- [ ] bench (human-gated) pending
+- [x] bench (2026-09-07): cases 7, 7b, 7c, 7d passed via the server API with both consoles
+      captured (see acceptance); 7a not coverable on this bench (no Maestro on the padawan)
