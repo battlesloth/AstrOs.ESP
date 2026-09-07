@@ -164,4 +164,14 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-<!-- Added when work STARTS, not at authoring time. Check off + commit as work proceeds. -->
+- [ ] `Panic()` rewritten as a T-003 command-path operation: bounded send take → copy `enabled`
+      under `stateMutex` → per-channel `0x84 ch 0 0` via `setServoOff(ch, 500 ms)` → clear
+      `on`/`currentPos` under `stateMutex` only for channels whose off was queued; `stateMutex`
+      timeout fallback reads `enabled` unlocked and skips the clear; 0x9F frame deleted
+- [ ] `handlePanicStop`: `AnimationCtrl.panicStop()` → drain `servoQueue` (free payloads, log
+      count) → snapshot `maestroModules` (100 ms, WARN on timeout) → `Panic()` per module
+- [ ] `channels` comment in `MaestroModule.hpp` updated (Panic has a caller on
+      `interfaceResponseQueueTask`, follows the command-path pattern)
+- [ ] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
+- [ ] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
+- [ ] PLAN.md Status updated; bench (human-gated) pending
