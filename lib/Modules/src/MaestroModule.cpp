@@ -272,34 +272,79 @@ void MaestroModule::SetServoPosition(int channel, int ms)
 
 void MaestroModule::Panic()
 {
-    ESP_LOGI(TAG, "Panic");
-
-    // No caller today; T-004 rewrites this as a proper command-path operation
-    // (per-channel 0x84 offs, state cleared only after a successful enqueue).
-    // T-003 only puts the state write under stateMutex.
-    uint8_t cmd[74] = {};
-    cmd[0] = SET_MULTIPLE_SERVOS_COMMAND;
-    cmd[1] = 24;
-
-    for (size_t i = 0; i < 24; i++)
+    // Operator kill-switch: no signal on every configured output (servo and
+    // GPIO-type alike). A T-003 command-path operation -- one send-mutex hold
+    // across the state read, every off frame, and the state clear -- except
+    // that tracking is cleared only AFTER an off was actually queued: the one
+    // failure direction that must never happen is an output left energized
+    // while tracking says off. Runs on interfaceResponseQueueTask.
+    if (!this->takeSendMutex())
     {
-        cmd[2 + (i * 3)] = i;
+        ESP_LOGE(TAG, "Panic: send mutex timeout on module %d - offs NOT sent", this->idx);
+        return;
     }
 
-    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
+    ESP_LOGI(TAG, "Panic: de-energizing module %d", this->idx);
+
+    bool enabled[24] = {};
+    bool haveStateLock = xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE;
+    if (!haveStateLock)
+    {
+        // Practically unreachable (the only other holders are CheckServos and
+        // LoadConfig, for microseconds). `enabled` is config-only, written by
+        // LoadConfig alone and a single byte, so an unlocked read cannot tear;
+        // send the offs anyway and leave tracking for CheckServos to clear
+        // with a redundant off within one deadline.
+        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d, sending offs without clearing tracking", this->idx);
+    }
+    for (size_t i = 0; i < 24; i++)
+    {
+        enabled[i] = channels[i].enabled;
+    }
+    if (haveStateLock)
+    {
+        xSemaphoreGive(this->stateMutex);
+    }
+
+    bool queued[24] = {};
+    for (size_t i = 0; i < 24; i++)
+    {
+        if (!enabled[i])
+        {
+            continue;
+        }
+        if (this->setServoOff(i, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS)) == EnqueueResult::Queued)
+        {
+            queued[i] = true;
+        }
+        else
+        {
+            // Stays exactly as it was: a servo channel is still `on`, so
+            // CheckServos retries within a deadline; a GPIO-type channel has
+            // no timer retry, so this line is the operator's signal.
+            ESP_LOGE(TAG, "Panic: off NOT queued for channel %d on module %d", i, this->idx);
+        }
+    }
+
+    if (haveStateLock && xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
         for (size_t i = 0; i < 24; i++)
         {
-            channels[i].on = false;
+            if (queued[i])
+            {
+                channels[i].on = false;
+                channels[i].currentPos = 0;
+            }
         }
         xSemaphoreGive(this->stateMutex);
     }
-    else
+    else if (haveStateLock)
     {
-        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d", this->idx);
+        ESP_LOGW(TAG, "Panic: state mutex timeout on module %d after sending offs; CheckServos will clear tracking",
+                 this->idx);
     }
 
-    this->sendQueueMsg(cmd, 74);
+    xSemaphoreGive(this->mutex);
 }
 
 void MaestroModule::HomeServos()

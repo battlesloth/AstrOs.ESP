@@ -113,17 +113,17 @@ task depends on T-003.
 
 ## Acceptance criteria
 
-- [ ] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel and sends nothing
+- [x] `Panic()` sends exactly one `0x84 ch 0 0` frame per enabled channel and sends nothing
       for disabled channels — all under a single hold of `this->mutex`. It marks `on = false`
       only for channels whose frame was enqueued; a failed enqueue leaves the channel `on`
       and logs an error naming it (verified by reading the code — the clear happens after the
       enqueue result). In the `stateMutex`-timeout fallback it leaves state alone and
       `CheckServos` clears it with a redundant off within one deadline. No `0x9F` byte leaves
       the module.
-- [ ] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
+- [x] `handlePanicStop` drains `servoQueue` (freeing payloads) before any off is sent, and
       reaches every module in `maestroModules` without holding the map mutex across a send
       (verified by reading the code against the snapshot pattern).
-- [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
       clean; clang-format clean.
 - [ ] Bench, master (human-gated): start a slow scripted move (speed 5); send panic stop from
       the server → script halts and the servo goes slack immediately (Maestro Control Center
@@ -137,7 +137,7 @@ task depends on T-003.
       ~20 s later — its state survived, so the normal release still fires.
 - [ ] Bench, recovery (human-gated): after panic, a script or slider move re-energizes and
       moves the servo normally, and it releases on the normal deadline.
-- [ ] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
+- [x] QA plan updated (case 7 rewritten; GPIO + padawan + recovery cases added).
 
 ## Out of scope
 
@@ -164,14 +164,15 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-- [ ] `Panic()` rewritten as a T-003 command-path operation: bounded send take → copy `enabled`
+- [x] `Panic()` rewritten as a T-003 command-path operation: bounded send take → copy `enabled`
       under `stateMutex` → per-channel `0x84 ch 0 0` via `setServoOff(ch, 500 ms)` → clear
       `on`/`currentPos` under `stateMutex` only for channels whose off was queued; `stateMutex`
       timeout fallback reads `enabled` unlocked and skips the clear; 0x9F frame deleted
-- [ ] `handlePanicStop`: `AnimationCtrl.panicStop()` → drain `servoQueue` (free payloads, log
+- [x] `handlePanicStop`: `AnimationCtrl.panicStop()` → drain `servoQueue` (free payloads, log
       count) → snapshot `maestroModules` (100 ms, WARN on timeout) → `Panic()` per module
-- [ ] `channels` comment in `MaestroModule.hpp` updated (Panic has a caller on
+- [x] `channels` comment in `MaestroModule.hpp` updated (Panic has a caller on
       `interfaceResponseQueueTask`, follows the command-path pattern)
-- [ ] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
-- [ ] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
-- [ ] PLAN.md Status updated; bench (human-gated) pending
+- [x] `pio test -e test` green; both boards build clean, no new warnings; clang-format clean
+- [x] QA plan: case 7 rewritten; GPIO, padawan, queued-burst, recovery cases added
+- [x] PLAN.md Status updated
+- [ ] bench (human-gated) pending

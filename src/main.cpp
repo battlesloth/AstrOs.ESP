@@ -2145,7 +2145,49 @@ static void handleRunCommand(astros_interface_response_t msg)
 
 static void handlePanicStop(astros_interface_response_t msg)
 {
+    // 1. Stop dispatching: no further script events reach the servo queue.
     AnimationCtrl.panicStop();
+
+    // 2. Drop what is already queued. servoQueue holds up to 20 entries and
+    //    servoQueueTask drains one per pass, so a multi-servo script event can
+    //    leave a burst that would otherwise be encoded and sent AFTER the offs.
+    //    This loop becomes the consumer for each message it removes and frees
+    //    the payload exactly as servoQueueTask does. The serial queues are left
+    //    alone: the off frames enter the same FIFO behind anything already
+    //    there, so the off wins.
+    queue_msg_t pending;
+    int dropped = 0;
+    while (xQueueReceive(servoQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        dropped++;
+    }
+    ESP_LOGI(TAG, "Panic: dropped %d queued servo commands", dropped);
+
+    // 3. De-energize every configured Maestro channel. Snapshot the modules
+    //    under maestroModulesMutex and release it before calling Panic():
+    //    Panic() takes the per-module send mutex (bounded, ~2.2 s) and then
+    //    blocks up to 500 ms per off frame, so it can take seconds. Same
+    //    pattern as servoShutdownTimerCallback.
+    std::vector<std::shared_ptr<MaestroModule>> snapshot;
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+    {
+        snapshot.reserve(maestroModules.size());
+        for (const auto &entry : maestroModules)
+        {
+            snapshot.push_back(entry.second);
+        }
+        xSemaphoreGive(maestroModulesMutex);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "handlePanicStop: maestroModulesMutex timeout - Maestro offs NOT sent");
+    }
+
+    for (auto &maestroMod : snapshot)
+    {
+        maestroMod->Panic();
+    }
 }
 
 static void handleFormatSD(std::string id)

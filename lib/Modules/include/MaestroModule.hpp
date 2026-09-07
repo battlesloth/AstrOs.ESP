@@ -67,8 +67,8 @@ private:
     // HomeServos() re-arms it); entries above the file's highest id -- and all
     // entries if the file is missing or unparseable -- keep prior state on
     // reload. Both run on the boot / RELOAD_CONFIG path. Written by
-    // QueueCommand and SetServoPosition on task context (Panic() also writes
-    // but has no caller today -- T-004 wires it); read-modify-written by
+    // QueueCommand and SetServoPosition on task context and by Panic() on
+    // interfaceResponseQueueTask (T-004); read-modify-written by
     // CheckServos() on the esp_timer task.
     //
     // Locking (T-003): every access is under stateMutex. QueueCommand,
@@ -78,8 +78,8 @@ private:
     // across a *blocking* enqueue. CheckServos runs on the esp_timer task and
     // uses only zero-wait takes and a zero-timeout enqueue (that one is under
     // stateMutex by design); the inverted order there cannot deadlock because
-    // a try-take never waits. Panic still writes state and sends separately
-    // (no caller; T-004 makes it a proper operation).
+    // a try-take never waits. Panic is a command-path operation too, with one
+    // difference: it clears tracking only after an off frame was queued.
     servo_channel channels[24] = {};
 
     QueueHandle_t serialQueue;

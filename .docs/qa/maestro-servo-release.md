@@ -1,8 +1,8 @@
 # QA: Maestro servo release (auto de-energize)
 
 Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001), the
-per-instance channel state that backs it (T-002), and the locking between the shutdown timer
-and the command paths (T-003).
+per-instance channel state that backs it (T-002), the locking between the shutdown timer
+and the command paths (T-003), and panic stop reaching the Maestro (T-004).
 
 Deadline model: `ServoReleaseDeadlineMs(speed, accel)` = max(`WorstCaseTravelMs`, 20 s floor).
 `WorstCaseTravelMs` is the physical trapezoid over the 0–3000 µs guard range using true
@@ -96,13 +96,40 @@ Reference deadlines (model, floored at 20 s):
    - Toggle a non-servo (GPIO) channel on.
    - Expected: no `Turning off servo N` for that channel at any point; output holds.
 
-7. **Panic stop does not reach the Maestro (documents current behavior)**
-   - Start a slow scripted move, then send panic stop.
-   - Expected today: the script halts (no further commands dispatched), but the in-flight
-     servo move completes to its target and releases on the normal deadline.
-     `handlePanicStop` only calls the animation controller's panic; `MaestroModule::Panic()`
-     (all channels off) has no caller. Verified 2026-09-06 during T-002 review. T-004 wires
-     panic to the Maestro; it rewrites this case when it lands.
+7. **Panic stop de-energizes every configured Maestro channel** (T-004)
+   - Start a slow scripted move (speed 5, ~24 s), then send panic stop from the server a few
+     seconds in.
+   - Expected: the script halts and the servo goes slack *immediately* (Maestro Control Center
+     shows target 0; the horn moves freely by hand). Monitor shows, in this order:
+     `Panic: dropped N queued servo commands` (N is usually 0 here), then
+     `Panic: de-energizing module M` once per configured module. **No**
+     `Turning off servo N on module M` for that channel afterward — panic cleared its tracking,
+     so the timer has nothing to release. Pre-T-004 the move completed and stayed energized
+     until the normal deadline.
+
+7a. **Panic on a padawan** (T-004)
+   - Same as 7 on a servo owned by a padawan; send panic from the server (master relays it
+     over ESP-NOW).
+   - Expected: identical behavior on the padawan's monitor; the master's monitor also shows its
+     own `Panic:` lines for its modules.
+
+7b. **Panic drops a GPIO-type channel** (T-004)
+   - Turn a GPIO-type Maestro channel on (script or slider), then send panic.
+   - Expected: the output drops at once (relay opens / LED off). Panic sends target 0 to every
+     *enabled* channel, servo or not. Nothing is sent for disabled channels.
+
+7c. **Panic against a queued burst** (T-004)
+   - Run a script whose first event moves ≥4 servos at speed 5; send panic within ~1 s.
+   - Expected: all four go slack. Monitor shows `Panic: dropped N queued servo commands` with
+     N ≥ 1 if any command was still queued, and at most one `Setting servo N on module M` line
+     *after* the `Panic:` lines (a command already dequeued when panic fired). If one appears,
+     that channel logs `Turning off servo N on module M` ~20 s later — its state survived, so
+     the normal release still fires. Never a servo left energized with no later release.
+
+7d. **Recovery after panic** (T-004)
+   - After 7, run a script or slider move on the same servo.
+   - Expected: the servo re-energizes and moves normally, then releases ~20 s later as usual.
+     Panic leaves nothing latched.
 
 8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
    Maestro being wired to serial channel 2)
@@ -159,6 +186,12 @@ Reference deadlines (model, floored at 20 s):
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
   inputs are clamped; servo releases at the floor (~20 s).
+- **Panic with a wedged serial path** (T-004; hard to provoke): if the module's send mutex
+  cannot be taken within ~2.2 s the monitor shows `Panic: send mutex timeout on module M - offs
+  NOT sent` at ERROR and no off frames go out — the serial path could not have delivered them
+  anyway. If an individual off cannot be queued (`Panic: off NOT queued for channel N on module
+  M`), that channel keeps its tracking: a servo channel is released by the timer within one
+  deadline; a GPIO-type channel has no timer retry, so the ERROR line is the signal.
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
   would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
   logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`

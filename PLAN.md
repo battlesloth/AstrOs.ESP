@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-004 — not started (branch `feature/T-004-panic-stop-maestro-deenergize` when work begins); T-002 + T-003 merged, so it is unblocked
+Now:     T-004 — implemented on `feature/T-004-panic-stop-maestro-deenergize` (Panic() as a command-path op with clear-after-enqueue; handlePanicStop drains servoQueue then calls Panic per module); native tests green, builds pending; review + bench + PR pending
 Next:    per-channel release-time setting (Backlog → task; needs the server-side contract pinned first) or PCA9685 panic gap
 Blocked: none
 Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-verified with the `T-003 QA` script
