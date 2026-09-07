@@ -111,8 +111,8 @@ task depends on T-003.
 2. `handlePanicStop` in `src/main.cpp`: after `AnimationCtrl.panicStop()`, drain `servoQueue`
    with a zero-timeout `xQueueReceive` loop, freeing each message's payload; log the count
    dropped at INFO. Then snapshot `maestroModules` under `maestroModulesMutex`
-   (`pdMS_TO_TICKS(100)`, warn and skip on timeout), release the mutex, and call `Panic()` on
-   each module in the snapshot.
+   (`pdMS_TO_TICKS(1000)`; ERROR and skip on timeout — no module gets de-energized), release
+   the mutex, and call `Panic()` on each module in the snapshot.
 3. Update QA: rewrite case 7 in `.docs/qa/maestro-servo-release.md` to the new behavior and
    add the GPIO-channel and padawan cases below.
 4. Update the `channels` comment in `lib/Modules/include/MaestroModule.hpp`: `Panic()` now
@@ -195,7 +195,8 @@ pio test -e test
 pio run -e lolin_d32_pro
 pio run -e metro_s3
 # bench: master — slow script move, panic from server; monitor shows
-# "Panic: de-energizing module 0"; servo slack at once; no later release log for it.
+# "Panic: dropped N queued servo commands" then "Panic: module 1 complete, K off(s) queued,
+# 0 failed"; servo slack at once; no later release log for it.
 # bench: padawan — same, panic relayed over ESP-NOW.
 # bench: GPIO channel on → panic → off. Then a normal move works and releases at ~20 s.
 ```
@@ -204,10 +205,11 @@ pio run -e metro_s3
 
 - [x] `Panic()` rewritten as a T-003 command-path operation: bounded send take → copy `enabled`
       under `stateMutex` → per-channel `0x84 ch 0 0` via `setServoOff(ch, 500 ms)` → clear
-      `on`/`currentPos` under `stateMutex` only for channels whose off was queued; `stateMutex`
-      timeout fallback reads `enabled` unlocked and skips the clear; 0x9F frame deleted
+      `on`/`currentPos` under `stateMutex` only for channels whose off was queued; a pre-send
+      `stateMutex` timeout reads `enabled` unlocked and still attempts the clear; 0x9F frame
+      deleted
 - [x] `handlePanicStop`: `AnimationCtrl.panicStop()` → drain `servoQueue` (free payloads, log
-      count) → snapshot `maestroModules` (100 ms, WARN on timeout) → `Panic()` per module
+      count) → snapshot `maestroModules` (1 s, ERROR on timeout) → `Panic()` per module
 - [x] `channels` comment in `MaestroModule.hpp` updated (Panic has a caller on
       `interfaceResponseQueueTask`, follows the command-path pattern)
 - [x] PR-toolkit review (code, silent-failure, comments): post-send clear attempted even after
