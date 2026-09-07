@@ -4,8 +4,8 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  none — Maestro servo-release task set (T-001..T-004) complete
-Now:     nothing in progress. Next candidates in Backlog: per-channel servo release-time setting (needs the server-side contract pinned first), panic ordering hardening, PCA9685 panic gap, PANIC_STOP ACK/NAK
+Active:  standalone tasks — Maestro servo-release tuning
+Now:     T-005 — implemented on `feature/T-005-release-floor-5s-margin` (deadline = max(5 s, travel + 10 %); tests green, builds pending); QA + bench + PR pending
 Next:    pick from Backlog; the release-time setting is the one with a user-visible payoff
 Blocked: none
 Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-verified via the server API, servos observed stopping
@@ -16,6 +16,7 @@ Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-veri
 - [x] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/completed/T-002-maestro-channels-per-instance.md`) — done 2026-09-06
 - [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
+- [ ] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/T-005-release-floor-5s-margin.md`)
 
 ## Backlog (unscheduled candidates)
 

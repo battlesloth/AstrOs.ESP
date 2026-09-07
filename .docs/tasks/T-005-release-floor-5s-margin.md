@@ -42,11 +42,11 @@ that if it bites.
 
 ## Acceptance criteria
 
-- [ ] Native tests: floor cases (0/0, 20/2, 10/2 → 5000), margin cases (5/1 → 26 840,
+- [x] Native tests: floor cases (0/0, 20/2, 10/2 → 5000), margin cases (5/1 → 26 840,
       5/0 → 26 400, 1/0 → 132 000, 20/0 → 6 600), and the crossover (a travel just under
       4 546 ms floors; just over exceeds 5 000).
-- [ ] `pio test -e test` green; both boards build clean; clang-format clean.
-- [ ] QA plan reference table and case expectations updated; `T-005 QA` script in the server DB.
+- [x] `pio test -e test` green; both boards build clean; clang-format clean.
+- [x] QA plan reference table and case expectations updated; `T-005 QA` script in the server DB.
 - [ ] Bench (human-gated): full-speed slider/boot release ~5.3 s; speed 5 / accel 1 script move
       releases ~27 s; deadline-race script (5.0–5.3 s periods) shows no stale release.
 - [ ] Bench (human-gated): linear actuators complete their stroke inside 5 s at full speed — if
@@ -70,8 +70,9 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-- [ ] RED: deadline tests rewritten to the new values, observed failing
-- [ ] GREEN: constants + formula; comments updated
-- [ ] `pio test -e test` green; both boards build clean; clang-format clean
-- [ ] QA plan updated (table + cases); `T-005 QA` script created in the server DB
-- [ ] PLAN.md Status updated; bench (human-gated) pending
+- [x] RED: deadline tests rewritten to the new values, observed failing
+- [x] GREEN: constants + formula; comments updated
+- [x] `pio test -e test` green; both boards build clean; clang-format clean
+- [x] QA plan updated (table + cases); `T-005 QA` script created in the server DB (`s1788789HJY`)
+- [x] PLAN.md Status updated
+- [ ] bench (human-gated) pending

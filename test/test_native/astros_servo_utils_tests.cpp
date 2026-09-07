@@ -139,19 +139,29 @@ TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
     EXPECT_EQ(551, WorstCaseTravelMs(999, 300)); // (255,255): 471 + 80
 }
 
-// Policy layer: the deadline CheckServos actually uses. Floors the physical
-// model at MAESTRO_RELEASE_FLOOR_MS (20 s) for loads whose slew the model
-// does not describe (linear actuators); stand-in for a per-channel setting.
+// Policy layer: the deadline CheckServos actually uses (T-005): the greater
+// of a 5 s floor and the physical model plus 10 % (ceiling).
 TEST(ServoUtils, ServoReleaseDeadlineMsAppliesFloorWhenModelIsFaster)
 {
-    EXPECT_EQ(20000, ServoReleaseDeadlineMs(0, 0));  // model 471
-    EXPECT_EQ(20000, ServoReleaseDeadlineMs(20, 2)); // model 6800 (the reported bug case)
-    EXPECT_EQ(20000, ServoReleaseDeadlineMs(10, 2)); // model 12400
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0));    // model 471  -> 519
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(255, 44)); // model 935  -> 1029
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 5));    // model 2772 -> 3050
 }
 
-TEST(ServoUtils, ServoReleaseDeadlineMsUsesModelWhenSlower)
+TEST(ServoUtils, ServoReleaseDeadlineMsAddsTenPercentWhenModelIsSlower)
 {
-    EXPECT_EQ(24400, ServoReleaseDeadlineMs(5, 1));
-    EXPECT_EQ(24000, ServoReleaseDeadlineMs(5, 0));
-    EXPECT_EQ(120000, ServoReleaseDeadlineMs(1, 0));
+    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0));  // 6000 + 600
+    EXPECT_EQ(7480, ServoReleaseDeadlineMs(20, 2));  // 6800 + 680 (the reported bug case)
+    EXPECT_EQ(13640, ServoReleaseDeadlineMs(10, 2)); // 12400 + 1240
+    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0));  // 24000 + 2400
+    EXPECT_EQ(26840, ServoReleaseDeadlineMs(5, 1));  // 24400 + 2440
+    EXPECT_EQ(132000, ServoReleaseDeadlineMs(1, 0)); // 120000 + 12000
+}
+
+TEST(ServoUtils, ServoReleaseDeadlineMsMarginCeilsAndCrossesFloorNearFourAndAHalfSeconds)
+{
+    // 10 % of 4382 is 438.2 -> 439; 4821 < 5000 so the floor wins
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 2)); // model 4382
+    // speed 26 -> cruise ceil(120000/26) = 4616; +462 = 5078 > 5000 so the model wins
+    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0));
 }
