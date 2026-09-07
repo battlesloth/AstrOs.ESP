@@ -47,8 +47,11 @@ that if it bites.
       4 546 ms floors; just over exceeds 5 000).
 - [x] `pio test -e test` green; both boards build clean; clang-format clean.
 - [x] QA plan reference table and case expectations updated; `T-005 QA` script in the server DB.
-- [ ] Bench (human-gated): full-speed slider/boot release ~5.3 s; speed 5 / accel 1 script move
-      releases ~27 s; deadline-race script (5.0–5.3 s periods) shows no stale release.
+- [x] Bench (2026-09-07, scripted via the server API, master console captured): boot homing
+      released all 7 servos at 6.3 s uptime (~5 s after homing); `T-005 QA` deadline-race
+      script — 40 moves, 40 releases, gaps 4.82–5.11 s after each move (window 4.7–5.1 s),
+      0 stale releases, 0 WARN/ERROR; `T-001 QA` script — speed 11 released at 12.13 s
+      (deadline 12.0 s), speed 5 at 26.25 s (26.4 s), speed 5 / accel 1 at 26.89 s (26.84 s).
 - [ ] Bench (human-gated): linear actuators complete their stroke inside 5 s at full speed — if
       not, promote the per-channel release setting.
 
@@ -75,4 +78,5 @@ pio run -e metro_s3
 - [x] `pio test -e test` green; both boards build clean; clang-format clean
 - [x] QA plan updated (table + cases); `T-005 QA` script created in the server DB (`s1788789HJY`)
 - [x] PLAN.md Status updated
-- [ ] bench (human-gated) pending
+- [x] bench (2026-09-07): floor, deadline-race, and margin cases passed via the server API
+      (see acceptance); linear-actuator stroke check remains human-gated

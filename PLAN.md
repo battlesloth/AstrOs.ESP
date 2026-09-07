@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release tuning
-Now:     T-005 — implemented on `feature/T-005-release-floor-5s-margin` (deadline = max(5 s, travel + 10 %); tests green, builds pending); QA + bench + PR pending
+Now:     T-005 — implemented on `feature/T-005-release-floor-5s-margin` (deadline = max(5 s, travel + 10 %)); tests + builds green; bench passed 2026-09-07 (floor, deadline race, margin); PR pending
 Next:    pick from Backlog; the release-time setting is the one with a user-visible payoff
 Blocked: none
 Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-verified via the server API, servos observed stopping

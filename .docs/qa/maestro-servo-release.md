@@ -29,6 +29,11 @@ Reference deadlines (max of 5 s and model + 10 %):
 | 1 / 0 | 120 s | 132 s | speed 1 is 2.25°/s; 80 s physical sweep |
 | 0 / 2 | 4.4 s | **5 s** | floor (4.8 s with margin) |
 
+First run on the T-005 formula (2026-09-07, scripted via the server API): boot releases ~5 s after
+homing; `T-005 QA` deadline-race script (id `s1788789HJY`) 40 moves / 40 releases, gaps
+4.82–5.11 s, 0 stale, 0 WARN/ERROR; `T-001 QA` margin cases: speed 11 → 12.13 s (12.0 s deadline),
+speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
+
 ## Preconditions
 
 - Board flashed with a build containing T-001 (amended: trapezoid model + floor) and T-002;
@@ -48,7 +53,8 @@ Reference deadlines (max of 5 s and model + 10 %):
   again every 20.0 / 20.1 / 20.2 / 20.3 s (ch1–ch4) so a move lands inside the release tick each
   round; home at 123 s. Deploy it to the body location and run it with the monitor attached.
   Pass: no `Turning off servo N on module 1` *after* a newer `Setting servo N on module 1` for
-  that channel (a release 19.7–20.1 s after the latest move is normal; the body Maestro is
+  that channel (a release one deadline after the latest move is normal — 19.7–20.1 s on the
+  20 s floor that script was written for, 4.7–5.1 s since T-005; the body Maestro is
   module idx 1); channels 2–4 release once at ~20 s during phase A; no `state mutex timeout`
   line anywhere; all four home at 123 s and release ~20 s later. First run 2026-09-06:
   89 moves, 22 releases, gaps 19.81–20.04 s, 0 stale releases, 0 WARN/ERROR — pass.
