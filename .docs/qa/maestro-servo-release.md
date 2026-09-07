@@ -39,7 +39,9 @@ Reference deadlines (max of 5 s and model + 10 %):
   prefixes of the full lines.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
-- For T-003 cases 9–11 in one run: the **`T-003 QA`** script in the server's local database
+- For T-003 cases 9–11 in one run (written against the pre-T-005 20 s floor; the deadline-race
+  half is superseded by the `T-005 QA` script, id `s1788789HJY`, which uses 5.0–5.3 s periods):
+  the **`T-003 QA`** script in the server's local database
   (`AstrOs.Server/.data/database.sqlite3`, id `s1788696QAq`, four body-Maestro servos):
   phase A (0–35 s) moves all four at t=0, then hammers channel 1 every 0.5 s while channels 2–4
   come due together at ~20 s; phase B (40–123 s) moves all four at 40 s, then each channel
@@ -62,7 +64,7 @@ Reference deadlines (max of 5 s and model + 10 %):
      `Turning off servo N` and is free to move by hand (no holding torque).
 
 2. **Slider move on an already-released channel re-arms release**
-   - Wait for a servo to log `Turning off servo N` (e.g. ~20 s after boot homing). Then send a
+   - Wait for a servo to log `Turning off servo N` (e.g. ~5 s after boot homing). Then send a
      single slider move to that servo.
    - Expected: servo moves; `Turning off servo N` ~5.3 s after the slider message (was ~20.3 s
      before T-005); servo free by hand. Pre-T-001 (third pass) the slider path never armed
@@ -166,23 +168,23 @@ Reference deadlines (max of 5 s and model + 10 %):
      second `LoadConfig` overwrote the shared array, so both modules homed to the last-loaded
      config.
    - **Wait for the boot-homing releases to land on both modules** (`Turning off servo 0 on
-     module 0` and `… on module 1`, ~20 s after homing — case 1). Only then continue;
+     module 0` and `… on module 1`, ~5 s after homing — case 1). Only then continue;
      otherwise the boot release will be mistaken for a failure below.
    - Send a script move to module 0 channel 0 only.
    - Expected: `Setting servo 0 on module 0 …`; only module 0's servo moves. **Exactly one**
-     `Turning off servo 0 on module 0` ~20 s after the script move, and no
+     `Turning off servo 0 on module 0` on its deadline after the script move, and no
      `Turning off servo 0 on module 1` at all; module 1's servo neither moves nor
      re-energizes. Pre-T-002, both modules' `CheckServos` advanced the same accumulator, so
      release came in half the time, and `HomeServos` on one module flipped state observed by
      the other.
    - Send a slider move to module 1 channel 0.
    - Expected: only module 1's servo moves; exactly one `Turning off servo 0 on module 1`
-     ~20 s after; module 0's servo stays released.
+     ~5 s after; module 0's servo stays released.
 
 9. **Rapid slider hammering with the timer active** (T-003)
    - Drag a slider continuously for ~30 s, then hold it still; repeat three times.
    - Expected: the servo never goes slack mid-drag; exactly one `Turning off servo N on
-     module M` ~20 s after the last message each time; no task-watchdog warning. Occasional
+     module M` ~5 s after the last message each time; no task-watchdog warning. Occasional
      `CheckServos: state busy on module M, skipping tick` or `CheckServos: send busy on module
      M, channels 0x… retry next tick` WARNs are acceptable — they are the timer yielding to a
      command, not a fault. A `SetServoPosition: frame not queued (serial queue full or no memory)
@@ -190,15 +192,16 @@ Reference deadlines (max of 5 s and model + 10 %):
      UART; the next message re-sends everything.
 
 10. **Move issued exactly as a release is due** (T-003; the PR #56 review scenario)
-   - Send a slider move; wait ~20 s watching the monitor; send another slider move just as
-     the release is expected (within a second either side). Repeat a dozen times.
-   - Expected: every move completes and the servo stays energized for a fresh 20 s. Never a
-     `Turning off servo N on module M` within 20 s *after* a move to that channel. Pre-T-003
+   - Send a slider move; wait ~5 s watching the monitor; send another slider move just as
+     the release is expected (within a second either side). Repeat a dozen times — or run the
+     `T-005 QA` script, which does this on four channels at 5.0/5.1/5.2/5.3 s periods.
+   - Expected: every move completes and the servo stays energized for a fresh 5 s. Never a
+     `Turning off servo N on module M` within 5 s *after* a move to that channel. Pre-T-003
      a stale off could land after the new target and drop the servo mid-move.
 
 11. **All channels come due on the same tick while a slider is active** (T-003)
    - Boot (or `RELOAD_CONFIG`) with ≥4 enabled servo channels; ~15 s after homing start
-     dragging a slider on one of them and keep dragging through the 20 s mark.
+     dragging a slider on one of them and keep dragging through the 5 s mark.
    - Expected: one `Turning off servo N on module M` line per *other* channel, all on the same
      tick; the dragged servo stays energized; no `QueueCommand`/`SetServoPosition: state mutex
      timeout` line — the timer logs only after releasing the lock, so the burst cannot starve
@@ -207,7 +210,7 @@ Reference deadlines (max of 5 s and model + 10 %):
 ## Edge cases / negative tests
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
-  inputs are clamped; servo releases at the floor (~20 s).
+  inputs are clamped; servo releases at the floor (~5 s).
 - **Panic with a wedged serial path** (T-004; hard to provoke): if the module's send mutex
   cannot be taken within ~2.2 s the monitor shows `Panic: send mutex timeout on module M - offs
   NOT sent` at ERROR and no off frames go out — the serial path could not have delivered them
@@ -219,7 +222,7 @@ Reference deadlines (max of 5 s and model + 10 %):
   stopped and the queue drained but no hardware was de-energized.
 - **Panic concurrent with a config reload or module init** (T-004, accepted limitation): if a
   `RELOAD_CONFIG` overlaps the panic within ~1 s, channels may be homed *after* the offs and
-  stay energized until their normal release (~20 s); panic may also miss a module whose config
+  stay energized until their normal release; panic may also miss a module whose config
   was being loaded at that instant. Not a bench case — the servos still release on the normal
   deadline, and the ordering fix is a Backlog enhancement.
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
