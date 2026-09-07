@@ -5,8 +5,8 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  none — Maestro servo-release task set (T-001..T-005) complete
-Now:     release prep — decide 1.2.1 (patch on release/rel_1.2) vs 1.3.0 (develop → main → release/rel_1.3); see 2026-09-07 discussion
-Next:    after the release: pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff
+Now:     nothing in progress — v1.2.1 pushed to `release/rel_1.2` 2026-09-07 (backport of T-001..T-005 + CI pin); release workflow building
+Next:    pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
 Blocked: none
 Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release deadline = max(5 s, travel + 10 %), bench-verified via the server API
 
@@ -37,6 +37,11 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-07 release v1.2.1 — patch on `release/rel_1.2`
+  - `develop` merged into `release/rel_1.2` (clean; tree identical to develop), `VERSION` set to 1.2.1 on the release branch, pushed → release workflow tags v1.2.1 and publishes both boards
+  - contents: T-001..T-005 (release math, per-instance channel state, timer/command locking, panic → Maestro, 5 s floor + 10 %), CI espressif32 pin; no new features, so a patch rather than 1.3.0
+  - `main` untouched: it is the RC stream for the next minor (VERSION 1.3.0 on develop)
 
 - 2026-09-07 T-005 complete — release deadline = max(5 s floor, travel + 10 %) (PR #59 → develop)
   - `MAESTRO_RELEASE_FLOOR_MS` 20 s → 5 s; new `MAESTRO_RELEASE_MARGIN_PERCENT` 10; `WorstCaseTravelMs` unchanged
