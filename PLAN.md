@@ -5,16 +5,16 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  standalone tasks — Maestro servo-release fixes
-Now:     T-003 — PR #57 open on develop; bench passed 2026-09-06 (`T-003 QA` script, serial log analyzed: 0 stale releases, 0 WARN/ERROR); awaiting review + merge, then close out
-Next:    T-004 (panic → Maestro off; depends on T-003)
+Now:     T-004 — not started (branch `feature/T-004-panic-stop-maestro-deenergize` when work begins); T-002 + T-003 merged, so it is unblocked
+Next:    per-channel release-time setting (Backlog → task; needs the server-side contract pinned first) or PCA9685 panic gap
 Blocked: none
-Last:    2026-09-06 — T-002 complete: merged to develop via PR #56; bench-verified
+Last:    2026-09-06 — T-003 complete: merged to develop via PR #57; bench-verified with the `T-003 QA` script
 
 ## Standalone tasks
 
 - [x] **T-001** — Fix CheckServos release math so scripted moves de-energize servos (`.docs/tasks/completed/T-001-checkservos-release-timeout.md`) — done 2026-09-06
 - [x] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/completed/T-002-maestro-channels-per-instance.md`) — done 2026-09-06
-- [ ] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/T-003-maestro-channel-state-sync.md`) — depends on T-002
+- [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
 - [ ] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/T-004-panic-stop-maestro-deenergize.md`) — depends on T-002 and T-003 (Panic is one more operation under T-003's per-operation send mutex)
 
 ## Backlog (unscheduled candidates)
@@ -33,6 +33,12 @@ Cross-repo: AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findi
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-06 T-003 complete — Maestro channel-state synchronization (PR #57 → develop)
+  - per-instance `stateMutex`; command paths hold the send mutex once per operation (state under `stateMutex`, frames enqueued with it released); bounded `takeSendMutex()` (20 × 100 ms, then error, no state touched); `CheckServos` decides and enqueues under `stateMutex` with zero-wait takes only and logs after releasing it
+  - review-driven: stop at the first dropped frame and reconcile tracked speed/accel to the stage reached; `enqueueFrame` never logs; `IsValid()` so a module whose mutexes failed is dropped by `loadMaestroConfigs`; destructor deletes both semaphores
+  - bench: `T-003 QA` script (server DB `s1788696QAq`) with the master console captured over USB Serial/JTAG — 89 moves, 22 releases, gaps 19.81–20.04 s, 0 stale releases, 0 WARN/ERROR; release window is deadline −300 ms..+1 tick (first tick counts as a full 300 ms)
+  - QA plan cases 9–11 + reload / dropped-frame / wedged-serial edge cases; task file → `.docs/tasks/completed/`
 
 - 2026-09-06 T-002 complete — Maestro channel state per instance (PR #56 → develop)
   - `channels[24]` is a private zero-initialized member of `MaestroModule`; copy ops deleted; Maestro log lines carry `on module M`

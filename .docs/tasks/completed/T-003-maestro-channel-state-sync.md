@@ -1,6 +1,6 @@
 # T-003: Synchronize Maestro channel state between timer and command paths
 
-<!-- File: .docs/tasks/T-003-maestro-channel-state-sync.md. Branch: feature/T-003-maestro-channel-state-sync.
+<!-- File: .docs/tasks/completed/T-003-maestro-channel-state-sync.md (completed 2026-09-06; PR #57). Branch: feature/T-003-maestro-channel-state-sync.
      PR title: "T-003: Synchronize Maestro channel state between timer and command paths".
      Depends on: T-002 (per-instance channel state). -->
 
