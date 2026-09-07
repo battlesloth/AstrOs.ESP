@@ -38,6 +38,9 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 
 ## Log
 
+- 2026-09-07 regression scripts on the droid's Pi instance (192.168.40.76)
+  - three QA scripts created via `PUT /api/scripts/` (release race, panic, deadlines — ids in `.docs/qa/maestro-servo-release.md`); deployed and run through the Pi with the master console captured over USB: all pass, matching the dev-bench numbers. HTTP→board latency is ~1.0 s on the Pi too, so it is the server's serial pipeline, not the host
+
 - 2026-09-07 release v1.2.1 — patch on `release/rel_1.2`
   - `develop` merged into `release/rel_1.2` (clean; tree identical to develop), `VERSION` set to 1.2.1 on the release branch, pushed → release workflow tags v1.2.1 and publishes both boards
   - contents: T-001..T-005 (release math, per-instance channel state, timer/command locking, panic → Maestro, 5 s floor + 10 %), CI espressif32 pin; no new features, so a patch rather than 1.3.0

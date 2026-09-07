@@ -44,6 +44,15 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   prefixes of the full lines.
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
+- **Regression scripts on the droid's server instance** (Raspberry Pi, http://192.168.40.76/,
+  created 2026-09-07 through the API; same module/channel ids as the dev DB):
+  `T-003/T-005 QA release race` (`s1788805wBm`: hammered channel + 5.0–5.3 s deadline race,
+  home at 65 s), `T-004 QA panic` (`s1788805iuD`: four servos at speed 5 + relay on; send
+  panic ~3 s in), `T-001/T-005 QA deadlines` (`s1788805Jym`: speeds 11 / 5 / 5+accel 1 / 1 →
+  releases ~12.0 / 26.4 / 26.8 / 132 s). First run 2026-09-07 against v1.2.1-equivalent
+  firmware with the master console captured: race 75 moves, gaps 4.81–5.10 s, 0 stale, burst of
+  three releases on one tick under load; panic `7 off(s) queued, 0 failed`, no release after;
+  deadlines 12.03 / 26.11 / 26.96 s; 0 WARN/ERROR — all pass.
 - For T-003 cases 9–11 in one run (written against the pre-T-005 20 s floor; the deadline-race
   half is superseded by the `T-005 QA` script, id `s1788789HJY`, which uses 5.0–5.3 s periods):
   the **`T-003 QA`** script in the server's local database
