@@ -1,6 +1,6 @@
 # T-005: Servo release deadline — 5 s floor or estimated travel + 10 %, whichever is greater
 
-<!-- File: .docs/tasks/T-005-release-floor-5s-margin.md. Branch: feature/T-005-release-floor-5s-margin.
+<!-- File: .docs/tasks/completed/T-005-release-floor-5s-margin.md (completed 2026-09-07; PR #59). Branch: feature/T-005-release-floor-5s-margin.
      PR title: "T-005: Servo release deadline — 5 s floor or estimated travel + 10 %, whichever is greater". -->
 
 ## Context

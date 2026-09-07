@@ -4,11 +4,11 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  standalone tasks — Maestro servo-release tuning
-Now:     T-005 — PR #59 open on develop (deadline = max(5 s, travel + 10 %)); tests + builds green; bench passed 2026-09-07 (floor, deadline race, margin); linear-actuator stroke check human-gated; awaiting review + merge, then close out
-Next:    pick from Backlog; the release-time setting is the one with a user-visible payoff
+Active:  none — Maestro servo-release task set (T-001..T-005) complete
+Now:     release prep — decide 1.2.1 (patch on release/rel_1.2) vs 1.3.0 (develop → main → release/rel_1.3); see 2026-09-07 discussion
+Next:    after the release: pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff
 Blocked: none
-Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-verified via the server API, servos observed stopping
+Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release deadline = max(5 s, travel + 10 %), bench-verified via the server API
 
 ## Standalone tasks
 
@@ -16,7 +16,7 @@ Last:    2026-09-07 — T-004 complete: merged to develop via PR #58; bench-veri
 - [x] **T-002** — Move Maestro channel state into MaestroModule instances (`.docs/tasks/completed/T-002-maestro-channels-per-instance.md`) — done 2026-09-06
 - [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
-- [ ] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/T-005-release-floor-5s-margin.md`)
+- [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
 
 ## Backlog (unscheduled candidates)
 
@@ -37,6 +37,11 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-07 T-005 complete — release deadline = max(5 s floor, travel + 10 %) (PR #59 → develop)
+  - `MAESTRO_RELEASE_FLOOR_MS` 20 s → 5 s; new `MAESTRO_RELEASE_MARGIN_PERCENT` 10; `WorstCaseTravelMs` unchanged
+  - bench via the server API: boot releases ~5 s after homing; `T-005 QA` deadline-race script (5.0–5.3 s periods) 40/40, gaps 4.82–5.11 s, 0 stale; margin cases speed 11 → 12.13 s, speed 5 → 26.25 s, speed 5/accel 1 → 26.89 s
+  - open (human-gated): linear actuators must finish their stroke inside 5 s at full speed — else promote the per-channel release setting
 
 - 2026-09-07 T-004 complete — panic stop reaches the Maestro (PR #58 → develop)
   - `Panic()` rewritten as a T-003 command-path operation: per-channel 0x84 target-0 for enabled *servo* channels, tracking cleared only after the off was queued; GPIO-type channels held (panic is a stop, not a reset — driving a GPIO anywhere could itself move something). The old 0x9F frame was malformed and never sent
