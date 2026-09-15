@@ -147,11 +147,11 @@ pio run -e metro_s3
 - [x] RED: `EncodeMaestroTarget` tests (0, 500, 1500, 2500) added to
       `test/test_native/astros_servo_utils_tests.cpp`, observed failing
 - [x] GREEN: `EncodeMaestroTarget` in `AstrOsServoUtils.hpp`; `pio test -e test` green (495/495)
-- [ ] `setServoPosition`: `targetUs` / `lastPosUs`, both `SET_TARGET` frames via the encoder;
+- [x] `setServoPosition`: `targetUs` / `lastPosUs`, both `SET_TARGET` frames via the encoder;
       comments updated (.cpp + .hpp)
-- [ ] `recordLastPos` added; `QueueCommand` (servo channels only, GPIO passes -1, `lastPos` in
+- [x] `recordLastPos` added; `QueueCommand` (servo channels only, GPIO passes -1, `lastPos` in
       the INFO line) and `SetServoPosition` record after `SendStage::Target`
-- [ ] both boards build clean; clang-format clean on changed files
+- [x] both boards build clean; clang-format clean on changed files
 - [ ] QA plan cases added to `.docs/qa/maestro-servo-release.md`
 - [ ] PLAN.md Status updated; PR opened
 - [ ] bench: reported bug, mirror, slider hand-off, still-on, GPIO (human-gated)

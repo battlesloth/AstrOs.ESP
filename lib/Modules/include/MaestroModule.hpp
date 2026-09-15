@@ -92,10 +92,17 @@ private:
     // Frame builders; the caller holds `mutex`. setServoPosition enqueues up
     // to four frames with a 500 ms wait each and stops at the first drop,
     // returning the last stage that went out (Target = complete); the caller
-    // logs with identity and calls reconcileLimits. setServoOff enqueues one
-    // frame with `wait` and returns the result -- CheckServos calls it with
-    // stateMutex held and wait 0; Panic with stateMutex released and 500 ms.
-    SendStage setServoPosition(uint8_t channel, int ms, int lastPos, int speed, int acceleration);
+    // logs with identity and calls recordLastPos or reconcileLimits. Both
+    // positions are in µs and share one encoder (EncodeMaestroTarget);
+    // lastPosUs is the pre-position frame: -1 sends none, 0 sends an
+    // explicit off first (HomeServos). setServoOff enqueues one frame with
+    // `wait` and returns the result -- CheckServos calls it with stateMutex
+    // held and wait 0; Panic with stateMutex released and 500 ms.
+    SendStage setServoPosition(uint8_t channel, int targetUs, int lastPosUs, int speed, int acceleration);
+    // After a complete send, remember the target so the next move's
+    // pre-position frame re-energizes the servo where it is (T-006).
+    // Caller holds `mutex`; takes stateMutex briefly.
+    void recordLastPos(int channel, int us);
     // After a partial send, make the tracked speed/accel match what the
     // Maestro is actually using so the release deadline models the real
     // move: a frame that did not go out leaves the previous value in force.
