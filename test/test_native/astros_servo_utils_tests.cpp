@@ -165,3 +165,32 @@ TEST(ServoUtils, ServoReleaseDeadlineMsMarginCeilsAndCrossesFloorNearFourAndAHal
     // speed 26 -> cruise ceil(120000/26) = 4616; +462 = 5078 > 5000 so the model wins
     EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0));
 }
+
+// Maestro Set Target payload (T-006): the target is in quarter-microseconds,
+// split low 7 bits / high 7 bits. Both the pre-position and the target frame
+// in MaestroModule::setServoPosition go through this, so a µs value encodes
+// identically wherever it is used; 0 (servo off) stays 0.
+TEST(ServoUtils, EncodeMaestroTargetZeroIsOff)
+{
+    uint8_t lo = 0xFF, hi = 0xFF;
+    EncodeMaestroTarget(0, lo, hi);
+    EXPECT_EQ(0x00, lo);
+    EXPECT_EQ(0x00, hi);
+}
+
+TEST(ServoUtils, EncodeMaestroTargetScalesToQuarterMicroseconds)
+{
+    uint8_t lo = 0, hi = 0;
+
+    EncodeMaestroTarget(500, lo, hi); // 2000
+    EXPECT_EQ(0x50, lo);
+    EXPECT_EQ(0x0F, hi);
+
+    EncodeMaestroTarget(1500, lo, hi); // 6000 -- a raw 1500 would be 0x5C 0x0B (375 us)
+    EXPECT_EQ(0x70, lo);
+    EXPECT_EQ(0x2E, hi);
+
+    EncodeMaestroTarget(2500, lo, hi); // 10000
+    EXPECT_EQ(0x10, lo);
+    EXPECT_EQ(0x4E, hi);
+}
