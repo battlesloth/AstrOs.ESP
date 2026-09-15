@@ -188,16 +188,25 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
     int minPos = channels[ch].minPos;
     int maxPos = channels[ch].maxPos;
     int target = channels[ch].requestedPos;
-    int lastPos = channels[ch].lastPos;
+    // A digital output takes no speed/accel, so it gets no pre-position
+    // frame (which, before T-006, blipped it LOW ahead of every level).
+    int lastPos = channels[ch].isServo ? channels[ch].lastPos : -1;
     bool inverted = channels[ch].inverted;
 
     xSemaphoreGive(this->stateMutex);
 
-    ESP_LOGI(TAG, "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d",
-             ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted);
+    ESP_LOGI(TAG,
+             "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d. "
+             "lastPos: %d",
+             ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted,
+             lastPos);
 
     SendStage stage = this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration);
-    if (stage != SendStage::Target)
+    if (stage == SendStage::Target)
+    {
+        this->recordLastPos(ch, target);
+    }
+    else
     {
         ESP_LOGE(TAG,
                  "QueueCommand: frame not queued (serial queue full or no memory) after stage %d of 4, move for "
@@ -254,7 +263,11 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     xSemaphoreGive(this->stateMutex);
 
     SendStage stage = this->setServoPosition(static_cast<uint8_t>(channel), ms, -1, 0, 0);
-    if (stage != SendStage::Target)
+    if (stage == SendStage::Target)
+    {
+        this->recordLastPos(channel, ms);
+    }
+    else
     {
         // WARN, not ERROR: a saturated slider drag can hit this at message rate,
         // and the next message re-sends everything. No pre-position frame on
@@ -550,7 +563,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     }
 }
 
-MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int ms, int lastpos, int speed,
+MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int targetUs, int lastPosUs, int speed,
                                                          int acceleration)
 {
     uint8_t cmd[4] = {};
@@ -564,15 +577,16 @@ MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int ms
     // speed while the release deadline assumes the new one, so the caller
     // reconciles the tracked limits to the stage reached.
 
-    // we need to send the last requested position
-    // before we send speed/accel commands if the servo
-    // was set to off as these commands will not work
-    // if they happen before the servo is turned on
-    if (lastpos != -1)
+    // Re-energize the servo at its last commanded position before the
+    // speed/accel frames. A released servo (target 0) has no position as far
+    // as the Maestro is concerned and jumps straight to its next target, so
+    // this frame must say "where you already are" for the limits to shape
+    // the real move. Same µs units and encoding as the target frame (T-006:
+    // it used to go out raw, a quarter of the intended pulse).
+    if (lastPosUs != -1)
     {
         cmd[0] = SET_SERVO_COMMAND;
-        cmd[2] = lastpos & 0x7F;
-        cmd[3] = (lastpos >> 7) & 0x7F;
+        EncodeMaestroTarget(lastPosUs, cmd[2], cmd[3]);
 
         if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
         {
@@ -601,12 +615,8 @@ MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int ms
     }
     stage = SendStage::Accel;
 
-    // .25us resolution
-    int target = ms * 4;
-
     cmd[0] = SET_SERVO_COMMAND;
-    cmd[2] = target & 0x7F;
-    cmd[3] = (target >> 7) & 0x7F;
+    EncodeMaestroTarget(targetUs, cmd[2], cmd[3]);
 
     if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
     {
@@ -638,6 +648,27 @@ void MaestroModule::reconcileLimits(int channel, SendStage stage, int oldSpeed, 
         channels[channel].speed = oldSpeed;
     }
     channels[channel].acceleration = oldAccel;
+
+    xSemaphoreGive(this->stateMutex);
+}
+
+void MaestroModule::recordLastPos(int channel, int us)
+{
+    // The target frame went out, so the next move's pre-position frame
+    // re-energizes the servo here. Caller holds `mutex`; takes stateMutex
+    // briefly. On a timeout the previous value stands: the next move starts
+    // with a jump to wherever that was, which is exactly the pre-T-006
+    // behaviour, so WARN and move on.
+    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG,
+                 "recordLastPos: state mutex timeout, next move for channel %d on module %d re-energizes at the "
+                 "previous target",
+                 channel, this->idx);
+        return;
+    }
+
+    channels[channel].lastPos = us;
 
     xSemaphoreGive(this->stateMutex);
 }

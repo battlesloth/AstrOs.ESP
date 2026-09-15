@@ -4,11 +4,11 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  none — Maestro servo-release task set (T-001..T-005) complete
-Now:     release prep — decide 1.2.1 (patch on release/rel_1.2) vs 1.3.0 (develop → main → release/rel_1.3); see 2026-09-07 discussion
-Next:    after the release: pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff
+Active:  none — T-006 complete
+Now:     v1.2.2 patch (T-006 backport) being cut on `release/rel_1.2` — merge of develop + VERSION 1.2.2 prepared locally, push pending
+Next:    pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
 Blocked: none
-Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release deadline = max(5 s, travel + 10 %), bench-verified via the server API
+Last:    2026-09-14 — T-006 complete: merged to develop via PR #60; released servos re-energize at their last commanded target (quarter-µs encoding fixed, `lastPos` recorded after every move, no pre-position frame on GPIO), bench cases 12–16 passed
 
 ## Standalone tasks
 
@@ -17,13 +17,14 @@ Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release de
 - [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
 - [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
+- [x] **T-006** — Re-energize released Maestro servos at their last commanded position (`.docs/tasks/completed/T-006-maestro-reenergize-at-last-position.md`) — done 2026-09-14
 
 ## Backlog (unscheduled candidates)
 
 - Known-fragile catalog: `.docs/code-review/code-review.md` (P0–P3) — headline items also listed in CLAUDE.md "Known-fragile areas" (timer-callback leaks/stack pressure, `peers` vector mutex, `AnimationController` unlocked reads, `setKeyId` peer-index assumption, cross-core globals). Promote individually as tasks.
 - Queue consumers that fail to `free()` embedded pointers (same review catalog) — sweepable as one task or per-consumer.
 - Upgrade to espressif32 7.x / ESP-IDF 6.x deliberately: migrate both `sdkconfig.<env>` files (IDF 6.1 kconfgen crashes on the committed IDF-5-era files — the 2026-08-31 CI outage), then lift the `espressif32@6.13.0` pin in `platformio.ini`. Own task; touches both boards.
-- `MaestroModule::QueueCommand` passes a stale `lastPos` when re-arming a released servo — `lastPos` is only ever set by `HomeServos`, so the pre-speed/accel position command replays the home position, not the last commanded one. Found 2026-08-31 during the servo-release investigation; needs its own investigation before a fix task.
+- **Maestro `lastPos` is an estimate.** T-006 re-energizes a released servo at its last *commanded* target; a servo moved by hand or by load while off jumps back there before the smooth travel. Fix, if it ever bites: read the position back (`GET_SERVO_POSITION 0x90`) — needs the Maestro RX path. Found 2026-09-14.
 - **Panic stop does not reach PCA9685 (I²C) servo channels.** T-004 covers the Maestro; the I²C servo path has the same gap. Found 2026-09-06.
 - **Panic relay latency to padawans.** The master's `SEND_PANIC_STOP` relays are queue entries behind its own `PANIC_STOP` on `interfaceResponseQueueTask`, so when the server lists the master's record first (`generatePanicStop` iterates `runCommand.configs` in whatever order they come) padawans wait for the master's Maestro offs (~150 ms per module healthy; worst case summing every bound — 5 s animation mutex + 1 s map mutex + 2.2 s send take + 14 × 500 ms queue waits — ≈ 15 s for one module, ≈ 24 s for two; measured healthy: relay out 30 ms after panic start). Candidate fix: `handlePanicStop` drains the queue and posts a service command; `serviceQueueTask` runs the per-module `Panic()` calls — that also serializes panic against `RELOAD_CONFIG` on the same task, removing the `LoadConfig`-holds-`stateMutex` collision. Decide after QA 7a measures the delay. Found 2026-09-06 (T-004 review).
 - **Panic ordering hardening (future version).** Decided 2026-09-07 to document rather than fix in T-004 — edge cases needing a second operator action or mutex contention to overlap the panic within ~1 s, and in every case the servos still release on their normal deadline: (1) a config reload in progress homes every channel after the offs; (2) panic is not serialized with module initialization (may snapshot a module before its `LoadConfig`, or send offs before its homing); (3) `AnimationCtrl.panicStop()` can wait up to 5 s on `animationMutex` before the drain and offs. Candidate fixes: a reload barrier mutex held across all of `loadMaestroConfigs` and around the panic snapshot + offs (not the service task — `FORMAT_SD` runs there and would block a kill); a split `haltDispatch()` so the order becomes halt → drain → offs → bounded queue clear. Related and unfixable at this layer: a controller that crashes and restarts during a panic does not know it was in panic. Not industrial control software; revisit if a real incident ever traces to one of these.
@@ -37,6 +38,20 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-14 T-006 complete — re-energize released Maestro servos at their last commanded position (PR #60 → develop)
+  - diagnosis: the pre-position frame `setServoPosition` sends before speed/accel went out in raw µs where the Maestro expects quarter-µs (a 1500 home = 375 µs on the wire → slam to the low end), and `lastPos` was only ever written by config load / `HomeServos`; a released servo jumps straight to its first target, so both showed as an instant jump — full-range for inverted 0 → 100 and non-inverted 100 → 0
+  - `EncodeMaestroTarget` (PURE, `AstrOsServoUtils.hpp`, native-tested) shared by both `SET_TARGET` frames; `recordLastPos` after a complete send on the script and slider paths (success-path twin of `reconcileLimits`); GPIO-type channels get no pre-position frame (it blipped them LOW before every level); `lastPos:` appended to the `Setting servo` line
+  - native 495/495; both boards clean; bench cases 12–16 (`.docs/qa/maestro-servo-release.md`) passed 2026-09-14
+  - open: `lastPos` is the last *commanded* target — a servo moved by hand while released still jumps back to it first; reading the Maestro position back (0x90) is the fix if it ever matters (Backlog)
+
+- 2026-09-07 regression scripts on the droid's Pi instance (192.168.40.76)
+  - three QA scripts created via `PUT /api/scripts/` (release race, panic, deadlines — ids in `.docs/qa/maestro-servo-release.md`); deployed and run through the Pi with the master console captured over USB: all pass, matching the dev-bench numbers. HTTP→board latency is ~1.0 s on the Pi too, so it is the server's serial pipeline, not the host
+
+- 2026-09-07 release v1.2.1 — patch on `release/rel_1.2`
+  - `develop` merged into `release/rel_1.2` (clean; tree identical to develop), `VERSION` set to 1.2.1 on the release branch, pushed → release workflow tags v1.2.1 and publishes both boards
+  - contents: T-001..T-005 (release math, per-instance channel state, timer/command locking, panic → Maestro, 5 s floor + 10 %), CI espressif32 pin; no new features, so a patch rather than 1.3.0
+  - `main` untouched: it is the RC stream for the next minor (VERSION 1.3.0 on develop)
 
 - 2026-09-07 T-005 complete — release deadline = max(5 s floor, travel + 10 %) (PR #59 → develop)
   - `MAESTRO_RELEASE_FLOOR_MS` 20 s → 5 s; new `MAESTRO_RELEASE_MARGIN_PERCENT` 10; `WorstCaseTravelMs` unchanged
