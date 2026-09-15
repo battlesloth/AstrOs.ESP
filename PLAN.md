@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  T-006 — re-energize released Maestro servos at their last commanded position (standalone)
-Now:     T-006 task file committed 2026-09-14, implementation not started — branch `feature/T-006-maestro-reenergize-at-last-position` to be cut from `develop`
+Now:     T-006 PR #60 open against `develop` (2026-09-14): encoder + native tests, MaestroModule change, QA cases 12–16; native 495/495, both boards build — bench cases 12–16 next, then merge
 Next:    after T-006: pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
 Blocked: none
 Last:    2026-09-14 — diagnosed the inverted-servo jump: the pre-position frame sends `lastPos` in µs where the Maestro expects quarter-µs (375 µs on the wire for a 1500 home) and `lastPos` is never updated after a move; promoted the 2026-08-31 Backlog finding to T-006 with both fixes

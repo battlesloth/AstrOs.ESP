@@ -2,7 +2,17 @@
 
 Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001), the
 per-instance channel state that backs it (T-002), the locking between the shutdown timer
-and the command paths (T-003), and panic stop reaching the Maestro (T-004).
+and the command paths (T-003), panic stop reaching the Maestro (T-004), and the other half
+of the lifecycle — re-energizing a released servo where it is so the next scripted move
+honours speed/accel (T-006, cases 12–16).
+
+Re-energize (T-006): a released servo has no position as far as the Maestro is concerned, so
+it jumps straight to the first target it receives. Every scripted move therefore sends a
+pre-position frame at the channel's `lastPos` before the speed/accel frames and the real
+target. Pre-T-006 that frame went out in raw µs where the Maestro expects quarter-µs (a
+1500 home was a 375 µs pulse, i.e. a slam to the low end) and `lastPos` was only ever the
+home position; since T-006 both target frames share one encoder and `lastPos` is the last
+target sent on that channel (script or slider). GPIO-type channels get no pre-position frame.
 
 Deadline model (T-005): `ServoReleaseDeadlineMs(speed, accel)` = max(5 s floor, `WorstCaseTravelMs`
 + 10 %). Before T-005 it was max(model, 20 s).
@@ -41,8 +51,12 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   `Setting servo N …` from `Turning off servo N` to get the observed release time. Both lines
   carry the module id right after the servo number (T-002): `Setting servo N on module M
   (min: …` and `Turning off servo N on module M`. The short forms quoted in cases 1–7 are
-  prefixes of the full lines.
+  prefixes of the full lines. Since T-006 the `Setting servo` line ends in `lastPos: P` — the
+  µs position the pre-position frame re-energizes the servo at (`-1` on a GPIO channel: none).
 - Maestro module configured with ≥1 enabled servo channel and ≥1 GPIO (non-servo) channel.
+  For cases 12–13 one servo channel configured **inverted** and one not, ideally with a wide
+  min–max (≥ 1000 µs) so the travel is visible; speed 10 / accel 0 moves at 0.25 µs/ms, so a
+  1000 µs range takes ~4 s and the deadline is 13.2 s.
 - At least one script on the SD card that moves a servo with explicit speed/accel values.
 - **Regression scripts on the droid's server instance** (Raspberry Pi, http://192.168.40.76/,
   created 2026-09-07 through the API; same module/channel ids as the dev DB):
@@ -222,6 +236,44 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
      timeout` line — the timer logs only after releasing the lock, so the burst cannot starve
      the command paths.
 
+12. **Inverted servo 0 → 100 after a release starts where it was** (T-006; the reported bug)
+   - Script or slider the inverted channel to position 0 (its `maxPos`); wait for
+     `Turning off servo N on module M`; then run a script move to 100 at speed 10, accel 0.
+   - Expected: `Setting servo N on module M (min: …) to <minPos>, cmd: 100. speed: 10. accel:
+     0. inverted: 1. lastPos: <maxPos>`; the servo departs from `maxPos` and travels smoothly to
+     `minPos` over ~4 s per 1000 µs of range, with no initial jump. Pre-T-006 the servo
+     slammed to its low end the instant the command arrived and the "move" was over before the
+     speed frame mattered.
+
+13. **Non-inverted mirror: 100 → 0 after a release** (T-006)
+   - Same as case 12 on a non-inverted channel: park it at 100 (`maxPos`), wait for the
+     release, then script 0 at speed 10.
+   - Expected: `… to <minPos>, cmd: 0 … inverted: 0. lastPos: <maxPos>`; smooth travel, no
+     jump. (Pre-T-006 this direction jumped exactly like case 12 — the bug was never
+     inversion-specific; the opposite directions only twitched because the servo was already
+     near the low end.)
+
+14. **Slider hand-off** (T-006)
+   - Drag a servo to roughly mid-range and let go; wait for the release; then script 100 at
+     speed 10.
+   - Expected: `lastPos:` in the `Setting servo` line is the last slider µs (within the
+     slider's resolution), and the servo departs from where the slider left it. This proves
+     the slider path records `lastPos` too — pre-T-006 the line would have replayed the home
+     position.
+
+15. **Move while still energized** (T-006)
+   - Script 0 at speed 10, then within 5 s script 100 at speed 10.
+   - Expected: smooth reversal from wherever the first move had reached, no jump — the
+     pre-position frame is a no-op while the Maestro still knows the position. Second line
+     shows `lastPos: <first move's target>`.
+
+16. **GPIO channel gets no pre-position frame** (T-006; human-gated on a relay or LED)
+   - Command the GPIO channel on, then on again, then off → on → off.
+   - Expected: `lastPos: -1` on every line; the output holds steady across the repeated "on"
+     (no blip) and toggles normally on the off/on/off. Pre-T-006 every GPIO command was
+     preceded by a LOW frame; with the encoder fix that would have become a HIGH blip for any
+     channel whose configured min was ≥ 1500 µs, so the frame is no longer sent.
+
 ## Edge cases / negative tests
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
@@ -264,3 +316,19 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 - **Wedged serial path** (T-003, hard to provoke): if the send mutex cannot be taken for ~2 s
   the operation logs `Send mutex timeout on module M after 20 attempts` and drops the command
   without touching channel state. Pre-T-003 the caller spun forever.
+- **`lastPos` not recorded** (T-006; needs a `RELOAD_CONFIG` overlapping the end of a move):
+  `recordLastPos: state mutex timeout, next move for channel N on module M re-energizes at the
+  previous target` WARN. The move itself completed; only the *next* move on that channel starts
+  with a jump to the previous target (the pre-T-006 behaviour), and that move records normally.
+- **Partial send leaves `lastPos` alone** (T-006, with the T-003 dropped-frame case above): a
+  move that stops before its target frame does not update `lastPos` — the servo is either still
+  at the old value (the pre-position frame went out) or untouched. The next `Setting servo` line
+  shows the older `lastPos`, which is correct.
+- **Servo moved by hand or by load while released** (T-006, accepted limitation): `lastPos` is
+  the last *commanded* target, not a reading from the Maestro. If the servo is physically moved
+  while off, the next move begins with a jump back to `lastPos` before the smooth travel. The
+  fix, if it ever matters, is reading the position back (`GET_SERVO_POSITION 0x90`) — Backlog.
+- **Boot / reload** (T-006): `HomeServos` sets `lastPos = home` and sends the home target, so
+  the first scripted move after boot shows `lastPos: <home>` and departs from home. A home
+  target frame that fails to queue (`HomeServos: frames not queued …`) leaves `lastPos` claiming
+  home while the servo sits released wherever it was — pre-existing, boot/reload only.

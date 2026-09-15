@@ -96,9 +96,10 @@ GPIO channel and this task stops sending it there.
 
 ## Acceptance criteria
 
-- [ ] Native tests for `EncodeMaestroTarget` (the four vectors above) pass; `pio test -e test`
-      green.
-- [ ] `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean; clang-format clean.
+- [x] Native tests for `EncodeMaestroTarget` (the four vectors above) pass; `pio test -e test`
+      green (495/495, 2026-09-14).
+- [x] `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean; clang-format clean
+      (2026-09-14).
 - [ ] `QueueCommand` for a servo channel logs `lastPos` and, after a complete send, the next
       command on that channel logs the previous command's target as its `lastPos`.
 - [ ] Bench, the reported bug: inverted servo at position 0 (`maxPos`), wait for
@@ -144,6 +145,15 @@ pio run -e metro_s3
 
 ## Implementation checklist
 
-<!-- Added when work STARTS, not at authoring time. Check off + commit as work proceeds. -->
-
-- [ ]
+- [x] RED: `EncodeMaestroTarget` tests (0, 500, 1500, 2500) added to
+      `test/test_native/astros_servo_utils_tests.cpp`, observed failing
+- [x] GREEN: `EncodeMaestroTarget` in `AstrOsServoUtils.hpp`; `pio test -e test` green (495/495)
+- [x] `setServoPosition`: `targetUs` / `lastPosUs`, both `SET_TARGET` frames via the encoder;
+      comments updated (.cpp + .hpp)
+- [x] `recordLastPos` added; `QueueCommand` (servo channels only, GPIO passes -1, `lastPos` in
+      the INFO line) and `SetServoPosition` record after `SendStage::Target`
+- [x] both boards build clean; clang-format clean on changed files
+- [x] QA plan cases 12–16 + edge cases added to `.docs/qa/maestro-servo-release.md`
+- [x] PLAN.md Status updated
+- [x] PR #60 opened 2026-09-14
+- [ ] bench: reported bug, mirror, slider hand-off, still-on, GPIO (human-gated)

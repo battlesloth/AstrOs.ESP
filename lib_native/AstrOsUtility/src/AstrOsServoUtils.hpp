@@ -92,6 +92,22 @@ int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
     return std::clamp(move, minPos, maxPos);
 }
 
+/// @brief Encode a Maestro Set Target payload. The Maestro takes targets in
+/// quarter-microseconds as two 7-bit bytes (low bits first); 0 means "stop
+/// sending pulses" (servo off) and stays 0. Every SET_TARGET frame goes
+/// through this so a µs value encodes the same wherever it is used (T-006:
+/// the pre-position frame used to send raw µs, a quarter of the intended
+/// pulse).
+/// @param us pulse width in microseconds (0 = off)
+/// @param lo out: bits 0-6 of the quarter-µs target
+/// @param hi out: bits 7-13 of the quarter-µs target
+inline void EncodeMaestroTarget(int us, uint8_t &lo, uint8_t &hi)
+{
+    int quarterUs = us * 4;
+    lo = quarterUs & 0x7F;
+    hi = (quarterUs >> 7) & 0x7F;
+}
+
 // Floor on the release deadline: covers full-speed moves and loads whose
 // slew the Maestro speed model does not describe (linear actuators run at
 // their own rate regardless of the commanded pulse ramp). Was 20 s (T-001,
