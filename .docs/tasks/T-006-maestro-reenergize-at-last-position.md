@@ -155,5 +155,5 @@ pio run -e metro_s3
 - [x] both boards build clean; clang-format clean on changed files
 - [x] QA plan cases 12–16 + edge cases added to `.docs/qa/maestro-servo-release.md`
 - [x] PLAN.md Status updated
-- [ ] PR opened
+- [x] PR #60 opened 2026-09-14
 - [ ] bench: reported bug, mirror, slider hand-off, still-on, GPIO (human-gated)
