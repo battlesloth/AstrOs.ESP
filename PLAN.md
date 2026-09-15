@@ -4,11 +4,11 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  none — Maestro servo-release task set (T-001..T-005) complete
-Now:     nothing in progress — v1.2.1 pushed to `release/rel_1.2` 2026-09-07 (backport of T-001..T-005 + CI pin); release workflow building
-Next:    pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
+Active:  T-006 — re-energize released Maestro servos at their last commanded position (standalone)
+Now:     T-006 task file committed 2026-09-14, implementation not started — branch `feature/T-006-maestro-reenergize-at-last-position` to be cut from `develop`
+Next:    after T-006: pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
 Blocked: none
-Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release deadline = max(5 s, travel + 10 %), bench-verified via the server API
+Last:    2026-09-14 — diagnosed the inverted-servo jump: the pre-position frame sends `lastPos` in µs where the Maestro expects quarter-µs (375 µs on the wire for a 1500 home) and `lastPos` is never updated after a move; promoted the 2026-08-31 Backlog finding to T-006 with both fixes
 
 ## Standalone tasks
 
@@ -17,13 +17,13 @@ Last:    2026-09-07 — T-005 complete: merged to develop via PR #59; release de
 - [x] **T-003** — Synchronize Maestro channel state between timer and command paths (`.docs/tasks/completed/T-003-maestro-channel-state-sync.md`) — done 2026-09-06
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
 - [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
+- [ ] **T-006** — Re-energize released Maestro servos at their last commanded position (`.docs/tasks/T-006-maestro-reenergize-at-last-position.md`) — drafted 2026-09-14
 
 ## Backlog (unscheduled candidates)
 
 - Known-fragile catalog: `.docs/code-review/code-review.md` (P0–P3) — headline items also listed in CLAUDE.md "Known-fragile areas" (timer-callback leaks/stack pressure, `peers` vector mutex, `AnimationController` unlocked reads, `setKeyId` peer-index assumption, cross-core globals). Promote individually as tasks.
 - Queue consumers that fail to `free()` embedded pointers (same review catalog) — sweepable as one task or per-consumer.
 - Upgrade to espressif32 7.x / ESP-IDF 6.x deliberately: migrate both `sdkconfig.<env>` files (IDF 6.1 kconfgen crashes on the committed IDF-5-era files — the 2026-08-31 CI outage), then lift the `espressif32@6.13.0` pin in `platformio.ini`. Own task; touches both boards.
-- `MaestroModule::QueueCommand` passes a stale `lastPos` when re-arming a released servo — `lastPos` is only ever set by `HomeServos`, so the pre-speed/accel position command replays the home position, not the last commanded one. Found 2026-08-31 during the servo-release investigation; needs its own investigation before a fix task.
 - **Panic stop does not reach PCA9685 (I²C) servo channels.** T-004 covers the Maestro; the I²C servo path has the same gap. Found 2026-09-06.
 - **Panic relay latency to padawans.** The master's `SEND_PANIC_STOP` relays are queue entries behind its own `PANIC_STOP` on `interfaceResponseQueueTask`, so when the server lists the master's record first (`generatePanicStop` iterates `runCommand.configs` in whatever order they come) padawans wait for the master's Maestro offs (~150 ms per module healthy; worst case summing every bound — 5 s animation mutex + 1 s map mutex + 2.2 s send take + 14 × 500 ms queue waits — ≈ 15 s for one module, ≈ 24 s for two; measured healthy: relay out 30 ms after panic start). Candidate fix: `handlePanicStop` drains the queue and posts a service command; `serviceQueueTask` runs the per-module `Panic()` calls — that also serializes panic against `RELOAD_CONFIG` on the same task, removing the `LoadConfig`-holds-`stateMutex` collision. Decide after QA 7a measures the delay. Found 2026-09-06 (T-004 review).
 - **Panic ordering hardening (future version).** Decided 2026-09-07 to document rather than fix in T-004 — edge cases needing a second operator action or mutex contention to overlap the panic within ~1 s, and in every case the servos still release on their normal deadline: (1) a config reload in progress homes every channel after the offs; (2) panic is not serialized with module initialization (may snapshot a module before its `LoadConfig`, or send offs before its homing); (3) `AnimationCtrl.panicStop()` can wait up to 5 s on `animationMutex` before the drain and offs. Candidate fixes: a reload barrier mutex held across all of `loadMaestroConfigs` and around the panic snapshot + offs (not the service task — `FORMAT_SD` runs there and would block a kill); a split `haltDispatch()` so the order becomes halt → drain → offs → bounded queue clear. Related and unfixable at this layer: a controller that crashes and restarts during a panic does not know it was in panic. Not industrial control software; revisit if a real incident ever traces to one of these.
