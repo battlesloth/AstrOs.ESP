@@ -1,9 +1,7 @@
 # T-006: Re-energize released Maestro servos at their last commanded position
 
-<!-- File: .docs/tasks/T-006-maestro-reenergize-at-last-position.md. Branch: feature/T-006-maestro-reenergize-at-last-position.
-     PR title: "T-006: Re-energize released Maestro servos at their last commanded position".
-     Everything above "Implementation checklist" is written and committed BEFORE implementation code.
-     Sizing rules and rationale: .docs/agentic-workflow.md §1. -->
+<!-- File: .docs/tasks/completed/T-006-maestro-reenergize-at-last-position.md (completed 2026-09-14; PR #60). Branch: feature/T-006-maestro-reenergize-at-last-position.
+     PR title: "T-006: Re-energize released Maestro servos at their last commanded position". -->
 
 ## Context
 
@@ -100,19 +98,20 @@ GPIO channel and this task stops sending it there.
       green (495/495, 2026-09-14).
 - [x] `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build clean; clang-format clean
       (2026-09-14).
-- [ ] `QueueCommand` for a servo channel logs `lastPos` and, after a complete send, the next
-      command on that channel logs the previous command's target as its `lastPos`.
-- [ ] Bench, the reported bug: inverted servo at position 0 (`maxPos`), wait for
+- [x] `QueueCommand` for a servo channel logs `lastPos` and, after a complete send, the next
+      command on that channel logs the previous command's target as its `lastPos` (bench
+      2026-09-14).
+- [x] Bench, the reported bug: inverted servo at position 0 (`maxPos`), wait for
       `Turning off servo N`, then script `100` at speed 10 / accel 0 → the servo departs from
       `maxPos` and travels smoothly to `minPos` over ~(range / 0.25) ms (≈ 4 s for a 1000 µs
       range); no initial jump. Console shows `… to <minPos> … lastPos: <maxPos>`.
-- [ ] Bench, mirror: non-inverted servo at 100 (`maxPos`), released, then `0` at speed 10 →
+- [x] Bench, mirror: non-inverted servo at 100 (`maxPos`), released, then `0` at speed 10 →
       same smooth travel, no jump.
-- [ ] Bench, slider hand-off: drag a servo to roughly mid-range, wait for release, script `100`
+- [x] Bench, slider hand-off: drag a servo to roughly mid-range, wait for release, script `100`
       at speed 10 → departs from the slider position (log `lastPos` ≈ the last slider µs).
-- [ ] Bench, still-on: script `0`, then within 5 s script `100` at speed 10 → smooth reversal,
+- [x] Bench, still-on: script `0`, then within 5 s script `100` at speed 10 → smooth reversal,
       no jump (frame 1 is a no-op while on).
-- [ ] Bench, GPIO (human-gated): a relay/LED channel commanded on twice in a row holds its state
+- [x] Bench, GPIO (human-gated): a relay/LED channel commanded on twice in a row holds its state
       with no blip; commanded off → on → off toggles as before.
 
 ## Out of scope
@@ -156,4 +155,5 @@ pio run -e metro_s3
 - [x] QA plan cases 12–16 + edge cases added to `.docs/qa/maestro-servo-release.md`
 - [x] PLAN.md Status updated
 - [x] PR #60 opened 2026-09-14
-- [ ] bench: reported bug, mirror, slider hand-off, still-on, GPIO (human-gated)
+- [x] bench (2026-09-14, Jeff): QA cases 12–16 passed — reported bug, mirror, slider hand-off,
+      still-on, GPIO; PR #60 merged to develop 2026-09-14
