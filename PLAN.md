@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  none — T-006 complete
-Now:     v1.2.2 patch (T-006 backport) being cut on `release/rel_1.2` — merge of develop + VERSION 1.2.2 prepared locally, push pending
+Now:     nothing in progress — v1.2.2 published 2026-09-14 from `release/rel_1.2` (T-006 backport; six artifacts, both boards)
 Next:    pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
 Blocked: none
 Last:    2026-09-14 — T-006 complete: merged to develop via PR #60; released servos re-energize at their last commanded target (quarter-µs encoding fixed, `lastPos` recorded after every move, no pre-position frame on GPIO), bench cases 12–16 passed
@@ -38,6 +38,11 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-09-14 release v1.2.2 — patch on `release/rel_1.2`
+  - `develop` merged into `release/rel_1.2` (clean; tree identical to develop), `VERSION` set to 1.2.2 on the release branch, pushed → release workflow tagged v1.2.2 and published both boards (run 34920852402, six artifacts)
+  - contents: T-006 only (released servos re-energize at their last commanded target; quarter-µs encoding, `lastPos` recorded after every move, no pre-position frame on GPIO); no new features, so a patch
+  - `main` untouched: it is the RC stream for the next minor (VERSION 1.3.0 on develop)
 
 - 2026-09-14 T-006 complete — re-energize released Maestro servos at their last commanded position (PR #60 → develop)
   - diagnosis: the pre-position frame `setServoPosition` sends before speed/accel went out in raw µs where the Maestro expects quarter-µs (a 1500 home = 375 µs on the wire → slam to the low end), and `lastPos` was only ever written by config load / `HomeServos`; a released servo jumps straight to its first target, so both showed as an instant jump — full-range for inverted 0 → 100 and non-inverted 100 → 0
