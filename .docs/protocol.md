@@ -2,10 +2,11 @@
 
 This document is checked into both **AstrOs.Server** and **AstrOs.ESP** at the same content. Any change must be made in both repos at the same commit; sub-projects code against this file. Do not let the two copies drift.
 
-It covers the two cross-repo wire surfaces:
+It covers these cross-repo wire surfaces:
 
 - **A.** Server ↔ Master ESP, over serial.
 - **B.** Master ESP ↔ Padawan ESPs, over ESP-NOW.
+- **C.** Animation script commands: the per-controller script string inside `DEPLOY_SCRIPT`, including random-span types 6 and 7.
 
 The Server ↔ Vue WebSocket contract (`flashJobStarted`, `flashControllerUpdate`, etc.) lives in AstrOs.Server only; see `.docs/plans/20260427-2202-firmware-ota-decomposition.md` § "Server ↔ Vue".
 
@@ -256,6 +257,59 @@ Master                                 Padawan
 - v1: abort the failing padawan and move on. Wire format leaves room for resume-from-seq-N (`next-expected-seq` field) but it is not implemented in v1.
 - `OTA_END_ACK HASH_MISMATCH`: padawan refuses the commit; partition stays bootable on the previous image.
 - Reboot watchdog: padawan boots into new firmware, must call `esp_ota_mark_app_valid_cancel_rollback` on first successful POLL_ACK back to master. Otherwise the bootloader auto-rolls back on next boot.
+
+## C. Animation script commands (Server → ESP, inside `DEPLOY_SCRIPT`)
+
+Added 2026-10-22 for random span events (spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md`). Types 0–5 are documented here as they already exist. Types 6 and 7 are new.
+
+### Grammar
+
+- A controller's script is one string: commands separated by `;`, fields within a command separated by `|`. There is no trailing `;`. All fields in types 6 and 7 are base-10 integers.
+- Field 0 is the command type. Field 1 is the **delta**: the milliseconds to wait *after* dispatching this command before the next one. It is not an absolute time. Only the first command in a same-time group carries the delta; the others carry `0`. The firmware floors every delta at 10 ms.
+- The server pads every controller's script with type-0 buffer commands at t = 0 and at the script's end, so all controllers finish together. The script's end is the latest event start **or random-span end** across all controllers.
+- **Unknown types:** firmware skips a command whose type it doesn't know, but still waits out its delta. Builds before ESP T-009 therefore drop types 6/7 and keep the rest of the script on time.
+
+| Type | Name (Server `CommandType` / ESP `MODULE_TYPE`) | Fields |
+|---|---|---|
+| 0 | `none` / `NONE` | `0\|delta\|0` |
+| 1 | `maestro` / `MAESTRO` | `1\|delta\|maestroIdx\|channel\|position\|speed\|accel` |
+| 2 | `i2c` / `I2C` | `2\|delta\|i2cAddr\|message` |
+| 3 | `genericSerial` / `GENERIC_SERIAL` | `3\|delta\|uartCh\|baud\|value` |
+| 4 | `kangaroo` / `KANGAROO` | `4\|delta\|uartCh\|baud\|ch\|action\|speed\|position` |
+| 5 | `gpio` / `GPIO` | `5\|delta\|gpioChannel\|0 or 1` |
+| 6 | `maestroRandom` / `MAESTRO_RANDOM` | `6\|delta\|maestroIdx\|channel\|spanMs\|minGapMs\|maxGapMs\|minPos\|maxPos\|minMove\|maxMove\|speed\|accel` (13 fields) |
+| 7 | `gpioRandom` / `GPIO_RANDOM` | `7\|delta\|gpioChannel\|spanMs\|minGapMs\|maxGapMs` (6 fields) |
+
+When extending this table, **append**. Never renumber.
+
+### Types 6 and 7: random spans
+
+- **When it's sent:** a random span is sent once, at its start time. `spanMs` is the span's length. The firmware makes the first change at the start, then one change after each gap. It issues no change at or after `start + spanMs`. An event at exactly the span's end time is dispatched normally and wins.
+- **Type 6, servo channel:** moves to a random position. Positions and moves are integer percents of the channel's configured µs range, before inversion, the same as type 1. `maxMove` = `0` means "no max".
+- **Type 6, digital channel** (Maestro channel with `isServo = false`): toggles between 500 µs and 2500 µs. The server sends `minPos`, `maxPos`, `minMove`, `maxMove`, `speed` and `accel` as `0`, and firmware ignores them.
+- **Type 7:** toggles an ESP GPIO channel.
+- **Valid values.** The firmware rejects a command that breaks any of these, logs it, and skips it; its delta still applies. The server skips an invalid span the same way, replacing it with a type-0 command that carries the same delta.
+  - all spans:
+    - `spanMs ≥ minGapMs`
+    - `maxGapMs ≥ minGapMs`
+    - `minGapMs ≥ 20` (digital and GPIO)
+  - servo channels only:
+    - `minGapMs ≥ 100`
+    - `0 ≤ minPos < maxPos ≤ 100`
+    - `1 ≤ minMove ≤ (maxPos − minPos) / 2`
+    - `maxMove = 0`, or `minMove ≤ maxMove ≤ maxPos − minPos`
+    - `0 ≤ speed, accel ≤ 255`
+- **Servo move rule** (firmware):
+  - **Direction:** if the current position ≤ `minPos + minMove`, move up. If it is ≥ `maxPos − minMove`, move down. Otherwise pick a random direction.
+  - **Size:** uniform between `minMove` and `min(maxMove, room left in that direction)`. With no max, the bound is the room left.
+  - **Clamp:** the result is clamped to `[minPos, maxPos]`.
+  - **Starting outside the range:** if the current position is outside `[minPos, maxPos]` at the start, the first move goes to a uniform random position inside the range.
+  - **Gap after each move:** the larger of a uniform draw in `[minGapMs, maxGapMs]` and the estimated travel time for that move.
+- **GPIO and digital toggle:** each change flips the output. Gaps are a uniform draw in `[minGapMs, maxGapMs]`, never stretched.
+- **Stopping:**
+  - Panic and config reload stop every active span.
+  - A new span on the same channel replaces the old one.
+  - Manual commands (`RUN_COMMAND`, `SERVO_TEST`) do not stop a span.
 
 ## How to amend this document
 

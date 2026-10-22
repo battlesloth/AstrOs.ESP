@@ -4,11 +4,19 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  none — T-006 complete
-Now:     nothing in progress — v1.2.2 published 2026-09-14 from `release/rel_1.2` (T-006 backport; six artifacts, both boards)
-Next:    pick from Backlog; the per-channel release-time setting is the one with a user-visible payoff. `develop` stays at VERSION 1.3.0; a develop → main PR would start the v1.3.0-RC stream when a feature warrants it
-Blocked: none
-Last:    2026-09-14 — T-006 complete: merged to develop via PR #60; released servos re-energize at their last commanded target (quarter-µs encoding fixed, `lastPos` recorded after every move, no pre-position frame on GPIO), bench cases 12–16 passed
+Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
+Now:     — (T-007 or T-008 next; they are independent)
+Next:    T-007 + T-008 (any order) → T-009; release v1.3.0 after T-009 bench sign-off so AstrOs.Server can raise its minimum firmware version
+Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
+Last:    2026-10-22 — random span events design approved (AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md`); wire format pinned in `.docs/protocol.md` § C
+
+## Random span events
+
+Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · wire format: `.docs/protocol.md` § C (identical in both repos) · server side: AstrOs.Server `PLAN.md` § Random span events (its T-006 database guard, T-007 data, T-008 conversion; then the scripter UI, then a min-firmware bump)
+
+- [ ] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/T-007-random-span-command-parsers.md`)
+- [ ] **T-008** — Random span math and span table (pure) (`.docs/tasks/T-008-random-effects-math.md`)
+- [ ] **T-009** — Run random spans on the controller (`.docs/tasks/T-009-random-effects-task.md`) — needs T-007 + T-008
 
 ## Standalone tasks
 
@@ -30,6 +38,9 @@ Last:    2026-09-14 — T-006 complete: merged to develop via PR #60; released s
 - **Panic ordering hardening (future version).** Decided 2026-09-07 to document rather than fix in T-004 — edge cases needing a second operator action or mutex contention to overlap the panic within ~1 s, and in every case the servos still release on their normal deadline: (1) a config reload in progress homes every channel after the offs; (2) panic is not serialized with module initialization (may snapshot a module before its `LoadConfig`, or send offs before its homing); (3) `AnimationCtrl.panicStop()` can wait up to 5 s on `animationMutex` before the drain and offs. Candidate fixes: a reload barrier mutex held across all of `loadMaestroConfigs` and around the panic snapshot + offs (not the service task — `FORMAT_SD` runs there and would block a kill); a split `haltDispatch()` so the order becomes halt → drain → offs → bounded queue clear. Related and unfixable at this layer: a controller that crashes and restarts during a panic does not know it was in panic. Not industrial control software; revisit if a real incident ever traces to one of these.
 - **`PANIC_STOP` has no ACK/NAK.** The server never learns whether the kill reached hardware; `Panic()` returns `void` so `handlePanicStop` cannot aggregate either. Needs a wire-format contract pinned in both repos (AstrOs.Server + AstrOs.ESP) before implementing. Found 2026-09-06 (T-004 review).
 - **`MaestroModule` hygiene** (all pre-existing, found by T-002 review 2026-09-06; mutex leak and half-built-object items fixed in T-003): `LoadConfig` ignores `loadMaestroServos`'s return and copies the parsed file over entries 0..maxId only, so entries above the file's highest id (and every entry when the file is missing/unparseable) keep stale state on reload (fix belongs with T-003's lock — clearing opens a window against the timer); `QueueCommand` lacks the `loading` gate `SetServoPosition` has and treats a pre-config channel as GPIO; a reload that *disables* a channel copies a fresh struct over it (`on = false`), so a servo energized on that channel is never released, and panic skips it as disabled (found by the 2026-09-07 fresh-context review); the hard-coded `24`s (now more, `Panic` adds five) want one named channel-count constant; `UpdateConfig` still spins unbounded on the send mutex (T-003 bounded the command paths only — switch it to `takeSendMutex()` and decide what a dropped config update should do).
+- **Existing per-type parsers use unchecked `std::stoi`** (`MaestroCommand.cpp`, `GpioCommand.cpp`, `SerialCommand.cpp`, `I2cCommand.cpp`). With exceptions disabled, a non-numeric field aborts and reboots the controller. An older AstrOs.Server reading a newer DB could send `position = undefined` this way; the server's T-006 guard covers future builds only. Harden to `strtol` like T-007's parsers. Found 2026-10-22 (random span events design).
+- **`GpioModule::SendCommand` bounds check is off by one** (`command.channel > gpioChannels.size()`, ~line 78): `channel == size` passes and `.at()` throws. Quick fix on its own branch. Found 2026-10-22.
+- **`.docs/protocol.md` copies have drifted between repos** (OTA sections: Server has master self-flash `FW_PROGRESS` rows; ESP has `OTA_FLASH_RESULT`). § C was added identically on 2026-10-22; reconcile the rest.
 
 Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike; the kill-switch's end-to-end latency is dominated by that, not by the firmware (whose panic handler completes in ~10 ms). Worth a server-side look. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
