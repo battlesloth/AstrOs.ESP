@@ -288,7 +288,7 @@ When extending this table, **append**. Never renumber.
 - **Type 6, servo channel:** moves to a random position. Positions and moves are integer percents of the channel's configured µs range, before inversion, the same as type 1. `maxMove` = `0` means "no max".
 - **Type 6, digital channel** (Maestro channel with `isServo = false`): toggles between 500 µs and 2500 µs. The server sends `minPos`, `maxPos`, `minMove`, `maxMove`, `speed` and `accel` as `0`, and firmware ignores them.
 - **Type 7:** toggles an ESP GPIO channel.
-- **Valid values.** The firmware rejects a command that breaks any of these, logs it, and skips it; its delta still applies. The server skips an invalid span the same way, replacing it with a type-0 command that carries the same delta.
+- **Valid values.** The firmware rejects a command that breaks any of these, logs it, and skips it; its delta still applies. The server skips an invalid span the same way, replacing it with a type-0 command that carries the same delta. Before validating, the server rounds `spanMs`, `minGapMs` and `maxGapMs` to whole milliseconds (seconds × 1000 isn't exact in floating point). Every other field must already be an integer.
   - all spans:
     - `spanMs ≥ minGapMs`
     - `maxGapMs ≥ minGapMs`
