@@ -24,7 +24,7 @@ T-009 wires it to FreeRTOS. This task has no dependency on T-007 beyond the `MOD
   - Clamp the result to `[minPos, maxPos]`.
   - Current position outside the range: uniform position in `[minPos, maxPos]`.
 - **The gap after a servo move** is `max(NextGapMs(min, max), MoveTravelMs(distanceUs, speed, accel))`. GPIO and digital gaps are never stretched.
-- **The existing `AstrOsServoUtils.hpp` functions are unchanged.** One new helper is added.
+- **The existing `AstrOsServoUtils.hpp` functions keep their behavior.** Their bodies move verbatim to a new `lib_native/AstrOsUtility/src/AstrOsServoUtils.cpp`; the header keeps the declarations and doc comments, the constants, `constexpr CeilDiv` and `inline EncodeMaestroTarget`. One new helper is added. (Amended 2026-10-22, Jeff: the header defined non-`inline` functions, so a second including file — `RandomEffects.cpp`, the new test file, T-009's `main.cpp` — fails to link with "multiple definition".)
 
 ## Task
 
@@ -57,7 +57,7 @@ class RandomSpanTable {
 public:
     static constexpr int END_GUARD_MS = 20;
     RandomSpanTable(size_t capacity, Rand32 rand);
-    bool Start(const SpanStart &start);                        // false when full (table unchanged)
+    bool Start(const SpanStart &start);                        // false when full or gaps break § C (table unchanged)
     void Clear();
     void Collect(uint32_t nowMs, std::vector<SpanChange> &out);// appends due changes, reschedules, drops ended spans
     uint32_t MsUntilNext(uint32_t nowMs) const;                // UINT32_MAX when empty
@@ -81,9 +81,9 @@ public:
   - An entry whose next change would land within `END_GUARD_MS` of its deadline is dropped after emitting.
 - **Time comparisons** are wrap-safe: `(int32_t)(a - b)`.
 
-### Helper in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp`
+### Helper in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` / `.cpp`
 
-`int PercentFromPosition(int minUs, int maxUs, int us, bool inverted)` is the inverse of `GetRelativeRequestedPosition`:
+`int PercentFromPosition(int minUs, int maxUs, int us, bool inverted)`, declared in the header and defined in the `.cpp`, is the inverse of `GetRelativeRequestedPosition`:
 
 - it rounds to the nearest percent
 - it clamps to 0–100
@@ -139,3 +139,16 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 
 - `pio test -e test` → green, including `astros_random_effects_tests`.
 - `pio run -e lolin_d32_pro` and `pio run -e metro_s3` → both build.
+
+## Implementation checklist
+
+- [ ] Split `AstrOsServoUtils.hpp` into `.hpp` + `.cpp` (bodies verbatim); RED first: a second including file fails to link; GREEN: existing servo-utils tests pass unchanged
+- [ ] Write `astros_random_effects_tests.cpp` (all tests in the Task section); RED: compile error on the missing `RandomEffects.hpp` / `PercentFromPosition`
+- [ ] Add the `lib_native/AstrOsRandomEffects` skeleton (README, header, sentinel stubs) and the `PercentFromPosition` stub; RED: the tests fail on their assertions
+- [ ] Implement `UniformInt`, `NextGapMs`, `NextServoTarget`, `MoveTravelMs`, `PercentFromPosition`; GREEN
+- [ ] Implement `RandomSpanTable`; GREEN
+- [ ] Register the lib in `PURE_LIBS`; purity grep clean; clang-format 18.1.8 clean; CLAUDE.md lib table row
+- [ ] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [ ] Mutation pass on the new code (each mutation fails a native test)
+- [ ] `.docs/qa/random-span-events.md` note (move rule + table covered natively)
+- [ ] Code review (`superpowers:requesting-code-review`); address Critical/Important
