@@ -71,6 +71,7 @@ public:
   - An entry with an equal key (type, module, channel) is **replaced** in place.
   - Otherwise `Start` takes a free slot.
   - When the table is full, it returns false and existing spans are untouched.
+  - It also returns false, leaving the table unchanged, when the gaps break § C: `minGapMs < 20`, `maxGapMs < minGapMs`, or `spanMs < minGapMs`. This is defense in depth (added 2026-10-22, from the T-007 review). A zero gap would make `Collect` emit on every pass and spin the task. T-009 validates first, but the table must not depend on it.
   - The first change is due at `startMs`. The deadline is `startMs + spanMs`.
 - **`Collect(now)`:** for each entry whose next change is due:
   - If `now` is within `END_GUARD_MS` of the deadline, or past it, the entry is dropped **with no change**.
@@ -113,6 +114,7 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
   - `TableFirstChangeAtStart`: `Collect(startMs)` emits exactly one change.
   - `TableToggleAlternatesFromInitialLevel`: initialLevel low gives high, low, high…
   - `TableReplacesSameKey`
+  - `TableStartRejectsBadGaps`: `minGapMs` 0, `minGapMs` 19, `maxGapMs < minGapMs`, and `spanMs < minGapMs` each return false. `ActiveCount` doesn't change, and an existing span with the same key is not replaced.
   - **Review focus:** `TableFullRejectsAndKeepsExisting`. Capacity 2 with 2 active: `Start` returns false, `ActiveCount` stays 2, and both still emit.
   - `TableNoChangeInsideEndGuard`: no change is emitted at or after `deadline − 20`, and the entry is gone after.
   - `TableServoGapStretchedByTravel`: speed 1, accel 0, rangeUs 2000, and a forced 80 % move. The next change is ≥ `MoveTravelMs(1600, 1, 0)` later, not the drawn gap.

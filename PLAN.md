@@ -6,7 +6,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
 Now:     T-007 — Parse random span commands (types 6 and 7), branch `feature/T-007-random-span-command-parsers`
-Next:    agreed order (2026-10-22): T-007 → T-008 → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI)
+Next:    agreed order (2026-10-22): T-007 → T-008 → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
 Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
 Last:    2026-10-22 — random span events design approved (AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md`); wire format pinned in `.docs/protocol.md` § C
 
