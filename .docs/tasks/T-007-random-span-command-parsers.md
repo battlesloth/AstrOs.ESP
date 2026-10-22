@@ -112,3 +112,28 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 - [x] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
 - [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; Important #2 fixed (accept-side zero boundaries), doc drift fixed; Important #1 (server must emit integer ms) raised to Jeff as a server T-008 contract amendment
 
+## Review notes (2026-10-22 branch review)
+
+The review found 0 Critical issues. Fixed in 41e7a5b:
+- Important #2: accept-side tests for zero boundaries.
+- Doc drift: the lib README, the CLAUDE.md lib table, and a test comment.
+
+**Raised to Jeff (outside this diff):** AstrOs.Server T-008 must emit integer milliseconds.
+
+- The problem: a 2.01 s gap × 1000 is `2009.9999999999998`, and this parser rejects that as `NOT_A_NUMBER`.
+- Its Contract also lists "every field is an integer" under servo-only, and it validates before rounding.
+- The proposed amendment: round span and gap values with `Math.round` before `randomSpanProblems`, and apply the integer rule to all spans.
+
+**Deferred minors** (not fixed; candidates for a follow-up):
+- **Test gaps where a mutation survived:**
+  - `minMove` 1 is never accepted.
+  - `maxMove == minMove` is never accepted.
+  - No odd range is tested (19–100).
+  - Speed −1 is never tested.
+  - An overflow below INT_MIN is never tested.
+  - The type-6 maxGap and span rules are only tested on type 7.
+  - The ERANGE branch can't be tested on a 64-bit host; add a comment saying so.
+- `ParsesValidMaestroRandom` uses colliding values: delta equals `spanMs`, and module, speed and accel are all 0. Use distinct values.
+- `ToInt` accepts leading whitespace, `+` and embedded NULs. Make it strict.
+- For T-009: `queue_random_msg_t` has no type field (derive it from the string's first field), and there's no `RandomParseError` → name helper for log lines.
+
