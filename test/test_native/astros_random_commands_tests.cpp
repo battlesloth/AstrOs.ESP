@@ -31,9 +31,10 @@ namespace
 
 TEST(RandomCommands, ParsesValidMaestroRandom)
 {
-    auto result = ParseRandomMaestroCommand("6|14000|0|3|14000|400|2000|20|100|15|60|0|0");
+    // Every field distinct, so a swapped field index shows up as a wrong value.
+    auto result = ParseRandomMaestroCommand("6|1500|1|3|14000|400|2000|20|100|15|60|7|9");
     ASSERT_EQ(RandomParseError::NONE, result.error);
-    EXPECT_EQ(0, result.cmd.module);
+    EXPECT_EQ(1, result.cmd.module);
     EXPECT_EQ(3, result.cmd.channel);
     EXPECT_EQ(14000, result.cmd.spanMs);
     EXPECT_EQ(400, result.cmd.minGapMs);
@@ -42,8 +43,8 @@ TEST(RandomCommands, ParsesValidMaestroRandom)
     EXPECT_EQ(100, result.cmd.maxPos);
     EXPECT_EQ(15, result.cmd.minMove);
     EXPECT_EQ(60, result.cmd.maxMove);
-    EXPECT_EQ(0, result.cmd.speed);
-    EXPECT_EQ(0, result.cmd.acceleration);
+    EXPECT_EQ(7, result.cmd.speed);
+    EXPECT_EQ(9, result.cmd.acceleration);
 }
 
 TEST(RandomCommands, ParsesValidMaestroRandomNonZeroMotion)
@@ -58,7 +59,8 @@ TEST(RandomCommands, ParsesValidMaestroRandomNonZeroMotion)
 
 TEST(RandomCommands, ParsesValidGpioRandom)
 {
-    auto result = ParseRandomGpioCommand("7|14000|2|14000|50|400");
+    // delta (1500) differs from spanMs (14000) so a swapped index shows up.
+    auto result = ParseRandomGpioCommand("7|1500|2|14000|50|400");
     ASSERT_EQ(RandomParseError::NONE, result.error);
     EXPECT_EQ(2, result.cmd.channel);
     EXPECT_EQ(14000, result.cmd.spanMs);
@@ -106,8 +108,24 @@ TEST(RandomCommands, RejectsNonNumeric)
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomMaestroCommand("6|0|0|3||400|2000|20|100|15|60|0|0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER,
               ParseRandomMaestroCommand("6|0|0|3|99999999999|400|2000|20|100|15|60|0|0").error);
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER,
+              ParseRandomMaestroCommand("6|0|0|3|-99999999999|400|2000|20|100|15|60|0|0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|50|4o0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|x|2|14000|50|400").error);
+}
+
+TEST(RandomCommands, RejectsLooseNumbers)
+{
+    // § C fields are plain base-10 integers; strtol alone is more lenient.
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000| 50|400").error);
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|+50|400").error);
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|50 |400").error);
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|-|400").error);
+
+    std::string withNul = "7|0|2|14000|50";
+    withNul.push_back('\0');
+    withNul += "9|400";
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand(withNul).error);
 }
 
 TEST(RandomCommands, RejectsGapAndSpanRules)
@@ -117,8 +135,11 @@ TEST(RandomCommands, RejectsGapAndSpanRules)
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomMaestroCommand("6|0|0|3|14000|19|2000|0|0|0|0|0|0").error);
     // maxGapMs below minGapMs
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomGpioCommand("7|0|2|14000|400|50").error);
+    EXPECT_EQ(RandomParseError::OUT_OF_RANGE,
+              ParseRandomMaestroCommand("6|0|0|3|14000|400|300|20|100|15|60|0|0").error);
     // spanMs below minGapMs
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomGpioCommand("7|0|2|40|50|400").error);
+    EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomMaestroCommand("6|0|0|3|300|400|2000|20|100|15|60|0|0").error);
     // negative channel / module
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomGpioCommand("7|0|-1|14000|50|400").error);
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE,
@@ -158,6 +179,21 @@ TEST(RandomCommands, ServoFieldBoundaries)
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
 
     cmd = ValidServo();
+    cmd.minPos = 19; // odd range of 81: half rounds down to 40
+    cmd.minMove = 40;
+    EXPECT_TRUE(RandomServoFieldsValid(cmd));
+    cmd.minMove = 41;
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.minMove = 1; // the smallest allowed move
+    EXPECT_TRUE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.maxMove = cmd.minMove; // a fixed move size
+    EXPECT_TRUE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
     cmd.maxMove = 80; // the whole range
     EXPECT_TRUE(RandomServoFieldsValid(cmd));
     cmd.maxMove = 81;
@@ -178,6 +214,8 @@ TEST(RandomCommands, ServoFieldBoundaries)
     cmd.acceleration = 255;
     EXPECT_TRUE(RandomServoFieldsValid(cmd));
     cmd.speed = 256;
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+    cmd.speed = -1;
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
     cmd.speed = 0;
     cmd.acceleration = 256;

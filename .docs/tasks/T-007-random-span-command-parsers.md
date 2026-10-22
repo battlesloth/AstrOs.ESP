@@ -118,22 +118,19 @@ The review found 0 Critical issues. Fixed in 41e7a5b:
 - Important #2: accept-side tests for zero boundaries.
 - Doc drift: the lib README, the CLAUDE.md lib table, and a test comment.
 
-**Raised to Jeff (outside this diff):** AstrOs.Server T-008 must emit integer milliseconds.
+**Raised to Jeff and resolved:** AstrOs.Server T-008 must emit integer milliseconds.
 
-- The problem: a 2.01 s gap × 1000 is `2009.9999999999998`, and this parser rejects that as `NOT_A_NUMBER`.
-- Its Contract also lists "every field is an integer" under servo-only, and it validates before rounding.
-- The proposed amendment: round span and gap values with `Math.round` before `randomSpanProblems`, and apply the integer rule to all spans.
+- The problem: a 2.01 s gap × 1000 is `2009.9999999999998`, which this parser rejects.
+- Jeff approved the amendment on 2026-10-22, in AstrOs.Server 118eb50d (mirrored in `.docs/protocol.md` § C, AstrOs.ESP 2b77da1). T-008 now rounds span and gap values with `Math.round` before validating, and applies the integer rule to all spans.
 
-**Deferred minors** (not fixed; candidates for a follow-up):
-- **Test gaps where a mutation survived:**
-  - `minMove` 1 is never accepted.
-  - `maxMove == minMove` is never accepted.
-  - No odd range is tested (19–100).
-  - Speed −1 is never tested.
-  - An overflow below INT_MIN is never tested.
-  - The type-6 maxGap and span rules are only tested on type 7.
-  - The ERANGE branch can't be tested on a 64-bit host; add a comment saying so.
-- `ParsesValidMaestroRandom` uses colliding values: delta equals `spanMs`, and module, speed and accel are all 0. Use distinct values.
-- `ToInt` accepts leading whitespace, `+` and embedded NULs. Make it strict.
-- For T-009: `queue_random_msg_t` has no type field (derive it from the string's first field), and there's no `RandomParseError` → name helper for log lines.
+**The deferred minors, done at Jeff's request (follow-up commit):**
+- **Tests added for code-breaks that used to slip past:**
+  - `minMove` 1 is accepted, and so is `maxMove == minMove`.
+  - The odd range 19–100 accepts `minMove` 40 and rejects 41.
+  - Speed −1 is rejected, and so is an overflow below INT_MIN.
+  - The type-6 maxGap and span rules are tested.
+  - Every one of the reviewer's code-breaks was applied and shown to fail a test (9 of 9 caught), then the code was restored.
+- `ParsesValidMaestroRandom` and `ParsesValidGpioRandom` now use distinct values for every field.
+- `ToInt` is strict: an optional `-` and then digits only (`RejectsLooseNumbers`, RED → GREEN). There is a comment that ERANGE only fires on 32-bit `long` targets.
 
+**Still deferred (T-009 design, not a unit test):** `queue_random_msg_t` has no type field (derive it from the string's first field), and there's no `RandomParseError` → name helper for log lines.

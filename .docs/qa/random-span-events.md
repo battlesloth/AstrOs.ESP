@@ -26,7 +26,7 @@ The feature lands in three tasks:
 - **`FIELD_COUNT` rejects:**
   - wrong field counts (12 or 14 fields for type 6; 5 or 7 for type 7)
   - the wrong type field
-- **`NOT_A_NUMBER` rejects:** empty fields, non-numeric fields and int overflow
+- **`NOT_A_NUMBER` rejects:** empty fields, non-numeric fields, int overflow in both directions, and anything but a plain base-10 integer (no leading space, `+`, trailing text or embedded NUL)
 - **`OUT_OF_RANGE` rejects:**
   - a negative module or channel
   - `minGapMs < 20`
@@ -42,4 +42,4 @@ The feature lands in three tasks:
 
 There are no bench cases for T-007 alone. On hardware it behaves like the previous firmware: types 6 and 7 are skipped, and the rest of the script plays on time.
 
-Malformed commands aren't bench-tested at any stage. AstrOs.Server T-008's validation is meant to skip invalid spans before they're sent, and these native tests cover the firmware rejects. One known gap: the server must round span and gap values to integer milliseconds. A float such as `2009.9999999999998` is rejected here as `NOT_A_NUMBER`, and that rounding is pending an amendment to server T-008.
+Malformed commands aren't bench-tested at any stage. AstrOs.Server T-008's validation is meant to skip invalid spans before they're sent, and these native tests cover the firmware rejects. Server T-008 rounds span and gap values to whole milliseconds before it validates and sends them (its contract was amended 2026-10-22). Without that rounding, a float such as `2009.9999999999998` would be rejected here as `NOT_A_NUMBER`.

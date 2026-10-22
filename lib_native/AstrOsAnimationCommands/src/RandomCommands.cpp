@@ -3,6 +3,7 @@
 #include <AstrOsEnums.h>
 #include <BaseCommand.hpp>
 
+#include <cctype>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
@@ -18,9 +19,12 @@ namespace
     constexpr int MAX_POSITION = 100;
     constexpr int MAX_MAESTRO_MOTION = 255;
 
+    // § C fields are plain base-10 integers: an optional '-' then digits. strtol
+    // alone would skip leading whitespace, take a '+', and stop at an embedded NUL.
     bool ToInt(const std::string &field, int &out)
     {
-        if (field.empty())
+        size_t firstDigit = (!field.empty() && field[0] == '-') ? 1 : 0;
+        if (firstDigit >= field.size() || !std::isdigit(static_cast<unsigned char>(field[firstDigit])))
         {
             return false;
         }
@@ -29,7 +33,9 @@ namespace
         char *end = nullptr;
         long value = std::strtol(field.c_str(), &end, 10);
 
-        if (end == field.c_str() || *end != '\0' || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+        // ERANGE only fires where long is 32-bit (the ESP32); on a 64-bit host the
+        // int bounds catch the same overflow.
+        if (end != field.c_str() + field.size() || errno == ERANGE || value < INT_MIN || value > INT_MAX)
         {
             return false;
         }
