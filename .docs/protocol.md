@@ -290,6 +290,7 @@ When extending this table, **append**. Never renumber.
 - **Type 7:** toggles an ESP GPIO channel.
 - **Valid values.** The firmware rejects a command that breaks any of these, logs it, and skips it; its delta still applies. The server skips an invalid span the same way, replacing it with a type-0 command that carries the same delta. Before validating, the server rounds `spanMs`, `minGapMs` and `maxGapMs` to whole milliseconds (seconds × 1000 isn't exact in floating point). Every other field must already be an integer.
   - all spans:
+    - `maestroIdx`, `channel` and `gpioChannel` ≥ 0
     - `spanMs ≥ minGapMs`
     - `maxGapMs ≥ minGapMs`
     - `minGapMs ≥ 20` (digital and GPIO)
