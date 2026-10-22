@@ -13,8 +13,8 @@ extern "C"
         GENERIC_SERIAL,
         KANGAROO,
         GPIO,
-        MAESTRO_RANDOM, // 6: random span on a Maestro channel (.docs/protocol.md § C)
-        GPIO_RANDOM     // 7: random span on an ESP GPIO channel
+        MAESTRO_RANDOM = 6, // random span on a Maestro channel (.docs/protocol.md § C)
+        GPIO_RANDOM = 7     // random span on an ESP GPIO channel
     } MODULE_TYPE;
 
     typedef enum

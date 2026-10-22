@@ -1,8 +1,12 @@
 #include <AnimationCommand.hpp>
+#include <AstrOsAnimationEngine.hpp>
 #include <AstrOsEnums.h>
 #include <RandomCommands.hpp>
 #include <gtest/gtest.h>
 
+#include <climits>
+#include <cstring>
+#include <set>
 #include <string>
 
 // Wire format: .docs/protocol.md § C (types 6 and 7).
@@ -59,7 +63,7 @@ TEST(RandomCommands, ParsesValidMaestroRandomNonZeroMotion)
 
 TEST(RandomCommands, ParsesValidGpioRandom)
 {
-    // delta (1500) differs from spanMs (14000) so a swapped index shows up.
+    // Every field distinct, so a swapped field index shows up as a wrong value.
     auto result = ParseRandomGpioCommand("7|1500|2|14000|50|400");
     ASSERT_EQ(RandomParseError::NONE, result.error);
     EXPECT_EQ(2, result.cmd.channel);
@@ -94,9 +98,17 @@ TEST(RandomCommands, RejectsWrongTypeField)
     EXPECT_EQ(RandomParseError::FIELD_COUNT,
               ParseRandomMaestroCommand("1|0|0|3|14000|400|2000|20|100|15|60|0|0").error);
     EXPECT_EQ(RandomParseError::FIELD_COUNT, ParseRandomGpioCommand("5|0|2|14000|50|400").error);
-    // A type 7 string handed to the type 6 parser (and vice versa) never parses.
-    EXPECT_NE(RandomParseError::NONE, ParseRandomMaestroCommand("7|14000|2|14000|50|400").error);
-    EXPECT_NE(RandomParseError::NONE, ParseRandomGpioCommand("6|14000|0|3|14000|400|2000|20|100|15|60|0|0").error);
+    // The type is checked before the other fields, so a wrong type wins over a
+    // bad number elsewhere: the command is "not this command", whatever else.
+    EXPECT_EQ(RandomParseError::FIELD_COUNT, ParseRandomMaestroCommand("1|0|0|3|abc|400|2000|20|100|15|60|0|0").error);
+    EXPECT_EQ(RandomParseError::FIELD_COUNT, ParseRandomGpioCommand("5|0|2|x|50|400").error);
+    // A non-numeric type field is still NOT_A_NUMBER.
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("x|0|2|14000|50|400").error);
+    // A type 7 string handed to the type 6 parser (and the reverse) is rejected on
+    // field count before the type is read.
+    EXPECT_EQ(RandomParseError::FIELD_COUNT, ParseRandomMaestroCommand("7|14000|2|14000|50|400").error);
+    EXPECT_EQ(RandomParseError::FIELD_COUNT,
+              ParseRandomGpioCommand("6|14000|0|3|14000|400|2000|20|100|15|60|0|0").error);
 }
 
 TEST(RandomCommands, RejectsNonNumeric)
@@ -116,7 +128,7 @@ TEST(RandomCommands, RejectsNonNumeric)
 
 TEST(RandomCommands, RejectsLooseNumbers)
 {
-    // § C fields are plain base-10 integers; strtol alone is more lenient.
+    // Only an optional '-' then digits; strtol alone is more lenient.
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000| 50|400").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|+50|400").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|50 |400").error);
@@ -128,7 +140,7 @@ TEST(RandomCommands, RejectsLooseNumbers)
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand(withNul).error);
 }
 
-TEST(RandomCommands, RejectsGapAndSpanRules)
+TEST(RandomCommands, RejectsOutOfRangeFields)
 {
     // minGapMs below 20
     EXPECT_EQ(RandomParseError::OUT_OF_RANGE, ParseRandomGpioCommand("7|0|2|14000|19|400").error);
@@ -151,9 +163,20 @@ TEST(RandomCommands, RejectsGapAndSpanRules)
 TEST(RandomCommands, AcceptsGapBoundaries)
 {
     // minGapMs == 20, maxGapMs == minGapMs, spanMs == minGapMs
-    auto result = ParseRandomGpioCommand("7|0|0|20|20|20");
-    EXPECT_EQ(RandomParseError::NONE, result.error);
-    EXPECT_EQ(0, result.cmd.channel);
+    auto gpio = ParseRandomGpioCommand("7|0|0|20|20|20");
+    EXPECT_EQ(RandomParseError::NONE, gpio.error);
+    EXPECT_EQ(0, gpio.cmd.channel);
+
+    // The same boundaries on a digital Maestro channel (zeroed servo fields).
+    auto maestro = ParseRandomMaestroCommand("6|0|0|3|20|20|20|0|0|0|0|0|0");
+    EXPECT_EQ(RandomParseError::NONE, maestro.error);
+}
+
+TEST(RandomCommands, AcceptsSpanShorterThanMaxGap)
+{
+    // § C only asks spanMs >= minGapMs; a span may end before a max gap could.
+    EXPECT_EQ(RandomParseError::NONE, ParseRandomGpioCommand("7|0|2|300|50|400").error);
+    EXPECT_EQ(RandomParseError::NONE, ParseRandomMaestroCommand("6|0|0|3|1000|400|2000|20|100|15|60|0|0").error);
 }
 
 TEST(RandomCommands, AcceptsChannelAndModuleZero)
@@ -164,6 +187,36 @@ TEST(RandomCommands, AcceptsChannelAndModuleZero)
     EXPECT_EQ(0, result.cmd.module);
     EXPECT_EQ(0, result.cmd.channel);
     EXPECT_TRUE(RandomServoFieldsValid(result.cmd));
+}
+
+TEST(RandomCommands, ErrorResultsCarryNoTarget)
+{
+    // On any error the command names no real channel, so a caller that forgets to
+    // check error cannot drive module 0 / channel 0.
+    const char *badMaestro[] = {
+        "6|0|0|3|14000|400|2000|20|100|15|60|0",     // FIELD_COUNT
+        "6|0|0|abc|14000|400|2000|20|100|15|60|0|0", // NOT_A_NUMBER
+        "6|0|0|3|300|400|2000|20|100|15|60|0|0",     // OUT_OF_RANGE
+    };
+    for (const char *val : badMaestro)
+    {
+        auto result = ParseRandomMaestroCommand(val);
+        ASSERT_NE(RandomParseError::NONE, result.error) << val;
+        EXPECT_EQ(-1, result.cmd.module) << val;
+        EXPECT_EQ(-1, result.cmd.channel) << val;
+    }
+
+    const char *badGpio[] = {
+        "7|0|2|14000|50",     // FIELD_COUNT
+        "7|0|2|14000|50|4o0", // NOT_A_NUMBER
+        "7|0|2|40|50|400",    // OUT_OF_RANGE
+    };
+    for (const char *val : badGpio)
+    {
+        auto result = ParseRandomGpioCommand(val);
+        ASSERT_NE(RandomParseError::NONE, result.error) << val;
+        EXPECT_EQ(-1, result.cmd.channel) << val;
+    }
 }
 
 // ---------------- RandomServoFieldsValid ----------------
@@ -201,6 +254,10 @@ TEST(RandomCommands, ServoFieldBoundaries)
 
     cmd = ValidServo();
     cmd.maxMove = 10; // below minMove 15
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.maxMove = -1; // only 0 means "no max"
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
 
     cmd = ValidServo();
@@ -246,27 +303,102 @@ TEST(RandomCommands, ServoFieldBoundaries)
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
 }
 
-TEST(RandomCommands, DigitalZerosAreParseable)
+TEST(RandomCommands, ServoCheckRejectsExtremePositions)
 {
-    // A digital Maestro channel gets zeros after maxGapMs. They parse. T-009
-    // never runs RandomServoFieldsValid on a digital channel, so failing it
-    // here is expected and harmless.
+    // INT_MIN is a legal field, so maxPos - minPos could overflow; the position
+    // bounds must reject it before any range arithmetic.
+    auto result = ParseRandomMaestroCommand("6|0|0|3|14000|400|2000|1|-2147483648|15|0|0|0");
+    ASSERT_EQ(RandomParseError::NONE, result.error);
+    EXPECT_FALSE(RandomServoFieldsValid(result.cmd));
+
+    auto cmd = ValidServo();
+    cmd.minPos = INT_MAX;
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+}
+
+TEST(RandomCommands, ServoCheckIsSelfContained)
+{
+    // A true result means every § C rule for a servo channel holds, including the
+    // ones the parser checks, wherever the command came from.
+    auto cmd = ValidServo();
+    cmd.spanMs = 300; // below minGapMs 400
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.maxGapMs = 300; // below minGapMs 400
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.channel = -1;
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
+    cmd.module = -1;
+    EXPECT_FALSE(RandomServoFieldsValid(cmd));
+}
+
+TEST(RandomCommands, DigitalZerosParseButFailServoCheck)
+{
+    // A digital Maestro channel gets zeros after maxGapMs. They parse, and fail the
+    // servo check, which only runs on servo channels.
     auto result = ParseRandomMaestroCommand("6|0|0|3|5000|50|200|0|0|0|0|0|0");
     ASSERT_EQ(RandomParseError::NONE, result.error);
     EXPECT_FALSE(RandomServoFieldsValid(result.cmd));
 }
 
-// ---------------- AnimationCommand header parse ----------------
+// ---------------- RandomParseErrorName ----------------
+
+TEST(RandomCommands, ParseErrorNamesAreDistinct)
+{
+    const RandomParseError errors[] = {RandomParseError::NONE, RandomParseError::FIELD_COUNT,
+                                       RandomParseError::NOT_A_NUMBER, RandomParseError::OUT_OF_RANGE};
+    std::set<std::string> names;
+    for (RandomParseError error : errors)
+    {
+        const char *name = RandomParseErrorName(error);
+        ASSERT_NE(nullptr, name);
+        EXPECT_GT(std::strlen(name), 0u);
+        names.insert(name);
+    }
+    EXPECT_EQ(4u, names.size());
+
+    const char *unknown = RandomParseErrorName(static_cast<RandomParseError>(255));
+    ASSERT_NE(nullptr, unknown);
+    EXPECT_EQ(0u, names.count(unknown));
+}
+
+// ---------------- AnimationCommand header parse and engine hand-off ----------------
 
 TEST(RandomCommands, AnimationCommandTypesNewValues)
 {
-    AnimationCommand maestro("6|14000|0|3|14000|400|2000|20|100|15|60|0|0");
+    // delta differs from spanMs, so duration is shown to be the delta.
+    AnimationCommand maestro("6|1500|0|3|14000|400|2000|20|100|15|60|0|0");
     EXPECT_EQ(MODULE_TYPE::MAESTRO_RANDOM, maestro.commandType);
-    EXPECT_EQ(14000, maestro.duration);
+    EXPECT_EQ(1500, maestro.duration);
     EXPECT_EQ(0, maestro.module);
 
-    AnimationCommand gpio("7|14000|2|14000|50|400");
+    AnimationCommand gpio("7|250|2|9000|50|400");
     EXPECT_EQ(MODULE_TYPE::GPIO_RANDOM, gpio.commandType);
-    EXPECT_EQ(14000, gpio.duration);
+    EXPECT_EQ(250, gpio.duration);
     EXPECT_EQ(2, gpio.module);
+}
+
+TEST(RandomCommands, EngineHandsOffRandomCommandsWithDelta)
+{
+    // The dispatch loop waits the delta, not the span, and hands the whole command
+    // string (type field included) to whoever parses it.
+    auto events =
+        AstrOsAnimationEngine::parseAnimationScript("6|1500|1|3|14000|400|2000|20|100|15|60|7|9;7|250|2|9000|50|400");
+
+    auto first = AstrOsAnimationEngine::getNextCommand(events);
+    ASSERT_NE(nullptr, first.command);
+    EXPECT_EQ(MODULE_TYPE::MAESTRO_RANDOM, first.command->type);
+    EXPECT_EQ(1500, first.delayMs);
+    EXPECT_EQ(RandomParseError::NONE, ParseRandomMaestroCommand(first.command->val).error);
+
+    auto second = AstrOsAnimationEngine::getNextCommand(events);
+    ASSERT_NE(nullptr, second.command);
+    EXPECT_EQ(MODULE_TYPE::GPIO_RANDOM, second.command->type);
+    EXPECT_EQ(250, second.delayMs);
+    EXPECT_EQ(RandomParseError::NONE, ParseRandomGpioCommand(second.command->val).error);
 }

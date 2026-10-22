@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <vector>
 
+// No std::stoi here: exceptions are disabled, so a bad field would abort.
+
 namespace
 {
     constexpr size_t MAESTRO_RANDOM_FIELDS = 13;
@@ -19,8 +21,8 @@ namespace
     constexpr int MAX_POSITION = 100;
     constexpr int MAX_MAESTRO_MOTION = 255;
 
-    // § C fields are plain base-10 integers: an optional '-' then digits. strtol
-    // alone would skip leading whitespace, take a '+', and stop at an embedded NUL.
+    // § C says base-10 integers; accept only an optional '-' then digits. strtol
+    // alone would skip leading whitespace and take a '+'.
     bool ToInt(const std::string &field, int &out)
     {
         size_t firstDigit = (!field.empty() && field[0] == '-') ? 1 : 0;
@@ -33,8 +35,10 @@ namespace
         char *end = nullptr;
         long value = std::strtol(field.c_str(), &end, 10);
 
-        // ERANGE only fires where long is 32-bit (the ESP32); on a 64-bit host the
-        // int bounds catch the same overflow.
+        // Compare against size(), not '\0': strtol stops at an embedded NUL.
+        // Where long is 32-bit (ESP32, mingw-w64) strtol saturates an out-of-int
+        // value to LONG_MIN/LONG_MAX, so ERANGE is the only check that rejects it;
+        // where long is 64-bit (Linux, macOS, CI) the int bounds reject it first.
         if (end != field.c_str() + field.size() || errno == ERANGE || value < INT_MIN || value > INT_MAX)
         {
             return false;
@@ -44,8 +48,9 @@ namespace
         return true;
     }
 
-    // Splits val and converts every field. The type field (index 0) must equal
-    // expectedType; a mismatch counts as FIELD_COUNT, i.e. "not this command".
+    // Splits val and converts every field. The type field (index 0) is checked
+    // first: a mismatch is FIELD_COUNT ("not this command") whatever the other
+    // fields hold.
     RandomParseError ParseFields(const std::string &val, size_t count, int expectedType, std::vector<int> &out)
     {
         BaseCommand splitter;
@@ -57,17 +62,21 @@ namespace
         }
 
         out.assign(count, 0);
-        for (size_t i = 0; i < count; i++)
+        if (!ToInt(parts[0], out[0]))
+        {
+            return RandomParseError::NOT_A_NUMBER;
+        }
+        if (out[0] != expectedType)
+        {
+            return RandomParseError::FIELD_COUNT;
+        }
+
+        for (size_t i = 1; i < count; i++)
         {
             if (!ToInt(parts[i], out[i]))
             {
                 return RandomParseError::NOT_A_NUMBER;
             }
-        }
-
-        if (out[0] != expectedType)
-        {
-            return RandomParseError::FIELD_COUNT;
         }
 
         return RandomParseError::NONE;
@@ -78,72 +87,97 @@ namespace
         return minGapMs >= MIN_GAP_MS && maxGapMs >= minGapMs && spanMs >= minGapMs;
     }
 
+    // The all-spans rules for a type 6 command: shared by the parser and the
+    // servo check, so the servo check stands on its own.
+    bool MaestroTargetAndGapsValid(const RandomMaestroCommand &cmd)
+    {
+        return cmd.module >= 0 && cmd.channel >= 0 && GapsValid(cmd.spanMs, cmd.minGapMs, cmd.maxGapMs);
+    }
+
     bool InMotionRange(int value)
     {
         return value >= 0 && value <= MAX_MAESTRO_MOTION;
+    }
+
+    RandomMaestroParseResult MaestroReject(RandomParseError error)
+    {
+        RandomMaestroParseResult result{error, {}};
+        result.cmd.module = -1;
+        result.cmd.channel = -1;
+        return result;
+    }
+
+    RandomGpioParseResult GpioReject(RandomParseError error)
+    {
+        RandomGpioParseResult result{error, {}};
+        result.cmd.channel = -1;
+        return result;
     }
 } // namespace
 
 RandomMaestroParseResult ParseRandomMaestroCommand(const std::string &val)
 {
-    RandomMaestroParseResult result{RandomParseError::NONE, {}};
-
     std::vector<int> f;
-    result.error = ParseFields(val, MAESTRO_RANDOM_FIELDS, MODULE_TYPE::MAESTRO_RANDOM, f);
-    if (result.error != RandomParseError::NONE)
+    RandomParseError error = ParseFields(val, MAESTRO_RANDOM_FIELDS, MODULE_TYPE::MAESTRO_RANDOM, f);
+    if (error != RandomParseError::NONE)
     {
-        return result;
+        return MaestroReject(error);
     }
 
-    // f[0] type, f[1] delta (owned by the dispatch loop)
-    result.cmd.module = f[2];
-    result.cmd.channel = f[3];
-    result.cmd.spanMs = f[4];
-    result.cmd.minGapMs = f[5];
-    result.cmd.maxGapMs = f[6];
-    result.cmd.minPos = f[7];
-    result.cmd.maxPos = f[8];
-    result.cmd.minMove = f[9];
-    result.cmd.maxMove = f[10];
-    result.cmd.speed = f[11];
-    result.cmd.acceleration = f[12];
+    // f[0] is the type and f[1] the delta: both must be ints, but the delta isn't
+    // stored (the dispatch loop already used it).
+    RandomMaestroCommand cmd{};
+    cmd.module = f[2];
+    cmd.channel = f[3];
+    cmd.spanMs = f[4];
+    cmd.minGapMs = f[5];
+    cmd.maxGapMs = f[6];
+    cmd.minPos = f[7];
+    cmd.maxPos = f[8];
+    cmd.minMove = f[9];
+    cmd.maxMove = f[10];
+    cmd.speed = f[11];
+    cmd.acceleration = f[12];
 
-    if (result.cmd.module < 0 || result.cmd.channel < 0 ||
-        !GapsValid(result.cmd.spanMs, result.cmd.minGapMs, result.cmd.maxGapMs))
+    if (!MaestroTargetAndGapsValid(cmd))
     {
-        result.error = RandomParseError::OUT_OF_RANGE;
+        return MaestroReject(RandomParseError::OUT_OF_RANGE);
     }
 
-    return result;
+    return {RandomParseError::NONE, cmd};
 }
 
 RandomGpioParseResult ParseRandomGpioCommand(const std::string &val)
 {
-    RandomGpioParseResult result{RandomParseError::NONE, {}};
-
     std::vector<int> f;
-    result.error = ParseFields(val, GPIO_RANDOM_FIELDS, MODULE_TYPE::GPIO_RANDOM, f);
-    if (result.error != RandomParseError::NONE)
+    RandomParseError error = ParseFields(val, GPIO_RANDOM_FIELDS, MODULE_TYPE::GPIO_RANDOM, f);
+    if (error != RandomParseError::NONE)
     {
-        return result;
+        return GpioReject(error);
     }
 
-    // f[0] type, f[1] delta (owned by the dispatch loop)
-    result.cmd.channel = f[2];
-    result.cmd.spanMs = f[3];
-    result.cmd.minGapMs = f[4];
-    result.cmd.maxGapMs = f[5];
+    // f[0] is the type and f[1] the delta (see ParseRandomMaestroCommand).
+    RandomGpioCommand cmd{};
+    cmd.channel = f[2];
+    cmd.spanMs = f[3];
+    cmd.minGapMs = f[4];
+    cmd.maxGapMs = f[5];
 
-    if (result.cmd.channel < 0 || !GapsValid(result.cmd.spanMs, result.cmd.minGapMs, result.cmd.maxGapMs))
+    if (cmd.channel < 0 || !GapsValid(cmd.spanMs, cmd.minGapMs, cmd.maxGapMs))
     {
-        result.error = RandomParseError::OUT_OF_RANGE;
+        return GpioReject(RandomParseError::OUT_OF_RANGE);
     }
 
-    return result;
+    return {RandomParseError::NONE, cmd};
 }
 
 bool RandomServoFieldsValid(const RandomMaestroCommand &cmd)
 {
+    if (!MaestroTargetAndGapsValid(cmd))
+    {
+        return false;
+    }
+
     // Position bounds first, so the range arithmetic below cannot overflow.
     if (cmd.minPos < 0 || cmd.maxPos > MAX_POSITION || cmd.minPos >= cmd.maxPos)
     {
@@ -157,4 +191,21 @@ bool RandomServoFieldsValid(const RandomMaestroCommand &cmd)
                      (cmd.maxMove == 0 || (cmd.maxMove >= cmd.minMove && cmd.maxMove <= range));
 
     return moveValid && cmd.minGapMs >= MIN_SERVO_GAP_MS && InMotionRange(cmd.speed) && InMotionRange(cmd.acceleration);
+}
+
+const char *RandomParseErrorName(RandomParseError error)
+{
+    // No default, so -Wswitch flags a new enumerator that has no name yet.
+    switch (error)
+    {
+    case RandomParseError::NONE:
+        return "NONE";
+    case RandomParseError::FIELD_COUNT:
+        return "FIELD_COUNT";
+    case RandomParseError::NOT_A_NUMBER:
+        return "NOT_A_NUMBER";
+    case RandomParseError::OUT_OF_RANGE:
+        return "OUT_OF_RANGE";
+    }
+    return "UNKNOWN";
 }

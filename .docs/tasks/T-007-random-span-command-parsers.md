@@ -86,10 +86,10 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 
 ## Acceptance criteria
 
-- [ ] All new native tests are green, and every existing native test is green.
-- [ ] Both boards build.
-- [ ] The new code has no `std::stoi` and no ESP-IDF or FreeRTOS includes. The purity guard passes.
-- [ ] `.docs/qa/random-span-events.md` exists with Preconditions, plus a "Parser" note: native coverage only, with bench cases arriving in T-009.
+- [x] All new native tests are green, and every existing native test is green.
+- [x] Both boards build.
+- [x] The new code has no `std::stoi` and no ESP-IDF or FreeRTOS includes. The purity guard passes.
+- [x] `.docs/qa/random-span-events.md` exists with Preconditions, plus a "Parser" note: native coverage only, with bench cases arriving in T-009.
 
 ## Out of scope
 
@@ -110,27 +110,56 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 - [x] Implement `RandomServoFieldsValid`; GREEN
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build; clang-format clean on changed files; purity grep clean
 - [x] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
-- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; Important #2 fixed (accept-side zero boundaries), doc drift fixed; Important #1 (server must emit integer ms) raised to Jeff as a server T-008 contract amendment
+- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; Important #2 fixed (accept-side zero boundaries), doc drift fixed; Important #1 resolved by the AstrOs.Server T-008 amendment (118eb50d)
 
-## Review notes (2026-10-22 branch review)
+## Review notes (2026-10-22)
 
-The review found 0 Critical issues. Fixed in 41e7a5b:
-- Important #2: accept-side tests for zero boundaries.
-- Doc drift: the lib README, the CLAUDE.md lib table, and a test comment.
+### First branch review (opus): 0 Critical, 2 Important
 
-**Raised to Jeff and resolved:** AstrOs.Server T-008 must emit integer milliseconds.
+- **Important #2, fixed in 41e7a5b:** accept-side tests for zero boundaries (minPos 0, module and channel 0). The doc drift was fixed in the same commit (lib README, the CLAUDE.md lib table, a test comment).
+- **Important #1:** the producer must send integer milliseconds. A 2.01 s gap × 1000 is `2009.9999999999998`, which this parser rejects. Jeff approved the amendment to AstrOs.Server T-008 in AstrOs.Server 118eb50d: span and gap values are rounded with `Math.round` before validating, and the integer rule covers all spans. It's mirrored in `.docs/protocol.md` § C by 2b77da1 on develop (this branch predates it).
+- **The deferred test-gap minors**, done at Jeff's request in 5110feb: `minMove` 1, `maxMove == minMove`, the odd 19–100 range, speed −1, INT_MIN overflow, the type-6 gap and span rules, distinct field values, and a strict `ToInt` (`RejectsLooseNumbers`, RED → GREEN).
 
-- The problem: a 2.01 s gap × 1000 is `2009.9999999999998`, which this parser rejects.
-- Jeff approved the amendment on 2026-10-22, in AstrOs.Server 118eb50d (mirrored in `.docs/protocol.md` § C, AstrOs.ESP 2b77da1). T-008 now rounds span and gap values with `Math.round` before validating, and applies the integer rule to all spans.
+### Second review (pr-review-toolkit, five agents): 0 Critical
 
-**The deferred minors, done at Jeff's request (follow-up commit):**
-- **Tests added for code-breaks that used to slip past:**
-  - `minMove` 1 is accepted, and so is `maxMove == minMove`.
-  - The odd range 19–100 accepts `minMove` 40 and rejects 41.
-  - Speed −1 is rejected, and so is an overflow below INT_MIN.
-  - The type-6 maxGap and span rules are tested.
-  - Every one of the reviewer's code-breaks was applied and shown to fail a test (9 of 9 caught), then the code was restored.
-- `ParsesValidMaestroRandom` and `ParsesValidGpioRandom` now use distinct values for every field.
-- `ToInt` is strict: an optional `-` and then digits only (`RejectsLooseNumbers`, RED → GREEN). There is a comment that ERANGE only fires on 32-bit `long` targets.
+Fixed in the next commit, test-first:
 
-**Still deferred (T-009 design, not a unit test):** `queue_random_msg_t` has no type field (derive it from the string's first field), and there's no `RandomParseError` → name helper for log lines.
+- **Span shorter than its max gap:** now accepted in a test (`AcceptsSpanShorterThanMaxGap`). Tightening the span rule used to pass every test.
+- **Results of a rejected parse could be misused:** on any error, `cmd` now names no target (module and channel −1). Before, it read as module 0 / channel 0, a real target. Tested by `ErrorResultsCarryNoTarget`.
+- **`RandomServoFieldsValid` now stands on its own.** It also re-checks module, channel and the gap rules, so it no longer approves out-of-range commands (`ServoCheckIsSelfContained`).
+- **The type field is checked before the other fields,** so a wrong type is always `FIELD_COUNT`, whatever the other fields hold (`RejectsWrongTypeField`).
+- **`RandomParseErrorName`**, for T-009's log lines (`ParseErrorNamesAreDistinct`).
+- **`[[nodiscard]]`** on the result structs, the servo check and the name helper.
+- **Explicit `MAESTRO_RANDOM = 6` and `GPIO_RANDOM = 7`.**
+- **More tests:**
+  - the overflow guard, with an INT_MIN `maxPos`
+  - a negative `maxMove`
+  - type-6 gap boundaries
+  - the animation engine hands off the delta and the full string
+  - the delta differs from the span in `AnimationCommandTypesNewValues`
+- **Renamed tests:** `RejectsOutOfRangeFields` and `DigitalZerosParseButFailServoCheck`.
+- **Comments and docs corrected:**
+  - the ERANGE comment: it's the only overflow guard where `long` is 32-bit, which includes mingw-w64, not just the ESP32
+  - the `ToInt` attribution
+  - the header error-code comments
+  - the README, the CLAUDE.md row, and the QA plan (SQL pointer, exact coverage list)
+
+**Verification after the fixes:**
+
+- 22 code-breaks were applied one at a time against the final code, and each was restored. 21 failed a test.
+- The one survivor, as expected: deleting `errno == ERANGE` can't be caught where `long` is 64-bit. Switching to `strtoll` would close that gap; it's pending Jeff's decision, because the Contract names `strtol`.
+
+**Moved to the T-009 and ESP T-008 task files (planning, on develop):**
+
+- The queue message carries the command type.
+- Panic and reload drain `randomQueue` and reject spans dispatched before the clear.
+- The dispatch `default:` logs unknown types.
+- The GPIO `SpanKey.module` convention.
+- One snapshot for `isServo`.
+- A warning when a digital channel gets non-zero servo fields.
+- `RandomSpanTable::Start` re-checks the gap rules (defense in depth).
+
+**Still deferred:**
+
+- Counting `|` before splitting, so oversized input isn't allocated first. This is defense in depth; the server is trusted, and the existing parsers split the same way.
+- A reason code from `RandomServoFieldsValid`, and a separate `WRONG_TYPE` error. Both are contract changes, and neither is recommended now.

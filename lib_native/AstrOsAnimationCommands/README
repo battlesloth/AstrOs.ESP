@@ -24,6 +24,8 @@ Command constructors set safe defaults (-1, empty string) when parsing
 fails. No logging — the MIXED-layer caller (AnimationController, Modules)
 can inspect fields and log at the boundary if needed.
 
-RandomCommands is the exception: its free functions return rich results
-({ error, cmd }, with RandomParseError naming why a command was rejected)
-and never use std::stoi. The caller logs at the boundary.
+RandomCommands is the exception: its two parsers return rich results
+({ error, cmd }; RandomParseError says why a command was rejected, and
+RandomParseErrorName turns it into a log string). On any error cmd names no
+real target (module/channel -1). RandomServoFieldsValid returns a bool. None
+of it uses std::stoi.
