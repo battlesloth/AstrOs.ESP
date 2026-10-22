@@ -104,11 +104,11 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 
 ## Implementation checklist
 
-- [ ] Write `astros_random_commands_tests.cpp` (all tests in the Task section); RED: compile error on the missing `MAESTRO_RANDOM` / `RandomCommands.hpp`
-- [ ] Append `MAESTRO_RANDOM = 6, GPIO_RANDOM = 7` to `MODULE_TYPE`; add `RandomCommands.hpp` declarations + sentinel stubs; RED: every parser test fails on its assertions
-- [ ] Implement `ParseRandomMaestroCommand` / `ParseRandomGpioCommand` (strtol, exact field counts, gap/span ranges); GREEN
-- [ ] Implement `RandomServoFieldsValid`; GREEN
-- [ ] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build; clang-format clean on changed files; purity grep clean
-- [ ] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
+- [x] Write `astros_random_commands_tests.cpp` (all tests in the Task section); RED: compile error on the missing `MAESTRO_RANDOM` / `RandomCommands.hpp`
+- [x] Append `MAESTRO_RANDOM = 6, GPIO_RANDOM = 7` to `MODULE_TYPE`; add `RandomCommands.hpp` declarations + sentinel stubs; RED: every parser test fails on its assertions
+- [x] Implement `ParseRandomMaestroCommand` / `ParseRandomGpioCommand` (strtol, exact field counts, gap/span ranges); GREEN
+- [x] Implement `RandomServoFieldsValid`; GREEN
+- [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build; clang-format clean on changed files; purity grep clean
+- [x] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
 - [ ] Code review (`superpowers:requesting-code-review`); address Critical/Important
 
