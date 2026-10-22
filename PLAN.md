@@ -5,16 +5,16 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-007 — Parse random span commands (types 6 and 7): PR #62 open against develop (branch `feature/T-007-random-span-command-parsers`; 515/515 native, both boards build, two review rounds addressed). Next session: T-008
+Now:     T-008 — Random span math and span table (pure): starting (branch `feature/T-008-random-effects-math`)
 Next:    agreed order (2026-10-22): T-007 → T-008 → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
 Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
-Last:    2026-10-22 — random span events design approved (AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md`); wire format pinned in `.docs/protocol.md` § C
+Last:    2026-10-22 — T-007 complete (PR #62 → develop): random span command parsers; nothing dispatches types 6/7 until T-009
 
 ## Random span events
 
 Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · wire format: `.docs/protocol.md` § C (identical in both repos) · server side: AstrOs.Server `PLAN.md` § Random span events (its T-006 database guard, T-007 data, T-008 conversion; then the scripter UI, then a min-firmware bump)
 
-- [ ] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/T-007-random-span-command-parsers.md`)
+- [x] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/completed/T-007-random-span-command-parsers.md`) — done 2026-10-22
 - [ ] **T-008** — Random span math and span table (pure) (`.docs/tasks/T-008-random-effects-math.md`)
 - [ ] **T-009** — Run random spans on the controller (`.docs/tasks/T-009-random-effects-task.md`) — needs T-007 + T-008
 
@@ -49,6 +49,13 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-10-22 T-007 complete — parse random span commands, types 6 and 7 (PR #62 → develop)
+  - `MODULE_TYPE` `MAESTRO_RANDOM = 6` / `GPIO_RANDOM = 7`; PURE `RandomCommands` parsers return `{ error, cmd }`: exact field count with the type field first, strict base-10 ints via `strtoll` bounded to `int` (no `std::stoi`), indexes ≥ 0, § C gap rules; on error `cmd` names no target (module/channel −1)
+  - `RandomServoFieldsValid` (self-contained: re-checks target + gaps, then the servo-only rules) and `RandomParseErrorName` for T-009's log lines
+  - native 515/515, both boards; 23 mutations — 22 fail a native test, the 23rd (narrowing back to 32-bit `strtol`) fails the board build via `static_assert`
+  - review-driven cross-repo changes: AstrOs.Server T-008 contract amended (round span/gaps to integer ms; skip spans with a negative index), § C updated in both repos; ESP T-008/T-009 plan amendments (typed queue message, panic/reload drain, table re-checks gaps)
+  - open: firmware still skips types 6/7 (keeping the delta) until T-009 — no release with T-007 alone
 
 - 2026-09-14 release v1.2.2 — patch on `release/rel_1.2`
   - `develop` merged into `release/rel_1.2` (clean; tree identical to develop), `VERSION` set to 1.2.2 on the release branch, pushed → release workflow tagged v1.2.2 and published both boards (run 34920852402, six artifacts)

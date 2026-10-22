@@ -1,6 +1,6 @@
 # T-007: Parse random span commands (types 6 and 7)
 
-<!-- File: .docs/tasks/T-007-random-span-command-parsers.md. Branch: feature/T-007-random-span-command-parsers. PR title: "T-007: Parse random span commands (types 6 and 7)". -->
+<!-- File: .docs/tasks/completed/T-007-random-span-command-parsers.md (completed 2026-10-22; PR #62). Branch: feature/T-007-random-span-command-parsers. PR title: "T-007: Parse random span commands (types 6 and 7)". -->
 
 ## Context
 
