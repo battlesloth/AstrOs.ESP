@@ -18,7 +18,7 @@ A random span is one script command sent at the span's start. The ESP then impro
   - All fields are base-10 integers.
 - **`MODULE_TYPE`** (`lib_native/AstrOsUtility/src/AstrOsEnums.h`) **appends** `MAESTRO_RANDOM = 6, GPIO_RANDOM = 7`. `NONE`…`GPIO` are unchanged.
 - **PURE-lib purity:** no ESP-IDF or FreeRTOS includes in `lib_native/`.
-- **Number parsing:** no `std::stoi` in new code (exceptions are disabled). Use `strtol` with a full-consumption `endptr` check, `errno == ERANGE` rejection, and an `int` range check.
+- **Number parsing:** no `std::stoi` in new code (exceptions are disabled). Use `strtoll` with a full-consumption `endptr` check and an `int` range check. *(Amended 2026-10-22 with Jeff's approval: originally `strtol` plus `errno == ERANGE`. `long` is 32-bit on the ESP32, so that overflow check could only run on the device. `long long` is 64-bit everywhere, so the int bounds reject overflow identically on the device and the native test host, and saturation past `long long` is rejected by the same bounds.)*
 
 ## Task
 
@@ -71,7 +71,7 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 - `ParsesValidGpioRandom`: `"7|14000|2|14000|50|400"` gives `NONE`, and every field matches.
 - `MaxMoveZeroMeansNoMax`: parses with `NONE`, `maxMove == 0`, and `RandomServoFieldsValid` true.
 - `RejectsWrongFieldCount`: 12 and 14 fields for type 6, and 5 fields for type 7, give `FIELD_COUNT`.
-- `RejectsNonNumeric`: `"abc"`, `"12x"`, an empty field, and `"99999999999"` give `NOT_A_NUMBER` (the last via ERANGE or the int bound).
+- `RejectsNonNumeric`: `"abc"`, `"12x"`, an empty field, and `"99999999999"` give `NOT_A_NUMBER` (the last via the int bound).
 - `RejectsGapAndSpanRules`: `minGapMs` 19, `maxGapMs < minGapMs`, `spanMs < minGapMs`, and a negative channel give `OUT_OF_RANGE`.
 - `AcceptsGapBoundaries`: `minGapMs` 20, `maxGapMs == minGapMs`, and `spanMs == minGapMs` give `NONE`.
 - `ServoFieldBoundaries`:
@@ -106,7 +106,7 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 
 - [x] Write `astros_random_commands_tests.cpp` (all tests in the Task section); RED: compile error on the missing `MAESTRO_RANDOM` / `RandomCommands.hpp`
 - [x] Append `MAESTRO_RANDOM = 6, GPIO_RANDOM = 7` to `MODULE_TYPE`; add `RandomCommands.hpp` declarations + sentinel stubs; RED: every parser test fails on its assertions
-- [x] Implement `ParseRandomMaestroCommand` / `ParseRandomGpioCommand` (strtol, exact field counts, gap/span ranges); GREEN
+- [x] Implement `ParseRandomMaestroCommand` / `ParseRandomGpioCommand` (strtol at first, `strtoll` after the second review; exact field counts, gap/span ranges); GREEN
 - [x] Implement `RandomServoFieldsValid`; GREEN
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build; clang-format clean on changed files; purity grep clean
 - [x] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
@@ -139,7 +139,7 @@ Fixed in the next commit, test-first:
   - the delta differs from the span in `AnimationCommandTypesNewValues`
 - **Renamed tests:** `RejectsOutOfRangeFields` and `DigitalZerosParseButFailServoCheck`.
 - **Comments and docs corrected:**
-  - the ERANGE comment: it's the only overflow guard where `long` is 32-bit, which includes mingw-w64, not just the ESP32
+  - the overflow comment (since superseded by the `strtoll` switch below)
   - the `ToInt` attribution
   - the header error-code comments
   - the README, the CLAUDE.md row, and the QA plan (SQL pointer, exact coverage list)
@@ -147,7 +147,12 @@ Fixed in the next commit, test-first:
 **Verification after the fixes:**
 
 - 22 code-breaks were applied one at a time against the final code, and each was restored. 21 failed a test.
-- The one survivor, as expected: deleting `errno == ERANGE` can't be caught where `long` is 64-bit. Switching to `strtoll` would close that gap; it's pending Jeff's decision, because the Contract names `strtol`.
+- The one survivor, as expected: deleting `errno == ERANGE` couldn't be caught where `long` is 64-bit.
+- **Jeff approved switching to `strtoll`** (Contract amended above), so that gap is closed:
+  - The int bounds are now the one overflow guard on every target, and the host tests exercise them. Deleting either bound fails `RejectsNonNumeric`.
+  - New assertions cover values past `long long` (20 digits, both signs) and the int edges, which are accepted as numbers.
+  - A `static_assert(sizeof(value) > sizeof(int))` covers narrowing the parse back to `long`. That change is invisible on a 64-bit host, but it fails the ESP32 board build, which CI runs. Shown by applying it and building `lolin_d32_pro`.
+  - Final run: 23 code-breaks. 22 fail a test, and the 23rd fails the device build.
 
 **Moved to the T-009 and ESP T-008 task files (planning, on develop):**
 

@@ -122,6 +122,15 @@ TEST(RandomCommands, RejectsNonNumeric)
               ParseRandomMaestroCommand("6|0|0|3|99999999999|400|2000|20|100|15|60|0|0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER,
               ParseRandomMaestroCommand("6|0|0|3|-99999999999|400|2000|20|100|15|60|0|0").error);
+    // Past long long too: the parse saturates, and the int bounds still reject it.
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER,
+              ParseRandomMaestroCommand("6|0|0|3|99999999999999999999|400|2000|20|100|15|60|0|0").error);
+    EXPECT_EQ(RandomParseError::NOT_A_NUMBER,
+              ParseRandomMaestroCommand("6|0|0|3|-99999999999999999999|400|2000|20|100|15|60|0|0").error);
+    // The int edges themselves are accepted as numbers (then judged by the range rules).
+    EXPECT_EQ(RandomParseError::OUT_OF_RANGE,
+              ParseRandomMaestroCommand("6|0|0|3|-2147483648|400|2000|20|100|15|60|0|0").error);
+    EXPECT_EQ(RandomParseError::NONE, ParseRandomMaestroCommand("6|0|0|3|2147483647|400|2000|20|100|15|60|0|0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|0|2|14000|50|4o0").error);
     EXPECT_EQ(RandomParseError::NOT_A_NUMBER, ParseRandomGpioCommand("7|x|2|14000|50|400").error);
 }

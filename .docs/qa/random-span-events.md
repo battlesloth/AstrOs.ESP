@@ -46,7 +46,7 @@ The feature lands in three tasks:
 - `AnimationCommand` maps `6|…` and `7|…` to the new types, and its duration is the delta, not the span
 - the animation engine hands each command to the dispatcher with its delta and the full command string
 
-One rule can't be tested natively on Linux: where `long` is 32-bit (the ESP32), `errno == ERANGE` is the only check that rejects an out-of-int field.
+Overflow checks behave the same on the device and the native host: fields are parsed as 64-bit `long long` on both, then bounded to `int`. A `static_assert` keeps the parse wider than `int`, so narrowing it would fail the board builds.
 
 There are no bench cases for T-007 alone. On hardware it behaves like the previous firmware: types 6 and 7 are skipped, and the rest of the script plays on time.
 

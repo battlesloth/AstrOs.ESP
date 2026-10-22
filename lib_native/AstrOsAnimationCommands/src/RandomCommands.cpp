@@ -4,7 +4,6 @@
 #include <BaseCommand.hpp>
 
 #include <cctype>
-#include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <vector>
@@ -21,7 +20,7 @@ namespace
     constexpr int MAX_POSITION = 100;
     constexpr int MAX_MAESTRO_MOTION = 255;
 
-    // § C says base-10 integers; accept only an optional '-' then digits. strtol
+    // § C says base-10 integers; accept only an optional '-' then digits. strtoll
     // alone would skip leading whitespace and take a '+'.
     bool ToInt(const std::string &field, int &out)
     {
@@ -31,15 +30,18 @@ namespace
             return false;
         }
 
-        errno = 0;
+        // strtoll, not strtol: long long is 64-bit on every target, so the int
+        // bounds below reject an out-of-int field the same way on the ESP32 and on
+        // the native test host (strtol's long is 32-bit on the ESP32). A value past
+        // long long saturates to LLONG_MIN/LLONG_MAX, which the int bounds also
+        // reject, so errno isn't needed.
         char *end = nullptr;
-        long value = std::strtol(field.c_str(), &end, 10);
+        long long value = std::strtoll(field.c_str(), &end, 10);
+        static_assert(sizeof(value) > sizeof(int),
+                      "the parse must be wider than int so the int bounds can reject overflow");
 
-        // Compare against size(), not '\0': strtol stops at an embedded NUL.
-        // Where long is 32-bit (ESP32, mingw-w64) strtol saturates an out-of-int
-        // value to LONG_MIN/LONG_MAX, so ERANGE is the only check that rejects it;
-        // where long is 64-bit (Linux, macOS, CI) the int bounds reject it first.
-        if (end != field.c_str() + field.size() || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+        // Compare against size(), not '\0': strtoll stops at an embedded NUL.
+        if (end != field.c_str() + field.size() || value < INT_MIN || value > INT_MAX)
         {
             return false;
         }
