@@ -42,4 +42,4 @@ The feature lands in three tasks:
 
 There are no bench cases for T-007 alone. On hardware it behaves like the previous firmware: types 6 and 7 are skipped, and the rest of the script plays on time.
 
-Malformed commands aren't bench-tested at any stage. The server never sends one (its validation skips invalid spans), and these native tests cover the firmware rejects.
+Malformed commands aren't bench-tested at any stage. AstrOs.Server T-008's validation is meant to skip invalid spans before they're sent, and these native tests cover the firmware rejects. One known gap: the server must round span and gap values to integer milliseconds. A float such as `2009.9999999999998` is rejected here as `NOT_A_NUMBER`, and that rounding is pending an amendment to server T-008.

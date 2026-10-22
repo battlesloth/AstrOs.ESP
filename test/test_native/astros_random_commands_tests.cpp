@@ -135,6 +135,16 @@ TEST(RandomCommands, AcceptsGapBoundaries)
     EXPECT_EQ(0, result.cmd.channel);
 }
 
+TEST(RandomCommands, AcceptsChannelAndModuleZero)
+{
+    // Module 0 and channel 0 are the first on every board.
+    auto result = ParseRandomMaestroCommand("6|0|0|0|14000|400|2000|0|100|15|60|0|0");
+    ASSERT_EQ(RandomParseError::NONE, result.error);
+    EXPECT_EQ(0, result.cmd.module);
+    EXPECT_EQ(0, result.cmd.channel);
+    EXPECT_TRUE(RandomServoFieldsValid(result.cmd));
+}
+
 // ---------------- RandomServoFieldsValid ----------------
 
 TEST(RandomCommands, ServoFieldBoundaries)
@@ -181,6 +191,11 @@ TEST(RandomCommands, ServoFieldBoundaries)
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
 
     cmd = ValidServo();
+    cmd.minPos = 0; // the full range, e.g. a panel flap
+    cmd.maxPos = 100;
+    EXPECT_TRUE(RandomServoFieldsValid(cmd));
+
+    cmd = ValidServo();
     cmd.minPos = -1;
     EXPECT_FALSE(RandomServoFieldsValid(cmd));
 
@@ -195,8 +210,9 @@ TEST(RandomCommands, ServoFieldBoundaries)
 
 TEST(RandomCommands, DigitalZerosAreParseable)
 {
-    // A digital Maestro channel gets zeros after maxGapMs. It parses, but
-    // RandomServoFieldsValid is false, so it is never checked with it.
+    // A digital Maestro channel gets zeros after maxGapMs. They parse. T-009
+    // never runs RandomServoFieldsValid on a digital channel, so failing it
+    // here is expected and harmless.
     auto result = ParseRandomMaestroCommand("6|0|0|3|5000|50|200|0|0|0|0|0|0");
     ASSERT_EQ(RandomParseError::NONE, result.error);
     EXPECT_FALSE(RandomServoFieldsValid(result.cmd));

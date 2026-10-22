@@ -110,5 +110,5 @@ A violation of those range rules gives `OUT_OF_RANGE`.
 - [x] Implement `RandomServoFieldsValid`; GREEN
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build; clang-format clean on changed files; purity grep clean
 - [x] Create `.docs/qa/random-span-events.md` (Preconditions + Parser note)
-- [ ] Code review (`superpowers:requesting-code-review`); address Critical/Important
+- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; Important #2 fixed (accept-side zero boundaries), doc drift fixed; Important #1 (server must emit integer ms) raised to Jeff as a server T-008 contract amendment
 
