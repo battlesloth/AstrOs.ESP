@@ -37,27 +37,29 @@ It does three things:
 
 **Queue and message:**
 
-- Add `randomQueue`, with depth 10 and items of `queue_random_msg_t { uint32_t dispatchTickMs; char *data; }`.
+- Add `randomQueue`, with depth 10 and items of `queue_random_msg_t { MODULE_TYPE type; uint32_t dispatchTickMs; char *data; }`. The dispatch loop already knows the type, so the random task never re-derives it from the string.
 - `dispatchTickMs` is `esp_timer_get_time() / 1000` taken in the dispatch loop.
 
 **Dispatch switch:**
 
 - Add `case MODULE_TYPE::MAESTRO_RANDOM: case MODULE_TYPE::GPIO_RANDOM:`.
-- Copy `val` (malloc + NUL), stamp `dispatchTickMs`, and `xQueueSend(randomQueue, …, pdMS_TO_TICKS(100))`.
+- Copy `val` (malloc + NUL), stamp `type` and `dispatchTickMs`, and `xQueueSend(randomQueue, …, pdMS_TO_TICKS(100))`.
+- The switch's `default:` now logs `ESP_LOGW(TAG, "Unknown command type %d skipped (delta kept)", ...)`. Once 6 and 7 have cases, only truly unknown types reach it. The `NONE` buffer commands keep their own case and stay silent.
 - On failure, free the copy and `ESP_LOGW`. The dispatch loop never waits longer than 100 ms on a span.
 
 **`randomEffectsTask`** (stack 4096, priority 8, core 1) owns a `RandomSpanTable(32, esp_random)`. It loops:
 
 1. **Wait.** It does `xQueueReceive(randomQueue, …, pdMS_TO_TICKS(min(MsUntilNext(now), 250)))`.
 2. **On a message:**
-   - Parse it with T-007.
+   - Parse it with T-007, choosing the parser by `msg.type`.
    - For type 6:
-     - Snapshot the Maestro channel (below) and validate the servo fields when `isServo`.
+     - Take **one** snapshot of the Maestro channel (below). Use it both to decide whether to call `RandomServoFieldsValid` (only when `isServo`) and for `SpanStart.isServo`.
+     - If the snapshot says digital but any servo field after `maxGapMs` is non-zero, `ESP_LOGW` a config mismatch (the server thinks it's a servo) and still run the span as a toggle.
      - A servo's `initialPct` is `PercentFromPosition(min, max, lastPos, inverted)`, and its `rangeUs` is `maxPos − minPos`.
      - A digital channel's `initialLevel` is `lastPos >= 1500`.
-   - For type 7: `GpioMod.GetLevel`.
-   - Then build a `SpanStart` with `startMs = dispatchTickMs`. Take `randomTableMutex` and call `Start`.
-   - **Any failure** (parse, unknown module or channel, disabled channel, invalid servo fields, or a full table) → `ESP_LOGW` with the reason and the raw command.
+   - For type 7: `GpioMod.GetLevel`. The `SpanKey` for a GPIO span is `{GPIO_RANDOM, 0, channel}`: `module` is always 0 for GPIO.
+   - Then build a `SpanStart` with `startMs = dispatchTickMs`. Take `randomTableMutex`. **Reject the span if `(int32_t)(dispatchTickMs - lastClearMs) <= 0`**, i.e. it was dispatched at or before the last panic or reload clear. Otherwise call `Start`.
+   - **Any failure** (parse, unknown module or channel, disabled channel, invalid servo fields, dispatched before a clear, or a full table) → `ESP_LOGW` with the reason and the raw command. Parse failures log `RandomParseErrorName(error)`.
    - Free `data`.
 3. **Collect and post.** Take `randomTableMutex` (bounded 100 ms), `Collect(now)`, and post each change as a malloc'd string with a **0 ms** send timeout. A failed send frees the string and increments a counter that is logged once per span.
 
@@ -71,11 +73,12 @@ It does three things:
 
 **`handlePanicStop`:**
 
-- New step 1b, right after `AnimationCtrl.panicStop()`: take `randomTableMutex` (bounded 1 s), `Clear()`, and give it back.
+- New step 1b, right after `AnimationCtrl.panicStop()`: take `randomTableMutex` (bounded 1 s), `Clear()`, record `lastClearMs = esp_timer_get_time() / 1000`, drain `randomQueue` (freeing each `data`), and give the mutex back.
+  - Why the drain and the timestamp: spans still waiting in `randomQueue`, or one the random task is already processing, would otherwise `Start` after the clear, and random motion would follow a panic. Draining covers the queue. The `lastClearMs` check covers the message in hand (added 2026-10-22, from the T-007 review).
 - On a timeout, `ESP_LOGE` and continue the panic.
 - Padawans reach this through the existing ESP-NOW panic relay.
 
-**`SERVICE_COMMAND::RELOAD_CONFIG`:** clear the table the same way, before `loadMaestroConfigs()`.
+**`SERVICE_COMMAND::RELOAD_CONFIG`:** clear the table the same way (clear, record `lastClearMs`, drain `randomQueue`), before `loadMaestroConfigs()`.
 
 ### Modules
 
@@ -121,6 +124,7 @@ It does three things:
   4. **Panel flap with end event.** Span 0–100 %, move 30 %–none, gaps 400–2000 ms, then a Home event at the end time. Expected: random flapping, then home exactly at the end and no random move after.
   5. **Slow servo.** Speed 5, gaps 100–200 ms, move 20 %. Expected: each move visibly completes before the next starts (travel-stretched gaps).
   6. **Panic mid-span.** Run cases 1 and 3 together, then panic. Expected: all random activity stops immediately, and the servos de-energize.
+     - Also: a script with several spans at the same start time, panicked within ~10 ms of that start (while spans may still be queued). Expected: no random move after the panic log line.
   7. **Reload mid-span.** Deploy config during a span. Expected: the span stops, and config applies.
   8. **Table full.** A script with 33 concurrent spans. Expected: the 33rd logs "table full", and the others run.
   9. **Padawan.** Run cases 1 and 3 on a dome padawan's channels, then panic from the server. Expected: the same as cases 1, 3 and 6, with the panic arriving through the ESP-NOW relay.
@@ -142,6 +146,7 @@ It does three things:
 - **§2 Crash recovery.** N/A. The span table is RAM only, and a reboot loses it, which is correct.
 - **§3 Concurrency:**
   - **The table:** `randomEffectsTask` is the writer, plus `handlePanicStop` and `RELOAD_CONFIG`. It is synchronized by `randomTableMutex`. Collect and post happen while holding it, so a panic that has taken it guarantees no post after `Clear()`.
+  - **Queued and in-flight spans:** the clear drains `randomQueue` and records `lastClearMs` under the same mutex. A span the random task already holds is rejected at `Start` by the `lastClearMs` check, so nothing dispatched before a panic can start after it.
   - **Mutex ordering:** the random task never holds `randomTableMutex` while taking `maestroModulesMutex`. The snapshot is taken before `Start`, so there is no inversion with `servoQueueTask` or panic.
   - **Channel state reads** go under each module's `stateMutex`, per T-003.
 - **§4 Cross-platform.** Both boards. `esp_random` is hardware RNG with Wi-Fi up (ESP-NOW is always up).
