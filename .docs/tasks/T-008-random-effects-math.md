@@ -79,7 +79,9 @@ public:
 - **`Collect(now)`:** for each entry whose next change is due:
   - If `now` is within `END_GUARD_MS` of the deadline, or past it, the entry is dropped **with no change**.
   - Otherwise it emits one change:
-    - **Servo:** `targetPct = NextServoTarget(currentPct, …)`. Then `currentPct = targetPct`, and next is `now + max(NextGapMs, MoveTravelMs(|Δpct| × rangeUs / 100, speed, accel))`.
+    - **Servo:** `targetPct = NextServoTarget(currentPct, …)`. Then `currentPct = targetPct`, and next is `now + max(NextGapMs, MoveTravelMs(distanceUs, speed, accel))`.
+      - `distanceUs = floor(|Δpct| × rangeUs / 100) + 1` when the product is positive, else 0. The `+ 1` makes it an upper bound on the distance the servo actually travels. `GetRelativeRequestedPosition` truncates each endpoint in double precision, so the mapped distance can exceed the floored product by 1 µs. For example, on 900–2100, 41 % maps to 491 µs because `1200 × 0.41` is `491.99999999999994`.
+      - (Amended 2026-10-22, Jeff, from PR #63's Copilot review. The plain floor was short in 37,376 moves, and a ceil in 1,160, across 8 channel ranges × both inversions × every move pair. Floor + 1 was short in none, and overestimates by at most 2 µs.)
     - **Toggle:** `level = !level`, and next is `now + NextGapMs`.
   - An entry whose next change would land within `END_GUARD_MS` of its deadline is dropped after emitting.
 - **Time comparisons** are wrap-safe: `(int32_t)(a - b)`.
