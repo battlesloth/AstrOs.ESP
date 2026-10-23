@@ -49,7 +49,7 @@ It does three things:
 
 **`randomEffectsTask`** (stack 4096, priority 8, core 1) owns a `RandomSpanTable(32, esp_random)`. It loops:
 
-1. **Wait.** It does `xQueueReceive(randomQueue, …, pdMS_TO_TICKS(min(MsUntilNext(now), 250)))`.
+1. **Wait.** With `ms = min(MsUntilNext(now), 250)`, it does `xQueueReceive(randomQueue, …, (ms + portTICK_PERIOD_MS − 1) / portTICK_PERIOD_MS)`. **The wait rounds up to whole ticks.** (Amended 2026-10-22, from the T-008 review: at `CONFIG_FREERTOS_HZ=100`, `pdMS_TO_TICKS` truncates a 1–9 ms wait to 0 ticks. This priority-8 task on core 1 would then spin until the change was due, starving `animation_dispatch_task` and IDLE1, which the task watchdog checks.) `now` (`esp_timer_get_time() / 1000`) is sampled again **after** the wait returns, and steps 2 and 3 use that value. A `now` from before the wait would delay a new span's first change by up to 250 ms.
 2. **On a message:**
    - Parse it with T-007, choosing the parser by `msg.type`.
    - For type 6:
@@ -58,8 +58,9 @@ It does three things:
      - A servo's `initialPct` is `PercentFromPosition(min, max, lastPos, inverted)`, and its `rangeUs` is `maxPos − minPos`.
      - A digital channel's `initialLevel` is `lastPos >= 1500`.
    - For type 7: `GpioMod.GetLevel`. The `SpanKey` for a GPIO span is `{GPIO_RANDOM, 0, channel}`: `module` is always 0 for GPIO.
+   - **Reject a span that arrives too late:** if `(int32_t)(now − (dispatchTickMs + spanMs)) >= −RandomSpanTable::END_GUARD_MS`, log it. `Start` would accept it, and the next `Collect` would drop it with no change and no log (amended 2026-10-22, T-008 review).
    - Then build a `SpanStart` with `startMs = dispatchTickMs`. Take `randomTableMutex`. **Reject the span if `(int32_t)(dispatchTickMs - lastClearMs) <= 0`**, i.e. it was dispatched at or before the last panic or reload clear. Otherwise call `Start`.
-   - **Any failure** (parse, unknown module or channel, disabled channel, invalid servo fields, dispatched before a clear, or a full table) → `ESP_LOGW` with the reason and the raw command. Parse failures log `RandomParseErrorName(error)`.
+   - **Any failure** (parse, unknown module or channel, disabled channel, invalid servo fields, arrived after its end, dispatched before a clear, or a full table) → `ESP_LOGW` with the reason and the raw command. Parse failures log `RandomParseErrorName(error)`.
    - Free `data`.
 3. **Collect and post.** Take `randomTableMutex` (bounded 100 ms), `Collect(now)`, and post each change as a malloc'd string with a **0 ms** send timeout. A failed send frees the string and increments a counter that is logged once per span.
 
@@ -102,7 +103,7 @@ It does three things:
 
 - [ ] Both boards build, and `pio test -e test` is green (no regressions).
 - [ ] Bench cases 1–8 below pass on the master, and case 9 passes on a padawan.
-- [ ] No high-water-mark warning for `random_effects_task` or `animation_dispatch_task` during case 3 at a 100 ms min gap for 60 s.
+- [ ] No high-water-mark or task-watchdog warning for `random_effects_task` or `animation_dispatch_task` during case 3 at a 100 ms min gap for 60 s.
 - [ ] Panic mid-span (case 6) shows no servo movement after the panic log line.
 - [ ] `.docs/qa/random-span-events.md` has the bench cases with expected results.
 
@@ -123,6 +124,7 @@ It does three things:
   3. **Servo twitch.** Span 35–65 %, move 2–8 %, gaps 200–800 ms, speed 0. Expected: small, irregular twitches that never leave the range.
   4. **Panel flap with end event.** Span 0–100 %, move 30 %–none, gaps 400–2000 ms, then a Home event at the end time. Expected: random flapping, then home exactly at the end and no random move after.
   5. **Slow servo.** Speed 5, gaps 100–200 ms, move 20 %. Expected: each move visibly completes before the next starts (travel-stretched gaps).
+     - **5b. Accelerated short moves** (added 2026-10-22, from the T-008 distance-aware travel amendment). Speed 0, accel 3, move 5–10 %, gaps 100–200 ms. Expected: each move still completes before the next starts. A 10 % move on a 2000 µs channel models at about 925 ms, far past the drawn gap. At accel 0 the old linear scaling was exact, so case 5 alone wouldn't show the difference.
   6. **Panic mid-span.** Run cases 1 and 3 together, then panic. Expected: all random activity stops immediately, and the servos de-energize.
      - Also: a script with several spans at the same start time, panicked within ~10 ms of that start (while spans may still be queued). Expected: no random move after the panic log line.
   7. **Reload mid-span.** Deploy config during a span. Expected: the span stops, and config applies.
