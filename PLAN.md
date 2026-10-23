@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-008 — Random span math and span table (pure): starting (branch `feature/T-008-random-effects-math`)
+Now:     T-008 — Random span math and span table (pure): implemented on `feature/T-008-random-effects-math` (not yet pushed; PR next). Native 563/563, both boards; three review rounds addressed; contract amended three times (servo-utils split, distance-aware MoveTravelMs, [[nodiscard]] Start). T-009's plan amended on develop from those reviews
 Next:    agreed order (2026-10-22): T-007 → T-008 → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
 Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
 Last:    2026-10-22 — T-007 complete (PR #62 → develop): random span command parsers; nothing dispatches types 6/7 until T-009
