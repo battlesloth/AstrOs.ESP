@@ -47,22 +47,48 @@ It does three things:
 - The switch's `default:` now logs `ESP_LOGW(TAG, "Unknown command type %d skipped (delta kept)", ...)`. Once 6 and 7 have cases, only truly unknown types reach it. The `NONE` buffer commands keep their own case and stay silent.
 - On failure, free the copy and `ESP_LOGW`. The dispatch loop never waits longer than 100 ms on a span.
 
-**`randomEffectsTask`** (stack 4096, priority 8, core 1) owns a `RandomSpanTable(32, esp_random)`. It loops:
+**`randomEffectsTask`** (stack 4096, priority 8, core 1) owns `RandomSpanTable table(RANDOM_TABLE_CAPACITY, esp_random)`, with `constexpr size_t RANDOM_TABLE_CAPACITY = 32`. It also owns a `std::vector<SpanChange> changes`, reserved to `RANDOM_TABLE_CAPACITY` once at task start; `Collect` emits at most one change per slot. The vector is `clear()`ed each pass, so the loop never allocates. It loops:
 
-1. **Wait.** With `ms = min(MsUntilNext(now), 250)`, it does `xQueueReceive(randomQueue, …, (ms + portTICK_PERIOD_MS − 1) / portTICK_PERIOD_MS)`. **The wait rounds up to whole ticks.** (Amended 2026-10-22, from the T-008 review: at `CONFIG_FREERTOS_HZ=100`, `pdMS_TO_TICKS` truncates a 1–9 ms wait to 0 ticks. This priority-8 task on core 1 would then spin until the change was due, starving `animation_dispatch_task` and IDLE1, which the task watchdog checks.) `now` (`esp_timer_get_time() / 1000`) is sampled again **after** the wait returns, and steps 2 and 3 use that value. A `now` from before the wait would delay a new span's first change by up to 250 ms.
-2. **On a message:**
+1. **Wait.** It does `xQueueReceive(randomQueue, …, waitTicks)`, where `waitTicks` comes from the end of the previous pass (250 ms on the first). **The wait rounds up to whole ticks:** `(ms + portTICK_PERIOD_MS − 1) / portTICK_PERIOD_MS`.
+   - Why: at `CONFIG_FREERTOS_HZ=100`, `pdMS_TO_TICKS` truncates a 1–9 ms wait to 0 ticks. This priority-8 task on core 1 would then spin until the change was due, starving `animation_dispatch_task` and IDLE1, which the task watchdog checks. (Amended 2026-10-22, from the T-008 review.)
+2. **On a message: the checks outside the table lock.**
    - Parse it with T-007, choosing the parser by `msg.type`.
    - For type 6:
      - Take **one** snapshot of the Maestro channel (below). Use it both to decide whether to call `RandomServoFieldsValid` (only when `isServo`) and for `SpanStart.isServo`.
-     - If the snapshot says digital but any servo field after `maxGapMs` is non-zero, `ESP_LOGW` a config mismatch (the server thinks it's a servo) and still run the span as a toggle.
+     - **Servo with no usable range:** if `isServo` and the snapshot's `maxPos <= minPos`, reject it, logging "Maestro %d ch %d has no usable range (min %d us >= max %d us), fix the channel config". Without this, `PercentFromPosition` reads 0 and the travel stretch is disabled. The span would do nothing visible, and nothing would say why. The server UI and `parseServoConfig` both accept min ≥ max. (Amended 2026-10-22, from the T-008 pre-push review.)
+     - **Config mismatches, both directions:**
+       - If the snapshot says digital but any servo field after `maxGapMs` is non-zero, `ESP_LOGW` a config mismatch (the server thinks it's a servo), and still run the span as a toggle.
+       - If the snapshot says servo and `minPos`, `maxPos`, `minMove` and `maxMove` are all 0, log a config mismatch ("the server sent a digital span for servo channel …; re-sync the controller config") rather than "invalid servo fields". (Amended 2026-10-22, pre-push review.)
      - A servo's `initialPct` is `PercentFromPosition(min, max, lastPos, inverted)`, and its `rangeUs` is `maxPos − minPos`.
      - A digital channel's `initialLevel` is `lastPos >= 1500`.
    - For type 7: `GpioMod.GetLevel`. The `SpanKey` for a GPIO span is `{GPIO_RANDOM, 0, channel}`: `module` is always 0 for GPIO.
-   - **Reject a span that arrives too late:** if `(int32_t)(now − (dispatchTickMs + spanMs)) >= −RandomSpanTable::END_GUARD_MS`, log it. `Start` would accept it, and the next `Collect` would drop it with no change and no log (amended 2026-10-22, T-008 review).
-   - Then build a `SpanStart` with `startMs = dispatchTickMs`. Take `randomTableMutex`. **Reject the span if `(int32_t)(dispatchTickMs - lastClearMs) <= 0`**, i.e. it was dispatched at or before the last panic or reload clear. Otherwise call `Start`.
-   - **Any failure** (parse, unknown module or channel, disabled channel, invalid servo fields, arrived after its end, dispatched before a clear, or a full table) → `ESP_LOGW` with the reason and the raw command. Parse failures log `RandomParseErrorName(error)`.
-   - Free `data`.
-3. **Collect and post.** Take `randomTableMutex` (bounded 100 ms), `Collect(now)`, and post each change as a malloc'd string with a **0 ms** send timeout. A failed send frees the string and increments a counter that is logged once per span.
+   - **A span of `RandomSpanTable::END_GUARD_MS` or less is rejected with its own reason**: "%d ms is within the %d ms end guard, no change can run". The table would accept it and never change anything. (Jeff, 2026-10-22: T-009 logs it; § C is unchanged.)
+   - Build the `SpanStart` with designated initializers, or `SpanStart s{}` followed by named assignments. Never use positional braces: eight adjacent `int`s transpose silently, and `Start` copies the other kind's fields too. (T-008 pre-push type review.)
+3. **Under the table lock: one pass.** Take `randomTableMutex` (bounded 100 ms).
+   - **On a timeout:** `ESP_LOGW` "random_effects_task: table mutex timeout, pass skipped". Free and log any message in hand as dropped, and wait 1 tick.
+   - **Otherwise,** sample `now = esp_timer_get_time() / 1000` **after the take**, which is after the snapshot's mutex waits. Use that one value for everything in this hold:
+     a. **If a message is in hand:**
+        - Reject it if it was dispatched at or before the last clear: `(int32_t)(dispatchTickMs − lastClearMs) <= 0`.
+        - Reject it if it arrived too late: `(int32_t)(now − (dispatchTickMs + spanMs)) >= −END_GUARD_MS`. Log how late (`now − dispatchTickMs`). `Start` would accept such a span, and `Collect` would drop it with no change and no log.
+        - Otherwise `Start` it, with `startMs = dispatchTickMs`.
+        - If `Start` returns false and `ActiveCount() == RANDOM_TABLE_CAPACITY`, run `Collect(now, changes)` first, because a slot may hold a span that is already inside its end guard. Then retry `Start` once.
+        - A final false logs "table full (n/32 active)" when the table is full, and "gap rules rejected" otherwise. That would mean the table's copy of the gap rules disagrees with the parser's; T-008's `TableAcceptsExactlyWhatTheParserAccepts` pins them together.
+        - On success, `ESP_LOGI` the key, span, gaps and (for a servo) speed/accel, so "it only moved once" can be diagnosed.
+     b. **`Collect(now, changes)`,** then post each change as a malloc'd string with a **0 ms** send timeout. A failed send frees the string. Log the first dropped change per span, naming the queue and noting that the next move is sized from the dropped target. Track this with a per-`SpanKey` flag, reset on a successful `Start`; `Collect` gives no "span ended" signal, so a per-span total can't be logged.
+     c. **The next wait:** `waitTicks` from `min(MsUntilNext(now), 250)`, rounded up. It is computed here so `MsUntilNext` is read under the lock, because panic and reload call `Clear()` from other tasks.
+   - Give the mutex back, and free `data`.
+   - **Why one `now`, sampled after the snapshot:** the snapshot can block for up to about 1 s on `maestroModulesMutex`. With a `now` from before it, `Collect` could emit a change after a span's deadline, so a random move would override the end-time event (§ C). With two different `now` values, a span could pass the late check and then be dropped by `Collect` with no log. (Amended 2026-10-22, pre-push review.)
+   - **Any failure** → `ESP_LOGW` with the reason and the raw command. The failures are:
+     - parse (logged with `RandomParseErrorName(error)`)
+     - unknown module or channel
+     - disabled channel
+     - no usable channel range
+     - config mismatch
+     - invalid servo fields
+     - span within the end guard
+     - arrived after its end
+     - dispatched before a clear
+     - table full, or gap rules rejected
 
    | Change | String | Queue |
    |---|---|---|
@@ -88,6 +114,7 @@ It does three things:
 - Add `bool GetChannelSnapshot(int channel, MaestroChannelSnapshot *out)`, read under `stateMutex`.
 - It returns `{ enabled, isServo, minPos, maxPos, home, inverted, lastPos }`, and false when out of bounds.
 - Module lookup goes through `maestroModules` under `maestroModulesMutex` (bounded 1 s), the same as `servoQueueTask`.
+- **`HomeServos`' digital branch records `lastPos = moves[i].ms`** after a successful send. Today only the servo branch does. After boot or a reload, an inverted digital channel outputs 2500 while its `lastPos` still reads its configured home, so `initialLevel` would be low and the first toggle would re-send the current level. This is harmless for the digital path, because `QueueCommand` sends no pre-position frame there. (Amended 2026-10-22, T-008 pre-push review.)
 
 **`lib/Modules` `GpioModule`:**
 
@@ -102,7 +129,7 @@ It does three things:
 ## Acceptance criteria
 
 - [ ] Both boards build, and `pio test -e test` is green (no regressions).
-- [ ] Bench cases 1–8 below pass on the master, and case 9 passes on a padawan.
+- [ ] Bench cases 1–8 and 10 below pass on the master, and case 9 passes on a padawan.
 - [ ] No high-water-mark or task-watchdog warning for `random_effects_task` or `animation_dispatch_task` during case 3 at a 100 ms min gap for 60 s.
 - [ ] Panic mid-span (case 6) shows no servo movement after the panic log line.
 - [ ] `.docs/qa/random-span-events.md` has the bench cases with expected results.
@@ -130,6 +157,7 @@ It does three things:
   7. **Reload mid-span.** Deploy config during a span. Expected: the span stops, and config applies.
   8. **Table full.** A script with 33 concurrent spans. Expected: the 33rd logs "table full", and the others run.
   9. **Padawan.** Run cases 1 and 3 on a dome padawan's channels, then panic from the server. Expected: the same as cases 1, 3 and 6, with the panic arriving through the ESP-NOW relay.
+  10. **Channel with no usable range.** Set a servo channel's min and max to the same µs, deploy the config, then run a servo span on it. Expected: the span is rejected with "no usable range … fix the channel config", and nothing moves. Restore the channel afterwards.
 
   Malformed commands aren't bench-tested. The server never sends one (its validation skips invalid spans), and T-007's native tests cover the firmware rejects.
 
@@ -140,7 +168,8 @@ It does three things:
   | Call | Condition | Response |
   |---|---|---|
   | `xQueueSend(randomQueue, …, 100 ms)` | queue full | free the copy, `ESP_LOGW`; the span is lost, and the script timing is kept |
-  | change send to `servoQueue` / `gpioQueue` (0 ms) | queue full | free, count, log once per span; the next change retries naturally |
+  | change send to `servoQueue` / `gpioQueue` (0 ms) | queue full | free; log the first drop per span (per-`SpanKey` flag); the next change retries naturally, sized from the dropped target |
+  | `randomTableMutex` in the task (100 ms) | timeout | `ESP_LOGW`, skip the pass; free and log any message in hand as dropped; retry after 1 tick |
   | `malloc` | NULL | log, skip the change or span |
   | `maestroModulesMutex` (1 s) | timeout | `ESP_LOGW`, reject the span |
   | `randomTableMutex` in panic (1 s) | timeout | `ESP_LOGE`, continue the panic; the servo offs still go out, and a stray random move can follow (logged) |
@@ -150,6 +179,7 @@ It does three things:
   - **The table:** `randomEffectsTask` is the writer, plus `handlePanicStop` and `RELOAD_CONFIG`. It is synchronized by `randomTableMutex`. Collect and post happen while holding it, so a panic that has taken it guarantees no post after `Clear()`.
   - **Queued and in-flight spans:** the clear drains `randomQueue` and records `lastClearMs` under the same mutex. A span the random task already holds is rejected at `Start` by the `lastClearMs` check, so nothing dispatched before a panic can start after it.
   - **Mutex ordering:** the random task never holds `randomTableMutex` while taking `maestroModulesMutex`. The snapshot is taken before `Start`, so there is no inversion with `servoQueueTask` or panic.
+  - **Every table call happens under `randomTableMutex`**, including `MsUntilNext`, which computes the next wait at the end of the hold. One `now` is sampled after the take and used for the whole hold.
   - **Channel state reads** go under each module's `stateMutex`, per T-003.
 - **§4 Cross-platform.** Both boards. `esp_random` is hardware RNG with Wi-Fi up (ESP-NOW is always up).
 - **§5 Pre-existing state.** A span arriving while another span on the same channel is active → it replaces it (per contract). A span for a channel disabled in config → rejected with a log.
