@@ -12,13 +12,7 @@
 /// @param us
 /// @param freq_us
 /// @return
-int GetMicroSecondsAsStep(int us, double freq_us)
-{
-    auto asdouble = (double)us;
-    auto percent = (asdouble * 100.0) / freq_us; // percent of duty cycle
-    auto step = percent / .0244l;                // 4096 steps in the PCA9685
-    return (int)std::round(step);
-}
+int GetMicroSecondsAsStep(int us, double freq_us);
 
 /// @brief take a microsecond value and convert it to a position in the step map
 // based on the number of steps passed.
@@ -27,18 +21,7 @@ int GetMicroSecondsAsStep(int us, double freq_us)
 /// @param minStep
 /// @param maxStep
 /// @return
-int MicroSecondsToMapPosition(int val, double freq_us, int minStep, int maxStep, int steps)
-{
-    auto step = GetMicroSecondsAsStep(val, freq_us);
-
-    auto stepSize = (maxStep - minStep) / (double)steps;
-    int positionInStepMap = std::round((step - minStep) / stepSize);
-
-    // zero indexed 360 step array
-    auto clamped = std::clamp(positionInStepMap, 0, steps - 1);
-
-    return std::round(clamped);
-}
+int MicroSecondsToMapPosition(int val, double freq_us, int minStep, int maxStep, int steps);
 
 /// @brief calculate the step map for the PCA9685 based on the frequency.
 // The board has 4096 steps, so we precalculate the step value for value
@@ -47,23 +30,7 @@ int MicroSecondsToMapPosition(int val, double freq_us, int minStep, int maxStep,
 /// @param freq frequency in Hz
 /// @param map the map to fill
 /// @return return the step size so we can calculate requested positions
-double CalculateStepMap(double freq, uint16_t *map, int steps)
-{
-    auto freq_us = 1000000.0 / freq; // frequency in microseconds
-    auto minStep = GetMicroSecondsAsStep(500, freq_us);
-    auto maxStep = GetMicroSecondsAsStep(2500, freq_us);
-
-    double currentStep = (double)minStep;
-    double stepSize = (maxStep - minStep) / (double)steps;
-
-    for (size_t i = 0; i < steps; i++)
-    {
-        map[i] = std::round(currentStep);
-        currentStep += stepSize;
-    }
-
-    return stepSize;
-}
+double CalculateStepMap(double freq, uint16_t *map, int steps);
 
 /// @brief Get the postion requested based on percentage difference between
 /// the min and max position
@@ -71,26 +38,19 @@ double CalculateStepMap(double freq, uint16_t *map, int steps)
 /// @param maxPos
 /// @param requestPercentage
 /// @return
-int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage)
-{
-    if (requestPercentage <= 0)
-    {
-        return minPos;
-    }
-    else if (requestPercentage >= 100)
-    {
-        return maxPos;
-    }
+int GetRelativeRequestedPosition(int minPos, int maxPos, int requestPercentage);
 
-    // get the number of steps between the min and max
-    int steps = (maxPos - minPos);
-
-    int requestPos = steps * (requestPercentage / 100.0);
-
-    int move = minPos + requestPos;
-
-    return std::clamp(move, minPos, maxPos);
-}
+/// @brief The inverse of GetRelativeRequestedPosition: the script percent a
+/// channel position corresponds to, rounded to the nearest percent and clamped
+/// to 0-100. When inverted, returns 100 - p, undoing the 100 - p that
+/// MaestroModule applies before GetRelativeRequestedPosition. A channel with
+/// maxUs <= minUs has no scale and reads as 0 (100 when inverted).
+/// @param minUs channel minimum position in microseconds
+/// @param maxUs channel maximum position in microseconds
+/// @param us position in microseconds
+/// @param inverted the channel's inverted flag
+/// @return percent, 0-100
+int PercentFromPosition(int minUs, int maxUs, int us, bool inverted);
 
 /// @brief Encode a Maestro Set Target payload. The Maestro takes targets in
 /// quarter-microseconds as two 7-bit bytes (low bits first); 0 means "stop
@@ -126,21 +86,6 @@ constexpr int CeilDiv(int a, int b)
     return (a + b - 1) / b;
 }
 
-/// @brief smallest n >= 0 with n * n >= x
-static int CeilSqrt(int x)
-{
-    int n = (int)std::sqrt((double)x);
-    while (n > 0 && (n - 1) * (n - 1) >= x)
-    {
-        --n;
-    }
-    while (n * n < x)
-    {
-        ++n;
-    }
-    return n;
-}
-
 /// @brief Physical worst-case time for a Maestro servo to cover the full
 /// 0-3000 us guard range. The guard range is the margin: a real sweep is at
 /// most 2000 us (500-2500), so every result is >= 1.5x the physical time.
@@ -160,24 +105,7 @@ static int CeilSqrt(int x)
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
 /// @return worst-case travel in milliseconds
-int WorstCaseTravelMs(int speed, int acceleration)
-{
-    speed = std::clamp(speed, 0, 255);
-    acceleration = std::clamp(acceleration, 0, 255);
-
-    int cap = speed == 0 ? 255 : speed;
-    int cruiseMs = CeilDiv(120000, cap);
-
-    if (acceleration == 0)
-    {
-        return cruiseMs;
-    }
-    if (cap * cap <= 1500 * acceleration)
-    {
-        return cruiseMs + CeilDiv(80 * cap, acceleration);
-    }
-    return CeilSqrt(CeilDiv(38400000, acceleration));
-}
+int WorstCaseTravelMs(int speed, int acceleration);
 
 /// @brief The release deadline CheckServos uses: the greater of
 /// MAESTRO_RELEASE_FLOOR_MS and the physical worst case (WorstCaseTravelMs)
@@ -185,11 +113,6 @@ int WorstCaseTravelMs(int speed, int acceleration)
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
 /// @return deadline in milliseconds
-int ServoReleaseDeadlineMs(int speed, int acceleration)
-{
-    int travel = WorstCaseTravelMs(speed, acceleration);
-    int withMargin = travel + CeilDiv(travel * MAESTRO_RELEASE_MARGIN_PERCENT, 100);
-    return std::max(withMargin, MAESTRO_RELEASE_FLOOR_MS);
-}
+int ServoReleaseDeadlineMs(int speed, int acceleration);
 
 #endif

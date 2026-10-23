@@ -24,7 +24,9 @@ T-009 wires it to FreeRTOS. This task has no dependency on T-007 beyond the `MOD
   - Clamp the result to `[minPos, maxPos]`.
   - Current position outside the range: uniform position in `[minPos, maxPos]`.
 - **The gap after a servo move** is `max(NextGapMs(min, max), MoveTravelMs(distanceUs, speed, accel))`. GPIO and digital gaps are never stretched.
-- **The existing `AstrOsServoUtils.hpp` functions are unchanged.** One new helper is added.
+- **`MoveTravelMs` is distance-aware:** the same trapezoid/triangle model as `WorstCaseTravelMs`, with the move's distance `d` in place of the 3000 µs guard range. With `cap` = speed (0 → 255), cruise is `ceil(40·d / cap)` ms. With acceleration it adds `ceil(80·cap / accel)` when `2·cap² ≤ d·accel` (trapezoid); otherwise it is `ceilSqrt(ceil(12800·d / accel))` (triangle). (Amended 2026-10-22, Jeff, from the T-008 review: the original `WorstCaseTravelMs × d / 3000` is exact only at accel 0. A triangle move's time grows as √d, so short moves with acceleration were underestimated, by about 4× for 200 µs at accel 5, and the next change would cut them off mid-travel.)
+- **`Start` is `[[nodiscard]]`** (amended 2026-10-22, Jeff, from the pre-push type-design review): a dropped `false` is a span that never runs and is never logged. No behavior change.
+- **The existing `AstrOsServoUtils.hpp` functions keep their behavior.** Their bodies move verbatim to a new `lib_native/AstrOsUtility/src/AstrOsServoUtils.cpp`; the header keeps the declarations and doc comments, the constants, `constexpr CeilDiv` and `inline EncodeMaestroTarget`. One new helper is added. (Amended 2026-10-22, Jeff: the header defined non-`inline` functions, so a second including file — `RandomEffects.cpp`, the new test file, T-009's `main.cpp` — fails to link with "multiple definition".)
 
 ## Task
 
@@ -40,7 +42,8 @@ int NextGapMs(int minGapMs, int maxGapMs, const Rand32 &rand);
 int NextServoTarget(int currentPct, int minPos, int maxPos, int minMove, int maxMove /*0 = none*/,
                     const Rand32 &rand);
 int MoveTravelMs(int distanceUs, int speed, int acceleration);
-// = ceil(WorstCaseTravelMs(speed, acceleration) * distanceUs / 3000); 0 when distanceUs <= 0
+// WorstCaseTravelMs's Maestro model evaluated at distanceUs (it equals WorstCaseTravelMs at 3000 us);
+// 0 when distanceUs <= 0
 
 struct SpanKey { int type; int module; int channel; };        // type = MODULE_TYPE value
 struct SpanStart {
@@ -56,8 +59,8 @@ struct SpanChange { SpanKey key; bool isServo; int targetPct; bool level; int sp
 class RandomSpanTable {
 public:
     static constexpr int END_GUARD_MS = 20;
-    RandomSpanTable(size_t capacity, Rand32 rand);
-    bool Start(const SpanStart &start);                        // false when full (table unchanged)
+    RandomSpanTable(size_t capacity, Rand32 rng);
+    [[nodiscard]] bool Start(const SpanStart &start);          // false when full or the all-span gap rules fail (table unchanged)
     void Clear();
     void Collect(uint32_t nowMs, std::vector<SpanChange> &out);// appends due changes, reschedules, drops ended spans
     uint32_t MsUntilNext(uint32_t nowMs) const;                // UINT32_MAX when empty
@@ -71,19 +74,21 @@ public:
   - An entry with an equal key (type, module, channel) is **replaced** in place.
   - Otherwise `Start` takes a free slot.
   - When the table is full, it returns false and existing spans are untouched.
-  - It also returns false, leaving the table unchanged, when the gaps break § C: `minGapMs < 20`, `maxGapMs < minGapMs`, or `spanMs < minGapMs`. This is defense in depth (added 2026-10-22, from the T-007 review). A zero gap would make `Collect` emit on every pass and spin the task. T-009 validates first, but the table must not depend on it.
+  - It also returns false, leaving the table unchanged, when § C's all-span gap rules fail: `minGapMs < 20`, `maxGapMs < minGapMs`, or `spanMs < minGapMs`. This is defense in depth (added 2026-10-22, from the T-007 review). A zero gap would make `Collect` emit on every pass and spin the task. T-009 validates first, but the table must not depend on it.
   - The first change is due at `startMs`. The deadline is `startMs + spanMs`.
 - **`Collect(now)`:** for each entry whose next change is due:
   - If `now` is within `END_GUARD_MS` of the deadline, or past it, the entry is dropped **with no change**.
   - Otherwise it emits one change:
-    - **Servo:** `targetPct = NextServoTarget(currentPct, …)`. Then `currentPct = targetPct`, and next is `now + max(NextGapMs, MoveTravelMs(|Δpct| × rangeUs / 100, speed, accel))`.
+    - **Servo:** `targetPct = NextServoTarget(currentPct, …)`. Then `currentPct = targetPct`, and next is `now + max(NextGapMs, MoveTravelMs(distanceUs, speed, accel))`.
+      - `distanceUs = floor(|Δpct| × rangeUs / 100) + 1` when the product is positive, else 0. The `+ 1` makes it an upper bound on the distance the servo actually travels. `GetRelativeRequestedPosition` truncates each endpoint in double precision, so the mapped distance can exceed the floored product by 1 µs. For example, on 900–2100, 41 % maps to 491 µs because `1200 × 0.41` is `491.99999999999994`.
+      - (Amended 2026-10-22, Jeff, from PR #63's Copilot review. The plain floor was short in 37,376 moves, and a ceil in 1,160, across 8 channel ranges × both inversions × every move pair. Floor + 1 was short in none, and overestimates by at most 2 µs.)
     - **Toggle:** `level = !level`, and next is `now + NextGapMs`.
   - An entry whose next change would land within `END_GUARD_MS` of its deadline is dropped after emitting.
 - **Time comparisons** are wrap-safe: `(int32_t)(a - b)`.
 
-### Helper in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp`
+### Helper in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` / `.cpp`
 
-`int PercentFromPosition(int minUs, int maxUs, int us, bool inverted)` is the inverse of `GetRelativeRequestedPosition`:
+`int PercentFromPosition(int minUs, int maxUs, int us, bool inverted)`, declared in the header and defined in the `.cpp`, is the inverse of `GetRelativeRequestedPosition`:
 
 - it rounds to the nearest percent
 - it clamps to 0–100
@@ -100,13 +105,17 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
   - `NextServoTargetMiddleUsesRandomDirection`: even and odd draws give opposite directions.
   - `NextServoTargetNoMaxUsesRoom`: with maxMove 0, the move is bounded by the room in that direction.
   - `NextServoTargetOutsideRangeJumpsInside`: current 0 with range 20–100 gives a result in [20, 100], and minMove is ignored.
-  - `NextServoTargetPropertyHolds`: 10,000 seeded draws for each of (20,100,15,60), (35,65,2,8), (0,100,5,0), and (40,60,10,0, the exact half-range edge).
+  - `NextServoTargetPropertyHolds`: 10,000 seeded moves for each of (20,100,15,60), (35,65,2,8), (0,100,5,0), and (40,60,10,0, the exact half-range edge).
     - Every result is in [minPos, maxPos].
     - Every move is ≥ minMove from the previous result.
     - Every move is ≤ maxMove when it is set.
     - The servo never stays put.
 - **`MoveTravelMs`:**
-  - `MoveTravelMsScalesWorstCase`: 3000 µs equals `WorstCaseTravelMs`, 0 µs gives 0, and 1500 µs gives `ceil(half)`.
+  - `MoveTravelMsMatchesWorstCaseAtFullRange`: at 3000 µs it equals `WorstCaseTravelMs` for every speed and acceleration 0–255. 0 µs and negative distances give 0.
+  - `MoveTravelMsAccelZeroIsLinear`: 1500 µs at speed 1 gives 60000; at speed 0 it gives `ceil(60000 / 255)` = 236.
+  - `MoveTravelMsTriangleGrowsWithSqrtDistance`: 200 µs at speed 0, accel 5 gives 716, where linear scaling would give 185.
+  - `MoveTravelMsTrapezoidKeepsFullRamps`: 1500 µs at speed 20, accel 2 gives 3000 + 800.
+  - `MoveTravelMsRegimeBoundaryIsContinuous`: speed 10, accel 1 at 199, 200 and 201 µs gives 1596, 1600, 1604.
 - **`PercentFromPosition`:**
   - `PercentFromPositionRoundTrips`: for p in 0..100, `PercentFromPosition(500, 2500, GetRelativeRequestedPosition(500, 2500, p), false)` is within ±1 of p.
   - `PercentFromPositionInverted`.
@@ -124,10 +133,10 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 
 ## Acceptance criteria
 
-- [ ] All new native tests are green, and every existing native test is green.
-- [ ] Both boards build.
-- [ ] `lib_native/AstrOsRandomEffects` is listed in `PURE_LIBS`, and the purity guard passes locally: `grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)' lib_native/AstrOsRandomEffects` returns nothing.
-- [ ] `.docs/qa/random-span-events.md` notes that the move rule and table are covered natively. Bench cases come in T-009.
+- [x] All new native tests are green, and every existing native test is green.
+- [x] Both boards build.
+- [x] `lib_native/AstrOsRandomEffects` is listed in `PURE_LIBS`, and the purity guard passes locally: `grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)' lib_native/AstrOsRandomEffects` returns nothing.
+- [x] `.docs/qa/random-span-events.md` notes that the move rule and table are covered natively. Bench cases come in T-009.
 
 ## Out of scope
 
@@ -139,3 +148,116 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 
 - `pio test -e test` → green, including `astros_random_effects_tests`.
 - `pio run -e lolin_d32_pro` and `pio run -e metro_s3` → both build.
+
+## Implementation checklist
+
+- [x] Split `AstrOsServoUtils.hpp` into `.hpp` + `.cpp` (bodies verbatim); RED first: a second including file fails to link; GREEN: existing servo-utils tests pass unchanged
+- [x] Write `astros_random_effects_tests.cpp` (all tests in the Task section); RED: compile error on the missing `RandomEffects.hpp` / `PercentFromPosition`
+- [x] Add the `lib_native/AstrOsRandomEffects` skeleton (README, header, sentinel stubs) and the `PercentFromPosition` stub; RED: the tests fail on their assertions
+- [x] Implement `UniformInt`, `NextGapMs`, `NextServoTarget`, `MoveTravelMs`, `PercentFromPosition`; GREEN
+- [x] Implement `RandomSpanTable`; GREEN
+- [x] Register the lib in `PURE_LIBS`; purity grep clean; clang-format 18.1.8 clean; CLAUDE.md lib table row
+- [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [x] Mutation pass on the new code (each mutation fails a native test). Three passes: 47/47, then 19/19 after the code review, then 17/17 after the pre-push review. Only the direction-parity flip is unpinned, by design.
+- [x] `.docs/qa/random-span-events.md` note (move rule + table covered natively)
+- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; all 4 Important addressed (see Review notes)
+- [x] Pre-push `/pr-review-toolkit:review-pr` (5 agents); 0 Critical; findings addressed (see Pre-push review notes)
+
+## Rulings (2026-10-22, during implementation)
+
+Calls the contract left open. Each is pinned by a test where it changes behavior.
+
+- **`UniformInt` draws nothing when `hi <= lo`** (`UniformIntLoEqualsHi`). Fixed gaps then cost no RNG call, and scripted tests stay in step. The count is computed in 64 bits, so the full `int` range works.
+- **Direction parity:** an odd draw goes up. Not pinned: the tests only require that the two parities differ.
+- **Draw order for one servo change:** direction (middle band only), then size, then the gap.
+- **The clamp is reachable only upward**, with `minMove > range / 2`, which § C forbids. The up check runs first, so a downward move always has more than `minMove` of room (`NextServoTargetClampsToLimit`).
+- **`MoveTravelMs` saturates at `INT_MAX`** (`MoveTravelMsSaturates`). It computes in 64 bits and clamps speed and acceleration to 0–255, as `WorstCaseTravelMs` does. The model is duplicated rather than shared, because `WorstCaseTravelMs` is out of scope; `MoveTravelMsMatchesWorstCaseAtFullRange` keeps the two from drifting. The table computes `|Δpct| × rangeUs / 100` in 64 bits. `rangeUs` comes from channel config, so § C doesn't bound the product. A saturated gap simply drops the span after that change.
+- **`PercentFromPosition` with `maxUs <= minUs` returns 0** (100 when inverted) instead of dividing by zero, or reading a reversed range on a mirrored scale (`PercentFromPositionDegenerateRange`). It clamps before rounding, because `lround` returns a 32-bit `long` on the ESP32.
+- **`AstrOsServoUtils.hpp` keeps its includes** (`<algorithm>`, `<cstdint>`, `<math.h>`), so any file that relied on them through the header still compiles. `CeilSqrt` moved to the `.cpp`, still `static`.
+- **`NextServoTarget` doesn't check its inputs for overflow.** They are § C percents, validated by T-009 with `RandomServoFieldsValid` before `Start`, as its header comment says.
+- **Tests added beyond the Task list:**
+  - `NextGapMsDrawsInclusiveRange`
+  - `NextServoTargetMaxMoveCapsSize`
+  - `NextServoTargetClampsToLimit`
+  - `MoveTravelMsSaturates`
+  - `PercentFromPositionDegenerateRange`
+  - `TableServoChangeCarriesTargetAndMotion`
+  - `TableServoMovesFromLastTarget`
+  - `TableReplacesSameKeyBehindAFreeSlot`: found while planning mutations. Without it, a `Start` that took the first free slot before finding a same-key span would pass.
+  - `TableServoGapKeepsDrawWhenTravelIsShorter`: pins max(), not a sum.
+  - From the review: `TableToggleDrawsEachGap`, `TableServoDrawsDirectionSizeThenGap`, `TableSchedulesFromCollectTime`, `TableReplacementStartsFromItsInitialPct` and `TableServoTravelProductIs64Bit`, plus a check in `TableWrapsAround` made just before the wrap. The four distance-aware `MoveTravelMs` tests come from the contract amendment.
+- **The direction-parity flip is an equivalent mutant by design**, so the mutation passes don't run it.
+
+## Review notes (2026-10-22)
+
+**Fresh-context review (opus) of the uncommitted work: 0 Critical, 4 Important, 6 Minor.**
+
+- **Important 1, fixed.** No table test drew a gap: every helper set `minGapMs == maxGapMs`, so `NextGapMs(max, min)` and `gap = minGapMs` both passed. Fixed by `TableToggleDrawsEachGap` and `TableServoDrawsDirectionSizeThenGap`.
+- **Important 2, fixed.** "next = now + gap" wasn't pinned; catch-up scheduling from `nextMs` passed. Fixed by `TableSchedulesFromCollectTime` and an `ActiveCount` check in `TableNoChangeInsideEndGuard`.
+- **Important 3, contract amended (Jeff: distance-aware).** Linear `d / 3000` travel scaling underestimates moves with acceleration. See the Contract.
+- **Important 4, T-009 plan amended on develop.** At 100 Hz, `pdMS_TO_TICKS` truncates a 1–9 ms `MsUntilNext` to 0 ticks, and the priority-8 task would spin until the change was due. T-009 now rounds the wait up. The `MsUntilNext` comment warns callers.
+- **Minors 5–7, fixed as tests.** The wrap-safe check before the wrap, servo replacement resetting `currentPct`, and the 64-bit distance product.
+- **Minor 8, fixed.** Checkboxes ticked.
+- **Minor 9, noted in T-009 (develop).** Log a span that arrives after its deadline, and sample `now` after the queue wait.
+- **Minor 10, fixed.** The constructor parameter is now `rng` (no shadowing), and `MsUntilNext` says "earliest scheduled change".
+- **Declined by the reviewer, accepted here:**
+  - `END_GUARD_MS` sizing: pinned, and bench case 4 checks it.
+  - Modulo bias: negligible.
+  - Pre-existing warnings and UB carried verbatim by the split: out of scope.
+  - A replacement starting from T-009's `lastPos` snapshot: the replacement semantics are pinned.
+  - `bool Start` can't say why it failed: the interface is pinned, and T-009 validates first.
+
+## Pre-push review notes (2026-10-22)
+
+**`/pr-review-toolkit:review-pr` (5 agents, full branch diff): 0 Critical.**
+
+- **code-reviewer: 0 Critical, 0 Important.** It confirmed the device builds link the split `.cpp` without duplicate symbols, and that `RandomEffects.cpp` compiles with the exact device flags.
+- **pr-test-analyzer:** 13 non-equivalent mutants survived, from three root causes:
+  - no table servo test checked the next-change time with acceleration (criticality 8: the regression the distance-aware amendment exists to prevent)
+  - every `Start` gap test had `minGapMs == maxGapMs`
+  - the clamp hid size-bound bugs from the property loop
+  - **Fixed** with the tests below, all mutation-verified:
+    - `TableServoGapStretchedByAcceleratedTravel`
+    - `NextServoTargetRoomBoundsSizeUnderMaxMove`
+    - `NextServoTargetMiddleBandEdgesDrawDirection`
+    - `TableStartGapChecksUseTheRightFields`
+    - `PercentFromPositionUsesChannelRange`
+    - `TableServoStartsOutsideRangeJumpsInside`
+    - `TableCollectAppends`
+    - `MoveTravelMsLargeDistanceWithAccel`
+    - `draws.empty()` on six tests
+- **comment-analyzer:** fixed three wrong test comments (the clamp case, "every other table test", the reversed-range case) and other wording. It also found that `<=` → `<` at the regime boundary survived. That mutant is not equivalent once ceilings apply, so `MoveTravelMsRegimeBoundaryIsContinuous` now checks (1, 3, 18) → 28 and (8, 6, 9) → 108. The AstrOs.Server spec still described the linear model; amended on its develop.
+- **type-design-analyzer:**
+  - `Start` is now `[[nodiscard]]` (contract amended, Jeff).
+  - The table can't be copied: copies are deleted and pinned by `static_assert`.
+  - Private members are `slots_` / `rng_`, matching the codebase and removing the shadowing.
+  - New doc comments: the `SpanStart` trust boundary and value-initialization, `SpanChange`'s three dispatch cases, the `Rand32` requirements, and that a span of `END_GUARD_MS` or less is accepted but never changes anything.
+  - Declined: `SpanKey::operator==`, `MODULE_TYPE` in `SpanKey`, and a variant or split `SpanStart`; each is churn for little value.
+- **silent-failure-hunter: 0 Critical, 2 High, 7 Medium, all at the T-009 seam** (inputs the table can't see, and reasons a bare `bool` can't carry). The plan amendments are on develop:
+  - reject a degenerate channel range
+  - one `now` sampled under the table lock after the snapshot
+  - a distinct log for spans of `END_GUARD_MS` or less (Jeff: T-009 logs it, § C unchanged)
+  - "table full" vs "gap rules" in the reject log
+  - `Collect` and retry before reporting full
+  - a digital `lastPos` after homing
+  - the reverse config-mismatch log
+  - a per-key drop-log flag
+  - reserving the output vector
+  - `MsUntilNext` under the lock
+  - a mutex-timeout log
+  - On this branch: `TableAcceptsExactlyWhatTheParserAccepts` ties the two copies of the gap rules together.
+
+## PR #63 review notes (2026-10-22)
+
+- **Copilot, high:** "round the mapped move distance up to avoid early scheduling." Verified: on a 500–2499 µs channel, 10 % → 20 % maps to 699 → 899 µs (200 µs), while the floored product is 199. At speed 1 the next change came 40 ms early.
+- **Copilot's ceil is not enough.** `GetRelativeRequestedPosition` truncates in double precision, so an endpoint can land a whole µs low (900–2100, 41 %: `1200 × 0.41 = 491.99999999999994`). A search over 8 channel ranges × both inversions × every move pair found:
+  - the floor short in 37,376 moves
+  - a ceil short in 1,160
+  - floor + 1 short in none
+- **Jeff chose floor + 1** (contract amended). Tests:
+  - `TableServoDistanceCoversMappedTravel` covers Copilot's example and the double-truncation case.
+  - `TableServoTravelNeverShortOfMappedDistance` checks every forced 1 % and 10 % move on 8 channels, plain and inverted.
+  - `TableServoZeroRangeDisablesStretch` pins the `product > 0` guard.
+  - Four expected travel values gained the 1 µs.
+- **Mutations:** each of three variants is killed: no `+ 1`, Copilot's ceil, and no guard.
+

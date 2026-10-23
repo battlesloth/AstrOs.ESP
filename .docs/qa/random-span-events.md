@@ -51,3 +51,34 @@ Overflow checks behave the same on the device and the native host: fields are pa
 There are no bench cases for T-007 alone. On hardware it behaves like the previous firmware: types 6 and 7 are skipped, and the rest of the script plays on time.
 
 Malformed commands aren't bench-tested at any stage. AstrOs.Server T-008 rounds span and gap values to whole milliseconds and skips invalid spans before they're sent (§ C); these native tests cover the firmware rejects. Unrounded, a float such as `2009.9999999999998` would be rejected here as `NOT_A_NUMBER`.
+
+## Move rule and span table (T-008): native coverage
+
+`test/test_native/astros_random_effects_tests.cpp` covers every random decision, with a scripted RNG (exact draws) or a seeded one (property loops):
+
+- **draws:** `UniformInt` is inclusive at both ends, works across the full `int` range, and returns `lo` without drawing when `hi <= lo`; `NextGapMs` draws over `minGapMs..maxGapMs`
+- **servo move rule (§ C):**
+  - forced up at `minPos` and at `minPos + minMove`; forced down at `maxPos` and at `maxPos − minMove`; neither consumes a direction draw
+  - in between, including the first positions past each forced band, the draw's parity picks the direction
+  - the size is bounded by the room in that direction (`maxMove 0`), by `maxMove`, and by the room when it is smaller than `maxMove`
+  - a position outside the range jumps to a uniform position inside it, ignoring `minMove`
+  - a move that would pass a limit stops at it (only reachable when `minMove` is more than half the range, which § C forbids)
+  - 10,000 seeded moves for each of four configurations (including the exact half-range edge) stay in range, move at least `minMove` and at most `maxMove`
+- **travel stretch:**
+  - `MoveTravelMs` runs `WorstCaseTravelMs`'s Maestro model at the move's distance. It equals `WorstCaseTravelMs` at 3000 µs for every speed and acceleration (out-of-range values clamp the same way), and is linear at accel 0
+  - with acceleration it isn't linear: the shape that never reaches the speed cap grows with √distance (200 µs at speed 0, accel 5 is 716 ms, where linear scaling gives 185), and the shape that does reach it keeps its full ramps; the two shapes meet at the boundary (within 1 ms after rounding up), and the boundary itself counts as the second shape
+  - it saturates instead of overflowing, and large distances with acceleration compute in 64 bits
+  - a servo span's next change waits for the larger of the drawn gap and the move's travel, in either direction, with and without acceleration, with the distance computed in 64 bits as `floor(|Δpct| × rangeUs / 100) + 1` µs, which is never short of what `GetRelativeRequestedPosition` maps (checked for every forced 1 % and 10 % move on eight channel ranges, plain and inverted); `rangeUs <= 0` disables the stretch; a span starting outside its range measures its first move from where it actually is
+- **`PercentFromPosition`:** round-trips `GetRelativeRequestedPosition` within ±1 %, plain and inverted (undoing MaestroModule's `100 − p`), on full and trimmed channels; clamps to 0–100; a channel with `maxUs <= minUs` reads as 0 (100 inverted)
+- **span table:**
+  - the first change is at the start; toggles alternate from the initial level; servo changes carry the target, speed and acceleration, and each move starts from the last target
+  - gaps are drawn for every change, toggle and servo; a servo change draws direction, size, then gap
+  - the next change is scheduled from when the pass ran, so a late pass never causes a burst of catch-up changes
+  - a span with the same key (type, module, channel) replaces the old one, even behind a free slot or when the table is full, and starts from its own initial position; a key that differs in any of type, module or channel makes a new span
+  - a full table rejects a new key and leaves every span running; a span that ends frees its slot
+  - `Start` rejects `minGapMs < 20`, `maxGapMs < minGapMs` and `spanMs < minGapMs`, leaving the table unchanged; each rule reads the right field (a span shorter than its max gap is valid), and the table accepts exactly the gap triples T-007's parser accepts
+  - `Collect` appends to the caller's vector, and the table can't be copied (a copy would fork the schedule)
+  - no change at or after `deadline − 20 ms`: a late pass inside the guard drops the span with no change, and a span whose next change would land inside it is dropped right after emitting
+  - `MsUntilNext`, `Clear`, and a span that crosses the `uint32` millisecond wrap, including a check made just before the wrap while the next change is due after it
+
+T-008 adds no bench cases either: nothing on the controller calls the table until T-009.
