@@ -1,5 +1,6 @@
 #include <AstrOsEnums.h>
 #include <AstrOsServoUtils.hpp>
+#include <RandomCommands.hpp>
 #include <RandomEffects.hpp>
 #include <gtest/gtest.h>
 
@@ -8,16 +9,17 @@
 #include <deque>
 #include <random>
 #include <set>
+#include <string>
+#include <type_traits>
 #include <vector>
 
-// Move rule and span semantics: .docs/protocol.md § C and
-// .docs/tasks/T-008-random-effects-math.md.
+// Move rule and span semantics: .docs/protocol.md § C (rulings: the T-008 task file).
 
 namespace
 {
     // Returns the queued draws in order; running out is a test failure (the code
     // drew more than the test expected). UniformInt(lo, hi) takes draw % (hi - lo + 1),
-    // so a draw of n picks lo + n.
+    // so a draw n < count picks lo + n; larger draws wrap.
     Rand32 Scripted(std::deque<uint32_t> &draws)
     {
         return [&draws]() -> uint32_t
@@ -241,6 +243,37 @@ TEST(RandomEffects, NextServoTargetMaxMoveCapsSize)
     EXPECT_TRUE(draws.empty());
 }
 
+// Room smaller than maxMove bounds the size. The clamp would hide an over-large
+// size from the property loop (it still lands in range, >= minMove, <= maxMove).
+TEST(RandomEffects, NextServoTargetRoomBoundsSizeUnderMaxMove)
+{
+    // Range 20-100, move 15-70. Forced up from 35 and down from 85: room 65 either
+    // way, so the size is 15..65 (51 values).
+    std::deque<uint32_t> draws{50, 51, 50, 51};
+    Rand32 rand = Scripted(draws);
+    EXPECT_EQ(100, NextServoTarget(35, 20, 100, 15, 70, rand)); // size 65 = the room
+    EXPECT_EQ(50, NextServoTarget(35, 20, 100, 15, 70, rand));  // 51 wraps to size 15
+    EXPECT_EQ(20, NextServoTarget(85, 20, 100, 15, 70, rand));
+    EXPECT_EQ(70, NextServoTarget(85, 20, 100, 15, 70, rand));
+    EXPECT_TRUE(draws.empty());
+}
+
+// The first positions past each forced band draw a direction.
+TEST(RandomEffects, NextServoTargetMiddleBandEdgesDrawDirection)
+{
+    for (int current : {36, 84})
+    {
+        std::deque<uint32_t> draws{0, 0, 1, 0};
+        Rand32 rand = Scripted(draws);
+        int a = NextServoTarget(current, 20, 100, 15, 60, rand);
+        int b = NextServoTarget(current, 20, 100, 15, 60, rand);
+        EXPECT_EQ(15, std::abs(a - current)) << current;
+        EXPECT_EQ(15, std::abs(b - current)) << current;
+        EXPECT_NE(a, b) << current;
+        EXPECT_TRUE(draws.empty()) << current;
+    }
+}
+
 TEST(RandomEffects, NextServoTargetOutsideRangeJumpsInside)
 {
     // One draw, uniform over 20..100 (81 values); no direction draw, no minMove.
@@ -254,9 +287,10 @@ TEST(RandomEffects, NextServoTargetOutsideRangeJumpsInside)
 }
 
 // Jeff's rule: a move that would pass a limit stops at it. With § C-valid fields
-// the size never exceeds the room; this needs minMove > range / 2, which makes
-// every in-range position forced up (the up check runs first, so a downward
-// move always has more than minMove of room).
+// the size never exceeds the room; this needs minMove > range / 2, which leaves
+// no middle band. Positions within minMove of both limits are forced up (the up
+// check runs first) with less than minMove of room; a downward move always has
+// more than minMove of room. Here minMove 30 >= range 20, so every position is.
 TEST(RandomEffects, NextServoTargetClampsToLimit)
 {
     Rand32 rand = NoDraws();
@@ -336,15 +370,20 @@ TEST(RandomEffects, MoveTravelMsTriangleGrowsWithSqrtDistance)
 
 TEST(RandomEffects, MoveTravelMsTrapezoidKeepsFullRamps)
 {
-    EXPECT_EQ(3800, MoveTravelMs(1500, 20, 2)); // 3000 cruise + 800 ramps; linear would give 3400
+    EXPECT_EQ(3800, MoveTravelMs(1500, 20, 2)); // 40d/cap = 3000 plus 80cap/accel = 800; linear would give 3400
 }
 
 TEST(RandomEffects, MoveTravelMsRegimeBoundaryIsContinuous)
 {
     // Speed 10, accel 1: the cap is reached exactly at 200 us (2 * 10^2 == 200 * 1).
     EXPECT_EQ(1596, MoveTravelMs(199, 10, 1)); // triangle
-    EXPECT_EQ(1600, MoveTravelMs(200, 10, 1)); // trapezoid: 800 + 800
+    EXPECT_EQ(1600, MoveTravelMs(200, 10, 1)); // both shapes give 1600 here
     EXPECT_EQ(1604, MoveTravelMs(201, 10, 1)); // trapezoid: 804 + 800
+
+    // With ceilings the shapes can differ by 1 ms at a boundary point; the
+    // boundary itself is a trapezoid (2 cap^2 <= d accel).
+    EXPECT_EQ(28, MoveTravelMs(1, 3, 18)); // 14 + 14; the triangle would give 27
+    EXPECT_EQ(108, MoveTravelMs(8, 6, 9)); // 54 + 54; the triangle would give 107
 }
 
 // Ruling: travel saturates at INT_MAX instead of overflowing (rangeUs comes from
@@ -352,6 +391,13 @@ TEST(RandomEffects, MoveTravelMsRegimeBoundaryIsContinuous)
 TEST(RandomEffects, MoveTravelMsSaturates)
 {
     EXPECT_EQ(INT_MAX, MoveTravelMs(INT_MAX, 1, 0));
+}
+
+TEST(RandomEffects, MoveTravelMsLargeDistanceWithAccel)
+{
+    // d * accel and 40 d in 64 bits: ceil(40 * INT_MAX / 255) = 336860180, plus
+    // ceil(80 * 255 / 2) = 10200.
+    EXPECT_EQ(336870380, MoveTravelMs(INT_MAX, 0, 2));
 }
 
 // ---- PercentFromPosition ----
@@ -389,13 +435,28 @@ TEST(RandomEffects, PercentFromPositionInverted)
     }
 }
 
+// Real channels are trimmed; the formula must use the channel's own range.
+TEST(RandomEffects, PercentFromPositionUsesChannelRange)
+{
+    EXPECT_EQ(0, PercentFromPosition(1000, 2000, 1000, false));
+    EXPECT_EQ(25, PercentFromPosition(1000, 2000, 1250, false));
+    EXPECT_EQ(100, PercentFromPosition(1000, 2000, 2000, false));
+    EXPECT_EQ(75, PercentFromPosition(1000, 2000, 1250, true));
+    for (int p = 0; p <= 100; p++)
+    {
+        int us = GetRelativeRequestedPosition(900, 2100, p);
+        EXPECT_NEAR(p, PercentFromPosition(900, 2100, us, false), 1) << "p " << p;
+    }
+}
+
 // Ruling: a channel with maxUs <= minUs has no percent scale; it reads as 0
 // (100 when inverted) instead of dividing by zero.
 TEST(RandomEffects, PercentFromPositionDegenerateRange)
 {
     EXPECT_EQ(0, PercentFromPosition(1500, 1500, 1500, false));
     EXPECT_EQ(100, PercentFromPosition(1500, 1500, 1500, true));
-    // Off the single point too: without the guard these divide by zero to +-inf.
+    // Off the single point too: without the guard these divide by zero to +-inf,
+    // and a reversed range (maxUs < minUs) would read on a mirrored scale.
     EXPECT_EQ(0, PercentFromPosition(1500, 1500, 1600, false));
     EXPECT_EQ(0, PercentFromPosition(1500, 1500, 1400, false));
     EXPECT_EQ(0, PercentFromPosition(2000, 1000, 1500, false));
@@ -433,6 +494,7 @@ TEST(RandomEffects, TableServoChangeCarriesTargetAndMotion)
     EXPECT_EQ(35, changes[0].targetPct); // forced up from 20 by 15
     EXPECT_EQ(12, changes[0].speed);
     EXPECT_EQ(3, changes[0].acceleration);
+    EXPECT_TRUE(draws.empty());
 }
 
 TEST(RandomEffects, TableServoMovesFromLastTarget)
@@ -453,6 +515,7 @@ TEST(RandomEffects, TableServoMovesFromLastTarget)
     auto second = CollectAt(table, 1400);
     ASSERT_EQ(1u, second.size());
     EXPECT_EQ(50, second[0].targetPct); // down 10 from 60, not from the initial 50
+    EXPECT_TRUE(draws.empty());
 }
 
 TEST(RandomEffects, TableToggleAlternatesFromInitialLevel)
@@ -636,6 +699,7 @@ TEST(RandomEffects, TableServoGapStretchedByTravel)
     ASSERT_EQ(1u, second.size());
     ASSERT_EQ(10, second[0].targetPct);
     EXPECT_EQ(64000u, table.MsUntilNext(65000));
+    EXPECT_TRUE(draws.empty());
 }
 
 TEST(RandomEffects, TableServoGapKeepsDrawWhenTravelIsShorter)
@@ -648,9 +712,10 @@ TEST(RandomEffects, TableServoGapKeepsDrawWhenTravelIsShorter)
 
     ASSERT_EQ(1u, CollectAt(table, 1000).size());
     EXPECT_EQ(1000u, table.MsUntilNext(1000));
+    EXPECT_TRUE(draws.empty());
 }
 
-// #1 of the T-008 review: every other table test uses a fixed gap.
+// The table helpers use a fixed gap (minGap == maxGap); this test draws each gap.
 TEST(RandomEffects, TableToggleDrawsEachGap)
 {
     std::deque<uint32_t> draws{150, 300, 0};
@@ -689,7 +754,7 @@ TEST(RandomEffects, TableServoDrawsDirectionSizeThenGap)
     EXPECT_TRUE(draws.empty());
 }
 
-// #2 of the T-008 review: the next change is scheduled from when Collect ran,
+// The next change is scheduled from when Collect ran,
 // not from when the change was due, so a late pass never causes a catch-up burst.
 TEST(RandomEffects, TableSchedulesFromCollectTime)
 {
@@ -716,6 +781,7 @@ TEST(RandomEffects, TableReplacementStartsFromItsInitialPct)
     auto second = CollectAt(table, 1100);
     ASSERT_EQ(1u, second.size());
     EXPECT_EQ(85, second[0].targetPct);
+    EXPECT_TRUE(draws.empty());
 }
 
 // |delta pct| * rangeUs is computed in 64 bits: 80 * 30,000,000 overflows int.
@@ -730,7 +796,100 @@ TEST(RandomEffects, TableServoTravelProductIs64Bit)
 
     ASSERT_EQ(1u, CollectAt(table, 1000).size());
     EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(24000000, 1, 0)), table.MsUntilNext(1000));
+    EXPECT_TRUE(draws.empty());
 }
+
+// The stretch uses the span's acceleration (bench case 5b natively): 10 % of
+// 2000 us at speed 0, accel 3 is a triangle move of 924 ms. Ignoring accel would
+// give 32 ms, and the 100 ms gap would win.
+TEST(RandomEffects, TableServoGapStretchedByAcceleratedTravel)
+{
+    RandomSpanTable table(4, NoDraws()); // forced up from 0, size 10..10, fixed gap
+    SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 100, 0, 100, 10, 10, 0);
+    s.acceleration = 3;
+    ASSERT_TRUE(table.Start(s));
+
+    auto changes = CollectAt(table, 1000);
+    ASSERT_EQ(1u, changes.size());
+    ASSERT_EQ(10, changes[0].targetPct);
+    EXPECT_EQ(924u, table.MsUntilNext(1000));
+}
+
+// A servo homed at 0 % with a 30-70 % span: the first move jumps inside the range,
+// and its travel is measured from 0 %, not from 30 %.
+TEST(RandomEffects, TableServoStartsOutsideRangeJumpsInside)
+{
+    std::deque<uint32_t> draws{40}; // 30 + 40 = 70
+    RandomSpanTable table(4, Scripted(draws));
+    SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 400, 30, 70, 10, 0, 0);
+    s.speed = 1;
+    ASSERT_TRUE(table.Start(s));
+
+    auto changes = CollectAt(table, 1000);
+    ASSERT_EQ(1u, changes.size());
+    EXPECT_EQ(70, changes[0].targetPct);
+    EXPECT_EQ(56000u, table.MsUntilNext(1000)); // 70 % of 2000 us = 1400 us at speed 1
+    EXPECT_TRUE(draws.empty());
+}
+
+// Start checks minGapMs (not maxGapMs) against 20, and spanMs against minGapMs
+// (not maxGapMs), so a span shorter than its max gap is valid.
+TEST(RandomEffects, TableStartGapChecksUseTheRightFields)
+{
+    RandomSpanTable table(4, NoDraws());
+    SpanStart zeroMin = Toggle(GPIO_KEY, 1000, 5000, 0, false);
+    zeroMin.maxGapMs = 400;
+    SpanStart nineteenMin = Toggle(GPIO_KEY, 1000, 5000, 19, false);
+    nineteenMin.maxGapMs = 400;
+    EXPECT_FALSE(table.Start(zeroMin));
+    EXPECT_FALSE(table.Start(nineteenMin));
+    EXPECT_EQ(0u, table.ActiveCount());
+
+    std::deque<uint32_t> draws{0};
+    RandomSpanTable burst(4, Scripted(draws));
+    SpanStart shortSpan = Toggle(GPIO_KEY, 1000, 300, 100, false);
+    shortSpan.maxGapMs = 500;
+    EXPECT_TRUE(burst.Start(shortSpan));
+    EXPECT_EQ(1u, CollectAt(burst, 1000).size());
+    EXPECT_TRUE(draws.empty());
+}
+
+// The table re-checks the parser's gap rules (two copies: RandomCommands.cpp and
+// RandomEffects.cpp). They must agree, or T-009 would report a gap reject as
+// "table full", or accept a span the parser refused.
+TEST(RandomEffects, TableAcceptsExactlyWhatTheParserAccepts)
+{
+    const int triples[][3] = {{20, 20, 20},    {19, 19, 19},    {20, 20, 19},     {19, 20, 20},
+                              {300, 100, 500}, {100, 100, 100}, {99, 100, 100},   {5000, 0, 400},
+                              {5000, 19, 400}, {5000, 20, 400}, {5000, 400, 399}, {INT_MAX, 20, INT_MAX}};
+    for (const auto &t : triples)
+    {
+        std::string cmd = "7|0|0|" + std::to_string(t[0]) + "|" + std::to_string(t[1]) + "|" + std::to_string(t[2]);
+        bool parserAccepts = ParseRandomGpioCommand(cmd).error == RandomParseError::NONE;
+
+        RandomSpanTable table(4, NoDraws());
+        SpanStart s = Toggle(GPIO_KEY, 1000, t[0], t[1], false);
+        s.maxGapMs = t[2];
+        EXPECT_EQ(parserAccepts, table.Start(s)) << cmd;
+    }
+}
+
+// Collect appends to the caller's vector (T-009 reuses one).
+TEST(RandomEffects, TableCollectAppends)
+{
+    RandomSpanTable table(4, NoDraws());
+    ASSERT_TRUE(table.Start(Toggle(GPIO_KEY, 1000, 5000, 100, false)));
+    std::vector<SpanChange> out{SpanChange{SpanKey{99, 9, 9}, false, 0, false, 0, 0}};
+    table.Collect(1000, out);
+    ASSERT_EQ(2u, out.size());
+    EXPECT_EQ(99, out[0].key.type);
+    EXPECT_TRUE(SameKey(GPIO_KEY, out[1].key));
+}
+
+// A copy would fork the schedule: Collect on the copy reschedules it while the
+// original emits the same changes again.
+static_assert(!std::is_copy_constructible_v<RandomSpanTable>, "RandomSpanTable must not be copyable");
+static_assert(!std::is_copy_assignable_v<RandomSpanTable>, "RandomSpanTable must not be copy-assignable");
 
 TEST(RandomEffects, TableMsUntilNext)
 {

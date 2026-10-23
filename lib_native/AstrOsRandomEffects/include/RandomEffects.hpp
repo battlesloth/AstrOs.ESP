@@ -12,6 +12,9 @@
 // native tests are deterministic; the random-effects task in src/main.cpp (T-009)
 // owns the table and supplies esp_random.
 
+// Must be callable (never empty) and uniform over all 32 bits: UniformInt takes
+// draw % count and the low bit picks a servo direction. esp_random on the
+// controller; scripted or std::mt19937 in native tests.
 using Rand32 = std::function<uint32_t()>;
 
 // Uniform over lo..hi inclusive (draw % count). Returns lo without drawing when
@@ -34,8 +37,8 @@ int NextServoTarget(int currentPct, int minPos, int maxPos, int minMove, int max
 // Travel time for a move of distanceUs: the Maestro speed/acceleration model of
 // WorstCaseTravelMs evaluated at distanceUs (so it equals WorstCaseTravelMs at
 // 3000 us). Not a linear scale: a move that never reaches the speed cap takes
-// sqrt-of-distance time. Speed 0 = 255; inputs clamped to 0-255; every division
-// ceils. 0 when distanceUs <= 0; saturates at INT_MAX.
+// sqrt-of-distance time. Speed 0 = 255; speed and acceleration clamped to 0-255;
+// every division ceils. 0 when distanceUs <= 0; saturates at INT_MAX.
 int MoveTravelMs(int distanceUs, int speed, int acceleration);
 
 // type is a MODULE_TYPE value (MAESTRO_RANDOM or GPIO_RANDOM); module is the
@@ -47,6 +50,14 @@ struct SpanKey
     int channel;
 };
 
+// Value-initialize it (SpanStart s{} or designated initializers) so the fields
+// of the other kind are zero: Start copies all of them. Start checks only the
+// all-span gap rules. Everything else is trusted to the caller (T-009):
+// - servo fields are § C-valid (RandomServoFieldsValid, which also requires
+//   minGapMs >= 100 for a servo)
+// - isServo only with MAESTRO_RANDOM
+// - rangeUs > 0 (<= 0 disables the travel stretch)
+// - initialPct 0-100
 struct SpanStart
 {
     SpanKey key;
@@ -63,12 +74,16 @@ struct SpanStart
     int speed;
     int acceleration;
     int rangeUs;    // channel maxPos - minPos in us, for the travel stretch
-    int initialPct; // un-inverted percent at start (PercentFromPosition)
+    int initialPct; // script percent at start, before MaestroModule's inversion (PercentFromPosition)
     // toggle only
     bool initialLevel;
 };
 
-// One due change. Servo: targetPct, speed, acceleration. Toggle: level.
+// One due change; the fields of the other kind are 0 / false. Dispatch needs
+// both isServo and key.type:
+// - isServo: a servo move (targetPct, speed, acceleration)
+// - !isServo, MAESTRO_RANDOM: a digital Maestro channel; level is 2500 or 500 us
+// - GPIO_RANDOM: level is 1 or 0
 struct SpanChange
 {
     SpanKey key;
@@ -91,10 +106,16 @@ public:
 
     RandomSpanTable(size_t capacity, Rand32 rng);
 
+    // A copy would fork the schedule (both copies would emit the same changes).
+    RandomSpanTable(const RandomSpanTable &) = delete;
+    RandomSpanTable &operator=(const RandomSpanTable &) = delete;
+
     // Replaces an active span with an equal key, else takes a free slot. False,
-    // with the table unchanged, when the table is full or the gaps break § C
-    // (minGapMs < 20, maxGapMs < minGapMs, spanMs < minGapMs).
-    bool Start(const SpanStart &start);
+    // with the table unchanged, when the table is full or § C's all-span gap
+    // rules fail (minGapMs < 20, maxGapMs < minGapMs, spanMs < minGapMs).
+    // True means scheduled: a span of END_GUARD_MS or less is accepted but never
+    // changes anything.
+    [[nodiscard]] bool Start(const SpanStart &start);
 
     void Clear();
 
@@ -120,8 +141,8 @@ private:
         bool level;     // toggle
     };
 
-    std::vector<Entry> slots;
-    Rand32 rand;
+    std::vector<Entry> slots_;
+    Rand32 rng_;
 };
 
 #endif

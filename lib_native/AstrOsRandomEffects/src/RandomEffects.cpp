@@ -97,6 +97,8 @@ int NextServoTarget(int currentPct, int minPos, int maxPos, int minMove, int max
 // place of the 3000 us guard range. Speed unit 0.25 us / 10 ms, so cruising d
 // takes 40 d / cap ms; ramping to the cap takes 80 cap / accel ms and covers
 // cap^2 / accel us, so the cap is reached when 2 cap^2 <= d accel (trapezoid).
+// Each ramp covers its distance at half the cap, so the two ramps add
+// 80 cap / accel ms over cruising all of d.
 // Otherwise the move is a triangle: sqrt(12800 d / accel) ms.
 int MoveTravelMs(int distanceUs, int speed, int acceleration)
 {
@@ -130,7 +132,7 @@ int MoveTravelMs(int distanceUs, int speed, int acceleration)
     return static_cast<int>(std::min<int64_t>(ms, INT_MAX));
 }
 
-RandomSpanTable::RandomSpanTable(size_t capacity, Rand32 rng) : slots(capacity), rand(std::move(rng)) {}
+RandomSpanTable::RandomSpanTable(size_t capacity, Rand32 rng) : slots_(capacity), rng_(std::move(rng)) {}
 
 bool RandomSpanTable::Start(const SpanStart &start)
 {
@@ -142,7 +144,7 @@ bool RandomSpanTable::Start(const SpanStart &start)
 
     // An active span with the same key wins over the first free slot.
     Entry *slot = nullptr;
-    for (Entry &e : slots)
+    for (Entry &e : slots_)
     {
         if (e.active && SameKey(e.span.key, start.key))
         {
@@ -171,7 +173,7 @@ bool RandomSpanTable::Start(const SpanStart &start)
 
 void RandomSpanTable::Clear()
 {
-    for (Entry &e : slots)
+    for (Entry &e : slots_)
     {
         e.active = false;
     }
@@ -179,7 +181,7 @@ void RandomSpanTable::Clear()
 
 void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
 {
-    for (Entry &e : slots)
+    for (Entry &e : slots_)
     {
         if (!e.active || !AtOrAfter(nowMs, e.nextMs))
         {
@@ -198,11 +200,11 @@ void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
 
         if (span.isServo)
         {
-            int target = NextServoTarget(e.currentPct, span.minPos, span.maxPos, span.minMove, span.maxMove, rand);
+            int target = NextServoTarget(e.currentPct, span.minPos, span.maxPos, span.minMove, span.maxMove, rng_);
             int64_t distanceUs = static_cast<int64_t>(std::abs(target - e.currentPct)) * span.rangeUs / 100;
             int travelMs =
                 MoveTravelMs(static_cast<int>(std::min<int64_t>(distanceUs, INT_MAX)), span.speed, span.acceleration);
-            gapMs = std::max(NextGapMs(span.minGapMs, span.maxGapMs, rand), travelMs);
+            gapMs = std::max(NextGapMs(span.minGapMs, span.maxGapMs, rng_), travelMs);
 
             e.currentPct = target;
             change.targetPct = target;
@@ -213,7 +215,7 @@ void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
         {
             e.level = !e.level;
             change.level = e.level;
-            gapMs = NextGapMs(span.minGapMs, span.maxGapMs, rand);
+            gapMs = NextGapMs(span.minGapMs, span.maxGapMs, rng_);
         }
 
         out.push_back(change);
@@ -229,7 +231,7 @@ void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
 uint32_t RandomSpanTable::MsUntilNext(uint32_t nowMs) const
 {
     uint32_t soonest = UINT32_MAX;
-    for (const Entry &e : slots)
+    for (const Entry &e : slots_)
     {
         if (!e.active)
         {
@@ -244,5 +246,5 @@ uint32_t RandomSpanTable::MsUntilNext(uint32_t nowMs) const
 
 size_t RandomSpanTable::ActiveCount() const
 {
-    return std::count_if(slots.begin(), slots.end(), [](const Entry &e) { return e.active; });
+    return std::count_if(slots_.begin(), slots_.end(), [](const Entry &e) { return e.active; });
 }

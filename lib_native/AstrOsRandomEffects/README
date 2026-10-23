@@ -22,6 +22,6 @@ Error-channel convention
 ------------------------
 
 No logging and no exceptions. RandomSpanTable::Start returns false when the
-table is full or the gaps break § C; the MIXED caller logs at the boundary.
+table is full or § C's all-span gap rules fail; the MIXED caller logs at the boundary.
 RandomSpanTable is not thread-safe: the caller holds one lock around every
 call (T-009: randomTableMutex).

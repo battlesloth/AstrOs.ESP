@@ -156,9 +156,10 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 - [x] Implement `RandomSpanTable`; GREEN
 - [x] Register the lib in `PURE_LIBS`; purity grep clean; clang-format 18.1.8 clean; CLAUDE.md lib table row
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
-- [x] Mutation pass on the new code (each mutation fails a native test) — 47/47, then 19/19 after the review fixes
+- [x] Mutation pass on the new code (each mutation fails a native test). Three passes: 47/47, then 19/19 after the code review, then 17/17 after the pre-push review. Only the direction-parity flip is unpinned, by design.
 - [x] `.docs/qa/random-span-events.md` note (move rule + table covered natively)
-- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; all 4 Important addressed (see Review notes); fix-pass mutations 19/19 killed
+- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; all 4 Important addressed (see Review notes)
+- [x] Pre-push `/pr-review-toolkit:review-pr` (5 agents); 0 Critical; findings addressed (see Pre-push review notes)
 
 ## Rulings (2026-10-22, during implementation)
 
@@ -169,7 +170,7 @@ Calls the contract left open. Each is pinned by a test where it changes behavior
 - **Draw order for one servo change:** direction (middle band only), then size, then the gap.
 - **The clamp is reachable only upward**, with `minMove > range / 2`, which § C forbids. The up check runs first, so a downward move always has more than `minMove` of room (`NextServoTargetClampsToLimit`).
 - **`MoveTravelMs` saturates at `INT_MAX`** (`MoveTravelMsSaturates`). It computes in 64 bits and clamps speed and acceleration to 0–255, as `WorstCaseTravelMs` does. The model is duplicated rather than shared, because `WorstCaseTravelMs` is out of scope; `MoveTravelMsMatchesWorstCaseAtFullRange` keeps the two from drifting. The table computes `|Δpct| × rangeUs / 100` in 64 bits. `rangeUs` comes from channel config, so § C doesn't bound the product. A saturated gap simply drops the span after that change.
-- **`PercentFromPosition` with `maxUs <= minUs` returns 0** (100 when inverted) instead of dividing by zero (`PercentFromPositionDegenerateRange`). It clamps before rounding, because `lround` returns a 32-bit `long` on the ESP32.
+- **`PercentFromPosition` with `maxUs <= minUs` returns 0** (100 when inverted) instead of dividing by zero, or reading a reversed range on a mirrored scale (`PercentFromPositionDegenerateRange`). It clamps before rounding, because `lround` returns a 32-bit `long` on the ESP32.
 - **`AstrOsServoUtils.hpp` keeps its includes** (`<algorithm>`, `<cstdint>`, `<math.h>`), so any file that relied on them through the header still compiles. `CeilSqrt` moved to the `.cpp`, still `static`.
 - **`NextServoTarget` doesn't check its inputs for overflow.** They are § C percents, validated by T-009 with `RandomServoFieldsValid` before `Start`, as its header comment says.
 - **Tests added beyond the Task list:**
@@ -203,3 +204,44 @@ Calls the contract left open. Each is pinned by a test where it changes behavior
   - Pre-existing warnings and UB carried verbatim by the split: out of scope.
   - A replacement starting from T-009's `lastPos` snapshot: the replacement semantics are pinned.
   - `bool Start` can't say why it failed: the interface is pinned, and T-009 validates first.
+
+## Pre-push review notes (2026-10-22)
+
+**`/pr-review-toolkit:review-pr` (5 agents, full branch diff): 0 Critical.**
+
+- **code-reviewer: 0 Critical, 0 Important.** It confirmed the device builds link the split `.cpp` without duplicate symbols, and that `RandomEffects.cpp` compiles with the exact device flags.
+- **pr-test-analyzer:** 13 non-equivalent mutants survived, from three root causes:
+  - no table servo test checked the next-change time with acceleration (criticality 8: the regression the distance-aware amendment exists to prevent)
+  - every `Start` gap test had `minGapMs == maxGapMs`
+  - the clamp hid size-bound bugs from the property loop
+  - **Fixed** with the tests below, all mutation-verified:
+    - `TableServoGapStretchedByAcceleratedTravel`
+    - `NextServoTargetRoomBoundsSizeUnderMaxMove`
+    - `NextServoTargetMiddleBandEdgesDrawDirection`
+    - `TableStartGapChecksUseTheRightFields`
+    - `PercentFromPositionUsesChannelRange`
+    - `TableServoStartsOutsideRangeJumpsInside`
+    - `TableCollectAppends`
+    - `MoveTravelMsLargeDistanceWithAccel`
+    - `draws.empty()` on six tests
+- **comment-analyzer:** fixed three wrong test comments (the clamp case, "every other table test", the reversed-range case) and other wording. It also found that `<=` → `<` at the regime boundary survived. That mutant is not equivalent once ceilings apply, so `MoveTravelMsRegimeBoundaryIsContinuous` now checks (1, 3, 18) → 28 and (8, 6, 9) → 108. The AstrOs.Server spec still described the linear model; amended on its develop.
+- **type-design-analyzer:**
+  - `Start` is now `[[nodiscard]]` (contract amended, Jeff).
+  - The table can't be copied: copies are deleted and pinned by `static_assert`.
+  - Private members are `slots_` / `rng_`, matching the codebase and removing the shadowing.
+  - New doc comments: the `SpanStart` trust boundary and value-initialization, `SpanChange`'s three dispatch cases, the `Rand32` requirements, and that a span of `END_GUARD_MS` or less is accepted but never changes anything.
+  - Declined: `SpanKey::operator==`, `MODULE_TYPE` in `SpanKey`, and a variant or split `SpanStart`; each is churn for little value.
+- **silent-failure-hunter: 0 Critical, 2 High, 7 Medium, all at the T-009 seam** (inputs the table can't see, and reasons a bare `bool` can't carry). The plan amendments are on develop:
+  - reject a degenerate channel range
+  - one `now` sampled under the table lock after the snapshot
+  - a distinct log for spans of `END_GUARD_MS` or less (Jeff: T-009 logs it, § C unchanged)
+  - "table full" vs "gap rules" in the reject log
+  - `Collect` and retry before reporting full
+  - a digital `lastPos` after homing
+  - the reverse config-mismatch log
+  - a per-key drop-log flag
+  - reserving the output vector
+  - `MsUntilNext` under the lock
+  - a mutex-timeout log
+  - On this branch: `TableAcceptsExactlyWhatTheParserAccepts` ties the two copies of the gap rules together.
+
