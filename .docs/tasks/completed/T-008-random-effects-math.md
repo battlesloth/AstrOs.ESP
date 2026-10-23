@@ -1,6 +1,6 @@
 # T-008: Random span math and span table (pure)
 
-<!-- File: .docs/tasks/T-008-random-effects-math.md. Branch: feature/T-008-random-effects-math. PR title: "T-008: Random span math and span table (pure)". -->
+<!-- File: .docs/tasks/completed/T-008-random-effects-math.md (completed 2026-10-23; PR #63). Branch: feature/T-008-random-effects-math. PR title: "T-008: Random span math and span table (pure)". -->
 
 ## Context
 

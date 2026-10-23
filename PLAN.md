@@ -5,17 +5,17 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-008 — Random span math and span table (pure): PR #63 open against develop (branch `feature/T-008-random-effects-math`). Native 563/563, both boards; three review rounds addressed; contract amended three times (servo-utils split, distance-aware MoveTravelMs, [[nodiscard]] Start). T-009's plan amended on develop from those reviews
-Next:    agreed order (2026-10-22): T-007 → T-008 → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
+Now:     no ESP task in progress — the work moves to AstrOs.Server (its T-006 database guard, then T-007 data and T-008 conversion) before T-009
+Next:    agreed order (2026-10-22): T-007 ✓ → T-008 ✓ → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
 Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
-Last:    2026-10-22 — T-007 complete (PR #62 → develop): random span command parsers; nothing dispatches types 6/7 until T-009
+Last:    2026-10-23 — T-008 complete (PR #63 → develop): random span math and span table, pure and native-tested; nothing calls it until T-009
 
 ## Random span events
 
 Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · wire format: `.docs/protocol.md` § C (identical in both repos) · server side: AstrOs.Server `PLAN.md` § Random span events (its T-006 database guard, T-007 data, T-008 conversion; then the scripter UI, then a min-firmware bump)
 
 - [x] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/completed/T-007-random-span-command-parsers.md`) — done 2026-10-22
-- [ ] **T-008** — Random span math and span table (pure) (`.docs/tasks/T-008-random-effects-math.md`)
+- [x] **T-008** — Random span math and span table (pure) (`.docs/tasks/completed/T-008-random-effects-math.md`) — done 2026-10-23
 - [ ] **T-009** — Run random spans on the controller (`.docs/tasks/T-009-random-effects-task.md`) — needs T-007 + T-008
 
 ## Standalone tasks
@@ -49,6 +49,14 @@ Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-10-23 T-008 complete — random span math and span table, pure (PR #63 → develop)
+  - PURE lib `AstrOsRandomEffects` with an injected `Rand32`: `UniformInt`, `NextGapMs`, `NextServoTarget` (§ C move rule: forced up near min, down near max, size capped by room and `maxMove`, clamped), `MoveTravelMs`, and `RandomSpanTable` (fixed capacity, same-key replace, `[[nodiscard]] Start` re-checks the gap rules, 20 ms end guard, wrap-safe `uint32` times, not copyable)
+  - contract amended four times: `AstrOsServoUtils.hpp` split into `.hpp` + `.cpp` (non-`inline` header functions broke the link once a second file included it) plus `PercentFromPosition`; distance-aware `MoveTravelMs` (the Maestro speed/accel model at the move's distance, equal to `WorstCaseTravelMs` at 3000 µs; the linear scale underestimated short accelerated moves ~4×); `[[nodiscard]] Start`; move distance is floor + 1 µs (PR #63 review: `GetRelativeRequestedPosition` truncates each endpoint, so floor and ceil both fell short)
+  - native 566/566, both boards; 86 mutations, all caught (the "which parity means up" flip is equivalent by design)
+  - declined (PR #63): a span's first move starts from a rounded percent, so its travel estimate can be up to 0.5 % of the channel range short (≤ 10 µs measured); exact needs a `SpanStart` field
+  - cross-repo: T-009's plan amended on develop (tick round-up on the wait, one table pass per lock with one `now`, reject servos with no usable range, reject spans ≤ the end guard, separate "table full" / "gap rules" logs, `HomeServos` records digital `lastPos`, bench cases 5b and 10); AstrOs.Server spec's travel estimate is distance-aware (f5399eea)
+  - open: no release with T-007 + T-008 alone — nothing dispatches span commands until T-009
 
 - 2026-10-22 T-007 complete — parse random span commands, types 6 and 7 (PR #62 → develop)
   - `MODULE_TYPE` `MAESTRO_RANDOM = 6` / `GPIO_RANDOM = 7`; PURE `RandomCommands` parsers return `{ error, cmd }`: exact field count with the type field first, strict base-10 ints via `strtoll` bounded to `int` (no `std::stoi`), indexes ≥ 0, § C gap rules; on error `cmd` names no target (module/channel −1)
