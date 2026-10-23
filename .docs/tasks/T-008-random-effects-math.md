@@ -25,6 +25,7 @@ T-009 wires it to FreeRTOS. This task has no dependency on T-007 beyond the `MOD
   - Current position outside the range: uniform position in `[minPos, maxPos]`.
 - **The gap after a servo move** is `max(NextGapMs(min, max), MoveTravelMs(distanceUs, speed, accel))`. GPIO and digital gaps are never stretched.
 - **`MoveTravelMs` is distance-aware:** the same trapezoid/triangle model as `WorstCaseTravelMs`, with the move's distance `d` in place of the 3000 µs guard range. With `cap` = speed (0 → 255), cruise is `ceil(40·d / cap)` ms. With acceleration it adds `ceil(80·cap / accel)` when `2·cap² ≤ d·accel` (trapezoid); otherwise it is `ceilSqrt(ceil(12800·d / accel))` (triangle). (Amended 2026-10-22, Jeff, from the T-008 review: the original `WorstCaseTravelMs × d / 3000` is exact only at accel 0. A triangle move's time grows as √d, so short moves with acceleration were underestimated, by about 4× for 200 µs at accel 5, and the next change would cut them off mid-travel.)
+- **`Start` is `[[nodiscard]]`** (amended 2026-10-22, Jeff, from the pre-push type-design review): a dropped `false` is a span that never runs and is never logged. No behavior change.
 - **The existing `AstrOsServoUtils.hpp` functions keep their behavior.** Their bodies move verbatim to a new `lib_native/AstrOsUtility/src/AstrOsServoUtils.cpp`; the header keeps the declarations and doc comments, the constants, `constexpr CeilDiv` and `inline EncodeMaestroTarget`. One new helper is added. (Amended 2026-10-22, Jeff: the header defined non-`inline` functions, so a second including file — `RandomEffects.cpp`, the new test file, T-009's `main.cpp` — fails to link with "multiple definition".)
 
 ## Task
@@ -58,8 +59,8 @@ struct SpanChange { SpanKey key; bool isServo; int targetPct; bool level; int sp
 class RandomSpanTable {
 public:
     static constexpr int END_GUARD_MS = 20;
-    RandomSpanTable(size_t capacity, Rand32 rand);
-    bool Start(const SpanStart &start);                        // false when full or gaps break § C (table unchanged)
+    RandomSpanTable(size_t capacity, Rand32 rng);
+    [[nodiscard]] bool Start(const SpanStart &start);          // false when full or the all-span gap rules fail (table unchanged)
     void Clear();
     void Collect(uint32_t nowMs, std::vector<SpanChange> &out);// appends due changes, reschedules, drops ended spans
     uint32_t MsUntilNext(uint32_t nowMs) const;                // UINT32_MAX when empty
@@ -73,7 +74,7 @@ public:
   - An entry with an equal key (type, module, channel) is **replaced** in place.
   - Otherwise `Start` takes a free slot.
   - When the table is full, it returns false and existing spans are untouched.
-  - It also returns false, leaving the table unchanged, when the gaps break § C: `minGapMs < 20`, `maxGapMs < minGapMs`, or `spanMs < minGapMs`. This is defense in depth (added 2026-10-22, from the T-007 review). A zero gap would make `Collect` emit on every pass and spin the task. T-009 validates first, but the table must not depend on it.
+  - It also returns false, leaving the table unchanged, when § C's all-span gap rules fail: `minGapMs < 20`, `maxGapMs < minGapMs`, or `spanMs < minGapMs`. This is defense in depth (added 2026-10-22, from the T-007 review). A zero gap would make `Collect` emit on every pass and spin the task. T-009 validates first, but the table must not depend on it.
   - The first change is due at `startMs`. The deadline is `startMs + spanMs`.
 - **`Collect(now)`:** for each entry whose next change is due:
   - If `now` is within `END_GUARD_MS` of the deadline, or past it, the entry is dropped **with no change**.
@@ -102,7 +103,7 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
   - `NextServoTargetMiddleUsesRandomDirection`: even and odd draws give opposite directions.
   - `NextServoTargetNoMaxUsesRoom`: with maxMove 0, the move is bounded by the room in that direction.
   - `NextServoTargetOutsideRangeJumpsInside`: current 0 with range 20–100 gives a result in [20, 100], and minMove is ignored.
-  - `NextServoTargetPropertyHolds`: 10,000 seeded draws for each of (20,100,15,60), (35,65,2,8), (0,100,5,0), and (40,60,10,0, the exact half-range edge).
+  - `NextServoTargetPropertyHolds`: 10,000 seeded moves for each of (20,100,15,60), (35,65,2,8), (0,100,5,0), and (40,60,10,0, the exact half-range edge).
     - Every result is in [minPos, maxPos].
     - Every move is ≥ minMove from the previous result.
     - Every move is ≤ maxMove when it is set.
