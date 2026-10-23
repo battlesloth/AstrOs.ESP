@@ -247,3 +247,17 @@ Calls the contract left open. Each is pinned by a test where it changes behavior
   - a mutex-timeout log
   - On this branch: `TableAcceptsExactlyWhatTheParserAccepts` ties the two copies of the gap rules together.
 
+## PR #63 review notes (2026-10-22)
+
+- **Copilot, high:** "round the mapped move distance up to avoid early scheduling." Verified: on a 500–2499 µs channel, 10 % → 20 % maps to 699 → 899 µs (200 µs), while the floored product is 199. At speed 1 the next change came 40 ms early.
+- **Copilot's ceil is not enough.** `GetRelativeRequestedPosition` truncates in double precision, so an endpoint can land a whole µs low (900–2100, 41 %: `1200 × 0.41 = 491.99999999999994`). A search over 8 channel ranges × both inversions × every move pair found:
+  - the floor short in 37,376 moves
+  - a ceil short in 1,160
+  - floor + 1 short in none
+- **Jeff chose floor + 1** (contract amended). Tests:
+  - `TableServoDistanceCoversMappedTravel` covers Copilot's example and the double-truncation case.
+  - `TableServoTravelNeverShortOfMappedDistance` checks every forced 1 % and 10 % move on 8 channels, plain and inverted.
+  - `TableServoZeroRangeDisablesStretch` pins the `product > 0` guard.
+  - Four expected travel values gained the 1 µs.
+- **Mutations:** each of three variants is killed: no `+ 1`, Copilot's ceil, and no guard.
+

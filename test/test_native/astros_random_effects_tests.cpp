@@ -681,7 +681,7 @@ TEST(RandomEffects, TableNoChangeInsideEndGuard)
 TEST(RandomEffects, TableServoGapStretchedByTravel)
 {
     // Range 10-90, move 40-none, speed 1, accel 0, 2000 us channel. From 10 the
-    // move is forced up; size draw 40 -> 80 % -> 1600 us -> 64000 ms of travel.
+    // move is forced up; size draw 40 -> 80 % -> 1600 + 1 us -> 64040 ms of travel.
     std::deque<uint32_t> draws{40, 40};
     RandomSpanTable table(4, Scripted(draws));
     SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 100, 10, 90, 40, 0, 10);
@@ -691,20 +691,20 @@ TEST(RandomEffects, TableServoGapStretchedByTravel)
     auto first = CollectAt(table, 1000);
     ASSERT_EQ(1u, first.size());
     ASSERT_EQ(90, first[0].targetPct);
-    EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(1600, 1, 0)), table.MsUntilNext(1000));
-    EXPECT_TRUE(CollectAt(table, 1000 + 64000 - 1).empty());
+    EXPECT_EQ(64040u, table.MsUntilNext(1000));
+    EXPECT_TRUE(CollectAt(table, 1000 + 64040 - 1).empty());
 
     // The way back down is stretched the same (|delta|, not delta).
-    auto second = CollectAt(table, 1000 + 64000);
+    auto second = CollectAt(table, 1000 + 64040);
     ASSERT_EQ(1u, second.size());
     ASSERT_EQ(10, second[0].targetPct);
-    EXPECT_EQ(64000u, table.MsUntilNext(65000));
+    EXPECT_EQ(64040u, table.MsUntilNext(65040));
     EXPECT_TRUE(draws.empty());
 }
 
 TEST(RandomEffects, TableServoGapKeepsDrawWhenTravelIsShorter)
 {
-    // Speed 0 (unlimited): 80 % of 2000 us travels in ceil(40 * 1600 / 255) = 251 ms,
+    // Speed 0 (unlimited): 80 % of 2000 us travels in ceil(40 * 1601 / 255) = 252 ms,
     // under the 1000 ms gap.
     std::deque<uint32_t> draws{40};
     RandomSpanTable table(4, Scripted(draws));
@@ -795,12 +795,12 @@ TEST(RandomEffects, TableServoTravelProductIs64Bit)
     ASSERT_TRUE(table.Start(s));
 
     ASSERT_EQ(1u, CollectAt(table, 1000).size());
-    EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(24000000, 1, 0)), table.MsUntilNext(1000));
+    EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(24000001, 1, 0)), table.MsUntilNext(1000));
     EXPECT_TRUE(draws.empty());
 }
 
 // The stretch uses the span's acceleration (bench case 5b natively): 10 % of
-// 2000 us at speed 0, accel 3 is a triangle move of 924 ms. Ignoring accel would
+// 2000 us (+ 1) at speed 0, accel 3 is a triangle move of 927 ms. Ignoring accel would
 // give 32 ms, and the 100 ms gap would win.
 TEST(RandomEffects, TableServoGapStretchedByAcceleratedTravel)
 {
@@ -812,7 +812,7 @@ TEST(RandomEffects, TableServoGapStretchedByAcceleratedTravel)
     auto changes = CollectAt(table, 1000);
     ASSERT_EQ(1u, changes.size());
     ASSERT_EQ(10, changes[0].targetPct);
-    EXPECT_EQ(924u, table.MsUntilNext(1000));
+    EXPECT_EQ(927u, table.MsUntilNext(1000));
 }
 
 // A servo homed at 0 % with a 30-70 % span: the first move jumps inside the range,
@@ -828,7 +828,7 @@ TEST(RandomEffects, TableServoStartsOutsideRangeJumpsInside)
     auto changes = CollectAt(table, 1000);
     ASSERT_EQ(1u, changes.size());
     EXPECT_EQ(70, changes[0].targetPct);
-    EXPECT_EQ(56000u, table.MsUntilNext(1000)); // 70 % of 2000 us = 1400 us at speed 1
+    EXPECT_EQ(56040u, table.MsUntilNext(1000)); // 70 % of 2000 us = 1400 + 1 us at speed 1
     EXPECT_TRUE(draws.empty());
 }
 
@@ -890,6 +890,89 @@ TEST(RandomEffects, TableCollectAppends)
 // original emits the same changes again.
 static_assert(!std::is_copy_constructible_v<RandomSpanTable>, "RandomSpanTable must not be copyable");
 static_assert(!std::is_copy_assignable_v<RandomSpanTable>, "RandomSpanTable must not be copy-assignable");
+
+// The travel distance is floor(|delta pct| * rangeUs / 100) + 1: an upper bound on
+// what GetRelativeRequestedPosition (which MaestroModule uses) actually maps, so the
+// next change never lands before the move finishes.
+TEST(RandomEffects, TableServoDistanceCoversMappedTravel)
+{
+    // PR #63 review: a 500-2499 us channel maps 10 % -> 20 % to 699 -> 899 us (200 us),
+    // where the floored product is 199. Forced up from 10 by exactly 10, speed 1.
+    {
+        RandomSpanTable table(4, NoDraws());
+        SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 100, 10, 90, 10, 10, 10);
+        s.speed = 1;
+        s.rangeUs = 1999;
+        ASSERT_TRUE(table.Start(s));
+        ASSERT_EQ(1u, CollectAt(table, 1000).size());
+        ASSERT_EQ(200, GetRelativeRequestedPosition(500, 2499, 20) - GetRelativeRequestedPosition(500, 2499, 10));
+        EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(200, 1, 0)), table.MsUntilNext(1000)); // 8000, not 7960
+    }
+
+    // The double truncation can drop an endpoint a whole us: on 900-2100, 1200 * 0.41
+    // is 491.99999999999994, so 41 % -> 42 % maps to 491 -> 504 (13 us) while the
+    // product is exactly 12. Rounding up alone would give 12.
+    {
+        RandomSpanTable table(4, NoDraws());
+        SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 100, 41, 100, 1, 1, 41);
+        s.speed = 1;
+        s.rangeUs = 1200;
+        ASSERT_TRUE(table.Start(s));
+        ASSERT_EQ(1u, CollectAt(table, 1000).size());
+        ASSERT_EQ(13, GetRelativeRequestedPosition(900, 2100, 42) - GetRelativeRequestedPosition(900, 2100, 41));
+        EXPECT_EQ(static_cast<uint32_t>(MoveTravelMs(13, 1, 0)), table.MsUntilNext(1000)); // 520, not 480
+    }
+}
+
+// rangeUs <= 0 disables the stretch (the + 1 applies only to a positive product):
+// with a 20 ms gap, a 1 us stretch at speed 1 (40 ms) would show.
+TEST(RandomEffects, TableServoZeroRangeDisablesStretch)
+{
+    RandomSpanTable table(4, NoDraws());
+    SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 20, 10, 90, 10, 10, 10);
+    s.speed = 1;
+    s.rangeUs = 0;
+    ASSERT_TRUE(table.Start(s));
+    ASSERT_EQ(1u, CollectAt(table, 1000).size());
+    EXPECT_EQ(20u, table.MsUntilNext(1000));
+}
+
+// The bound holds for every forced 1 % and 10 % move on realistic channels, plain
+// and inverted (MaestroModule maps an inverted channel's p as 100 - p).
+TEST(RandomEffects, TableServoTravelNeverShortOfMappedDistance)
+{
+    const int channels[][2] = {{500, 2500}, {500, 2499}, {900, 2100}, {1000, 2000},
+                               {600, 2400}, {544, 2448}, {992, 2000}, {1200, 1800}};
+    for (const auto &ch : channels)
+    {
+        for (int move : {1, 10})
+        {
+            for (int from = 0; from + move <= 100; from++)
+            {
+                int to = from + move;
+                // Forced up from minPos by exactly `move`; no draws.
+                RandomSpanTable table(4, NoDraws());
+                SpanStart s = Servo(MAESTRO_KEY, 1000, 200000, 20, from, 100, move, move, from);
+                s.speed = 1;
+                s.rangeUs = ch[1] - ch[0];
+                ASSERT_TRUE(table.Start(s));
+                auto changes = CollectAt(table, 1000);
+                ASSERT_EQ(1u, changes.size());
+                ASSERT_EQ(to, changes[0].targetPct);
+
+                int plain =
+                    GetRelativeRequestedPosition(ch[0], ch[1], to) - GetRelativeRequestedPosition(ch[0], ch[1], from);
+                int inverted = GetRelativeRequestedPosition(ch[0], ch[1], 100 - from) -
+                               GetRelativeRequestedPosition(ch[0], ch[1], 100 - to);
+                uint32_t waited = table.MsUntilNext(1000);
+                EXPECT_GE(waited, static_cast<uint32_t>(MoveTravelMs(plain, 1, 0)))
+                    << ch[0] << "-" << ch[1] << " " << from << "->" << to;
+                EXPECT_GE(waited, static_cast<uint32_t>(MoveTravelMs(inverted, 1, 0)))
+                    << ch[0] << "-" << ch[1] << " inverted " << from << "->" << to;
+            }
+        }
+    }
+}
 
 TEST(RandomEffects, TableMsUntilNext)
 {

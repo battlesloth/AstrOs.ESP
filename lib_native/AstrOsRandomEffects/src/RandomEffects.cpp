@@ -201,7 +201,10 @@ void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
         if (span.isServo)
         {
             int target = NextServoTarget(e.currentPct, span.minPos, span.maxPos, span.minMove, span.maxMove, rng_);
-            int64_t distanceUs = static_cast<int64_t>(std::abs(target - e.currentPct)) * span.rangeUs / 100;
+            // + 1: GetRelativeRequestedPosition truncates each endpoint in double
+            // precision, so the mapped distance can exceed the floored product by 1 us.
+            int64_t product = static_cast<int64_t>(std::abs(target - e.currentPct)) * span.rangeUs;
+            int64_t distanceUs = product > 0 ? product / 100 + 1 : 0;
             int travelMs =
                 MoveTravelMs(static_cast<int>(std::min<int64_t>(distanceUs, INT_MAX)), span.speed, span.acceleration);
             gapMs = std::max(NextGapMs(span.minGapMs, span.maxGapMs, rng_), travelMs);
