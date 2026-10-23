@@ -260,4 +260,9 @@ Calls the contract left open. Each is pinned by a test where it changes behavior
   - `TableServoZeroRangeDisablesStretch` pins the `product > 0` guard.
   - Four expected travel values gained the 1 µs.
 - **Mutations:** each of three variants is killed: no `+ 1`, Copilot's ceil, and no guard.
+- **Copilot, medium (second review):** "initial percentage rounding underestimates first move duration." Verified:
+  - A span's first move starts from `initialPct`, which `PercentFromPosition` rounds to the nearest percent. So the first move can be up to `rangeUs / 200` µs longer than the table's estimate.
+  - Worst cases: 9 µs on 500–2500, 10 µs on 500–2499. Copilot's example from 1491 µs is 8 µs, which is 320 ms early at speed 1.
+  - The estimate stays at most `rangeUs / 200 + 1` µs short (8 channel ranges, every starting µs, both inversions).
+  - **Declined (Jeff), a known limitation:** it affects only a span's first move, by at most 0.5 % of the channel range (about 1° of travel). The exact fix needs the start position in µs, plus the channel's min, max and inverted flag, in the pinned `SpanStart`.
 
