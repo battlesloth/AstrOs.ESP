@@ -1,0 +1,27 @@
+AstrOsRandomEffects
+===================
+
+Pure, native-testable decisions for the random span script commands (types 6
+and 7, .docs/protocol.md § C): the servo move rule, gap draws, the travel-time
+gap stretch, and RandomSpanTable, the fixed-capacity table of active spans.
+The RNG is injected (Rand32), so native tests script or seed it; the
+random-effects task in src/main.cpp (T-009) owns the table and passes
+esp_random. Parsing lives in AstrOsAnimationCommands (RandomCommands.hpp).
+
+Purity rule
+-----------
+
+This library is unit-tested on the native host under [env:test], so it
+must not include any of:
+
+    freertos/*, esp_*, driver/*, nvs_*, sdmmc_*, esp_vfs*, esp_now*, esp_wifi*
+
+Enforced by the CI purity guard in .github/workflows/pr-validation.yml.
+
+Error-channel convention
+------------------------
+
+No logging and no exceptions. RandomSpanTable::Start returns false when the
+table is full or the gaps break § C; the MIXED caller logs at the boundary.
+RandomSpanTable is not thread-safe: the caller holds one lock around every
+call (T-009: randomTableMutex).

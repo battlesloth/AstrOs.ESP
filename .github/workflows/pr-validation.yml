@@ -40,6 +40,7 @@ jobs:
             lib_native/AstrOsEspNowProtocol
             lib_native/AstrOsEspNowPeers
             lib_native/AstrOsBulkTransport
+            lib_native/AstrOsRandomEffects
           )
           PATTERN='#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)'
           status=0

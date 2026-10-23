@@ -130,10 +130,10 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 
 ## Acceptance criteria
 
-- [ ] All new native tests are green, and every existing native test is green.
-- [ ] Both boards build.
-- [ ] `lib_native/AstrOsRandomEffects` is listed in `PURE_LIBS`, and the purity guard passes locally: `grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)' lib_native/AstrOsRandomEffects` returns nothing.
-- [ ] `.docs/qa/random-span-events.md` notes that the move rule and table are covered natively. Bench cases come in T-009.
+- [x] All new native tests are green, and every existing native test is green.
+- [x] Both boards build.
+- [x] `lib_native/AstrOsRandomEffects` is listed in `PURE_LIBS`, and the purity guard passes locally: `grep -rEn '#include[[:space:]]*[<"](freertos/|esp_|driver/|nvs_|sdmmc_)' lib_native/AstrOsRandomEffects` returns nothing.
+- [x] `.docs/qa/random-span-events.md` notes that the move rule and table are covered natively. Bench cases come in T-009.
 
 ## Out of scope
 
@@ -148,16 +148,16 @@ Written first. New `test/test_native/astros_random_effects_tests.cpp` uses a scr
 
 ## Implementation checklist
 
-- [ ] Split `AstrOsServoUtils.hpp` into `.hpp` + `.cpp` (bodies verbatim); RED first: a second including file fails to link; GREEN: existing servo-utils tests pass unchanged
-- [ ] Write `astros_random_effects_tests.cpp` (all tests in the Task section); RED: compile error on the missing `RandomEffects.hpp` / `PercentFromPosition`
-- [ ] Add the `lib_native/AstrOsRandomEffects` skeleton (README, header, sentinel stubs) and the `PercentFromPosition` stub; RED: the tests fail on their assertions
-- [ ] Implement `UniformInt`, `NextGapMs`, `NextServoTarget`, `MoveTravelMs`, `PercentFromPosition`; GREEN
-- [ ] Implement `RandomSpanTable`; GREEN
-- [ ] Register the lib in `PURE_LIBS`; purity grep clean; clang-format 18.1.8 clean; CLAUDE.md lib table row
-- [ ] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
-- [ ] Mutation pass on the new code (each mutation fails a native test)
-- [ ] `.docs/qa/random-span-events.md` note (move rule + table covered natively)
-- [ ] Code review (`superpowers:requesting-code-review`); address Critical/Important
+- [x] Split `AstrOsServoUtils.hpp` into `.hpp` + `.cpp` (bodies verbatim); RED first: a second including file fails to link; GREEN: existing servo-utils tests pass unchanged
+- [x] Write `astros_random_effects_tests.cpp` (all tests in the Task section); RED: compile error on the missing `RandomEffects.hpp` / `PercentFromPosition`
+- [x] Add the `lib_native/AstrOsRandomEffects` skeleton (README, header, sentinel stubs) and the `PercentFromPosition` stub; RED: the tests fail on their assertions
+- [x] Implement `UniformInt`, `NextGapMs`, `NextServoTarget`, `MoveTravelMs`, `PercentFromPosition`; GREEN
+- [x] Implement `RandomSpanTable`; GREEN
+- [x] Register the lib in `PURE_LIBS`; purity grep clean; clang-format 18.1.8 clean; CLAUDE.md lib table row
+- [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [x] Mutation pass on the new code (each mutation fails a native test) — 47/47, then 19/19 after the review fixes
+- [x] `.docs/qa/random-span-events.md` note (move rule + table covered natively)
+- [x] Code review (`superpowers:requesting-code-review`); address Critical/Important — 0 Critical; all 4 Important addressed (see Review notes); fix-pass mutations 19/19 killed
 
 ## Rulings (2026-10-22, during implementation)
 
@@ -181,3 +181,24 @@ Calls the contract left open. Each is pinned by a test where it changes behavior
   - `TableServoMovesFromLastTarget`
   - `TableReplacesSameKeyBehindAFreeSlot`: found while planning mutations. Without it, a `Start` that took the first free slot before finding a same-key span would pass.
   - `TableServoGapKeepsDrawWhenTravelIsShorter`: pins max(), not a sum.
+  - From the review: `TableToggleDrawsEachGap`, `TableServoDrawsDirectionSizeThenGap`, `TableSchedulesFromCollectTime`, `TableReplacementStartsFromItsInitialPct` and `TableServoTravelProductIs64Bit`, plus a check in `TableWrapsAround` made just before the wrap. The four distance-aware `MoveTravelMs` tests come from the contract amendment.
+- **The direction-parity flip is an equivalent mutant by design**, so the mutation passes don't run it.
+
+## Review notes (2026-10-22)
+
+**Fresh-context review (opus) of the uncommitted work: 0 Critical, 4 Important, 6 Minor.**
+
+- **Important 1, fixed.** No table test drew a gap: every helper set `minGapMs == maxGapMs`, so `NextGapMs(max, min)` and `gap = minGapMs` both passed. Fixed by `TableToggleDrawsEachGap` and `TableServoDrawsDirectionSizeThenGap`.
+- **Important 2, fixed.** "next = now + gap" wasn't pinned; catch-up scheduling from `nextMs` passed. Fixed by `TableSchedulesFromCollectTime` and an `ActiveCount` check in `TableNoChangeInsideEndGuard`.
+- **Important 3, contract amended (Jeff: distance-aware).** Linear `d / 3000` travel scaling underestimates moves with acceleration. See the Contract.
+- **Important 4, T-009 plan amended on develop.** At 100 Hz, `pdMS_TO_TICKS` truncates a 1–9 ms `MsUntilNext` to 0 ticks, and the priority-8 task would spin until the change was due. T-009 now rounds the wait up. The `MsUntilNext` comment warns callers.
+- **Minors 5–7, fixed as tests.** The wrap-safe check before the wrap, servo replacement resetting `currentPct`, and the 64-bit distance product.
+- **Minor 8, fixed.** Checkboxes ticked.
+- **Minor 9, noted in T-009 (develop).** Log a span that arrives after its deadline, and sample `now` after the queue wait.
+- **Minor 10, fixed.** The constructor parameter is now `rng` (no shadowing), and `MsUntilNext` says "earliest scheduled change".
+- **Declined by the reviewer, accepted here:**
+  - `END_GUARD_MS` sizing: pinned, and bench case 4 checks it.
+  - Modulo bias: negligible.
+  - Pre-existing warnings and UB carried verbatim by the split: out of scope.
+  - A replacement starting from T-009's `lastPos` snapshot: the replacement semantics are pinned.
+  - `bool Start` can't say why it failed: the interface is pinned, and T-009 validates first.
