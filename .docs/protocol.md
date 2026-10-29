@@ -265,7 +265,7 @@ Added 2026-10-22 for random span events (spec: AstrOs.Server `.docs/specs/202610
 ### Grammar
 
 - A controller's script is one string: commands separated by `;`, fields within a command separated by `|`. There is no trailing `;`. All fields in types 6 and 7 are base-10 integers.
-- Field 0 is the command type. Field 1 is the **delta**: the milliseconds to wait *after* dispatching this command before the next one. It is not an absolute time. Only the first command in a same-time group carries the delta; the others carry `0`. The firmware floors every delta at 10 ms.
+- Field 0 is the command type. Field 1 is the **delta**: the milliseconds to wait *after* dispatching this command before the next one. It is not an absolute time. Only the last command of a same-time group, in wire order, carries the delta; the others carry `0` and come first, so the whole group dispatches before the wait. The firmware floors every delta at 10 ms.
 - The server pads every controller's script with type-0 buffer commands at t = 0 and at the script's end, so all controllers finish together. The script's end is the latest event start **or random-span end** across all controllers.
 - **Unknown types:** firmware skips a command whose type it doesn't know, but still waits out its delta. Builds before ESP T-009 therefore drop types 6/7 and keep the rest of the script on time.
 
