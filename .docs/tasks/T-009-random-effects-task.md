@@ -163,15 +163,15 @@ It does three things:
 
 ## Implementation checklist
 
-- [ ] Pure helpers in `lib_native/AstrOsRandomEffects` (`RandomSpanAdmission.hpp/.cpp`, see Rulings): `MaestroChannelSnapshot`, `BuildMaestroSpan` / `BuildGpioSpan`, `SpanArrivedTooLate`, `ClearFence`, `FormatSpanChange`, `DropLogThrottle`, `WaitTicksCeil`. RED first: `astros_random_span_admission_tests.cpp` fails to compile, then fails on its assertions against stubs; GREEN
-- [ ] `MaestroModule::GetChannelSnapshot`; `HomeServos`' digital branch records `lastPos`
-- [ ] `GpioModule` per-channel level tracking and `GetLevel`
-- [ ] `src/main.cpp`: `randomQueue` + `queue_random_msg_t`, `randomTableMutex`, dispatch cases for types 6/7, the `default:` WARN
-- [ ] `src/main.cpp`: `randomEffectsTask`
-- [ ] `src/main.cpp`: panic step 1b and the `RELOAD_CONFIG` clear
-- [ ] Purity grep clean; clang-format clean; README / CLAUDE.md lib-table text
+- [x] Pure helpers in `lib_native/AstrOsRandomEffects` (`RandomSpanAdmission.hpp/.cpp`, see Rulings): `MaestroChannelSnapshot`, `BuildMaestroSpan` / `BuildGpioSpan`, `SpanArrivedTooLate`, `ClearFence`, `FormatSpanChange`, `DropLogThrottle`, `WaitTicksCeil`. RED first: `astros_random_span_admission_tests.cpp` fails to compile, then fails on its assertions against stubs; GREEN. 40 tests; 28 mutations, all caught (including the 4 tests that passed against the stubs)
+- [x] `MaestroModule::GetChannelSnapshot`; `HomeServos`' digital branch records `lastPos`
+- [x] `GpioModule` per-channel level tracking and `GetLevel`
+- [x] `src/main.cpp`: `randomQueue` + `queue_random_msg_t`, `randomTableMutex`, dispatch cases for types 6/7, the `default:` WARN
+- [x] `src/main.cpp`: `randomEffectsTask`
+- [x] `src/main.cpp`: panic step 1b and the `RELOAD_CONFIG` clear
+- [x] Purity grep clean; clang-format clean; README / CLAUDE.md lib-table text
 - [ ] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
-- [ ] `.docs/qa/random-span-events.md` bench cases
+- [x] `.docs/qa/random-span-events.md` bench cases
 - [ ] Code review (fresh context); address Critical/Important
 - [ ] Bench (human-gated): cases 1–8 and 10 on the master, case 9 on a padawan
 
@@ -210,7 +210,8 @@ It does three things:
 
 - **Pure pieces live in `lib_native/AstrOsRandomEffects`** (`RandomSpanAdmission.hpp`): span building and the snapshot checks, change formatting, the too-late check, the clear fence, the dropped-change log throttle, and the ms → ticks round-up. The Task section describes this logic in `main.cpp` without pinning where it lives. CLAUDE.md's default is to put logic that can be native-tested in a PURE lib, and `main.cpp` keeps the FreeRTOS loop, locks and queues.
 - **The span table is file-static in `main.cpp`**, not a local of `randomEffectsTask`, because panic and `RELOAD_CONFIG` call `Clear()` from other tasks. It is still only touched under `randomTableMutex`.
-- **`dispatchTickMs` is stamped before `AnimationCtrl.getNextCommandPtr()`.** The fetch and `panicStop()` serialize on `animationMutex`, so a stamp taken before the fetch always precedes the clear. With a stamp taken after the fetch, a command fetched just before the halt could be preempted by the panic (priority 10 against 5, same core), stamped after the clear, and started after the panic.
+- **`dispatchTickMs` is stamped before `AnimationCtrl.getNextCommandPtr()`.** The fetch and `panicStop()` serialize on `animationMutex`, so a stamp taken before the fetch always precedes the clear. With a stamp taken after the fetch, a command fetched just before the halt could be preempted by the panic (priority 10 against 5, same core), stamped after the clear, and started after the panic. The cost is a span's `startMs` early by the fetch's mutex wait, which is milliseconds: no holder of `animationMutex` does I/O under it (`loadNextScript` reads the SD card outside it).
 - **`lastClearMs` is a `ClearFence`:** a flag plus the clear's time, forgotten 2^30 ms (~12 days) after the clear and checked every pass. The literal `(int32_t)(dispatchTickMs − lastClearMs) <= 0`, with `lastClearMs = 0` at boot, rejects every span once uptime passes ~24.8 days without a clear.
 - **The `NONE` case keeps its existing INFO line.** "Stay silent" is read as "does not reach the new unknown-type WARN".
+- **The `changes` vector is reserved to `RANDOM_TABLE_CAPACITY + 1`.** When the table is full, the extra `Collect` before the retry can emit for all 32 slots (a span that emits and then drops frees one), and the new span's first change is the 33rd.
 - **`GetChannelSnapshot` also returns false on a `stateMutex` timeout** (a reload holds `stateMutex` across the SD read), logging the timeout itself with the module's identity.
