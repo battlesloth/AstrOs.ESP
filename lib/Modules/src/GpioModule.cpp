@@ -39,6 +39,8 @@ esp_err_t GpioModule::Init(std::vector<int> channels)
         }
     }
 
+    this->levels = std::vector<std::atomic<bool>>(this->gpioChannels.size());
+
     return result;
 }
 
@@ -62,10 +64,12 @@ void GpioModule::DefaultGpios()
         if (this->defaults.at(i) != -1 && this->gpioChannels.at(i) != -1)
         {
             gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(i)), this->defaults.at(i));
+            this->levels.at(i).store(this->defaults.at(i));
         }
         else if (this->gpioChannels.at(i) != -1)
         {
             gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(i)), false);
+            this->levels.at(i).store(false);
         }
     }
 }
@@ -88,4 +92,16 @@ void GpioModule::SendCommand(uint8_t *cmd)
     }
 
     gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(command.channel)), command.state);
+    this->levels.at(command.channel).store(command.state);
+}
+
+bool GpioModule::GetLevel(int channel, bool *out) const
+{
+    if (channel < 0 || static_cast<size_t>(channel) >= this->levels.size())
+    {
+        return false;
+    }
+
+    *out = this->levels[channel].load();
+    return true;
 }

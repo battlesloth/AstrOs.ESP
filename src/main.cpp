@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cinttypes>
 #include <driver/rmt.h>
@@ -31,6 +32,9 @@
 #include <OtaQueueMessage.h>
 #include <OtaReceiver.hpp>
 #include <OtaWriter.hpp>
+#include <RandomCommands.hpp>
+#include <RandomEffects.hpp>
+#include <RandomSpanAdmission.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -82,6 +86,7 @@ static QueueHandle_t espnowQueue;
 static QueueHandle_t otaQueue;
 static QueueHandle_t otaForwarderQueue;
 static QueueHandle_t otaWriterQueue;
+static QueueHandle_t randomQueue;
 
 /**********************************
  * UART
@@ -132,6 +137,30 @@ static SerialModule SerialChannel2;
 static std::map<int, std::shared_ptr<MaestroModule>> maestroModules;
 static SemaphoreHandle_t maestroModulesMutex = NULL;
 
+/**********************************
+ * Random spans (.docs/protocol.md § C, T-009)
+ **********************************/
+
+// A type 6/7 command handed from the dispatch loop to randomEffectsTask. data is
+// the malloc'd command string; the random task frees it (the dispatch loop does
+// on a failed send).
+typedef struct
+{
+    MODULE_TYPE type;
+    uint32_t dispatchTickMs;
+    char *data;
+} queue_random_msg_t;
+
+constexpr size_t RANDOM_TABLE_CAPACITY = 32;
+constexpr UBaseType_t RANDOM_QUEUE_LENGTH = 10;
+constexpr uint32_t RANDOM_IDLE_WAIT_MS = 250;
+
+// randomTable and randomClearFence are touched only under randomTableMutex:
+// randomEffectsTask runs the table, handlePanicStop and RELOAD_CONFIG clear it.
+static SemaphoreHandle_t randomTableMutex = NULL;
+static RandomSpanTable randomTable(RANDOM_TABLE_CAPACITY, esp_random);
+static ClearFence randomClearFence;
+
 // #define BAUD_RATE_1 (9600)
 
 // #define MAESTRO_UART_PORT UART_NUM_2
@@ -165,6 +194,10 @@ static void pollingTimerCallback(void *arg);
 static void maintenanceTimerCallback(void *arg);
 static void servoShutdownTimerCallback(void *arg);
 
+// random spans
+static uint32_t randomNowMs();
+static bool clearRandomSpans(const char *reason, TickType_t wait);
+
 // espnow call backs
 bool cachePeer(espnow_peer_t peer);
 void updateSeviceConfig(std::string name, uint8_t *mac);
@@ -188,6 +221,7 @@ void espnowQueueTask(void *arg);
 void otaReceiverTask(void *arg);
 void otaForwarderTask(void *arg);
 void otaWriterTask(void *arg);
+void randomEffectsTask(void *arg);
 
 // handlers
 static AstrOsSerialMessageType getSerialMessageType(AstrOsInterfaceResponseType type);
@@ -225,6 +259,7 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+    xTaskCreatePinnedToCore(&randomEffectsTask, "random_effects_task", 4096, (void *)randomQueue, 8, NULL, 1);
     if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
     {
         ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
@@ -305,6 +340,14 @@ void init(void)
     if (maestroModulesMutex == NULL)
     {
         ESP_LOGE(TAG, "Failed to create maestroModulesMutex — aborting init");
+        abort();
+    }
+
+    randomQueue = xQueueCreate(RANDOM_QUEUE_LENGTH, sizeof(queue_random_msg_t));
+    randomTableMutex = xSemaphoreCreateMutex();
+    if (randomQueue == NULL || randomTableMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create randomQueue / randomTableMutex — aborting init");
         abort();
     }
 
@@ -645,6 +688,11 @@ void animationDispatchTask(void *arg)
 
         if (AnimationCtrl.scriptIsLoaded())
         {
+            // A random span's dispatch time, stamped BEFORE the fetch: the fetch
+            // and AnimationCtrl.panicStop() serialize on animationMutex, so a span
+            // fetched before a panic is always stamped before the panic clears the
+            // spans (randomClearFence) and can't start after it.
+            uint32_t fetchMs = randomNowMs();
             auto cmd = AnimationCtrl.getNextCommandPtr();
 
             if (cmd == nullptr)
@@ -800,7 +848,34 @@ void animationDispatchTask(void *arg)
                     }
                     break;
                 }
+                case MODULE_TYPE::MAESTRO_RANDOM:
+                case MODULE_TYPE::GPIO_RANDOM:
+                {
+                    // Handed to randomEffectsTask; the script's delta applies as
+                    // usual, and this loop never waits more than 100 ms on a span.
+                    ESP_LOGI(TAG, "Random span command val: %s", val.c_str());
+                    queue_random_msg_t randomMsg;
+                    randomMsg.type = ct;
+                    randomMsg.dispatchTickMs = fetchMs;
+                    randomMsg.data = (char *)malloc(val.size() + 1);
+                    if (randomMsg.data == NULL)
+                    {
+                        ESP_LOGE(TAG, "Malloc random span dispatch data fail");
+                        dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    memcpy(randomMsg.data, val.c_str(), val.size());
+                    randomMsg.data[val.size()] = '\0';
+
+                    if (xQueueSend(randomQueue, &randomMsg, pdMS_TO_TICKS(100)) != pdTRUE)
+                    {
+                        ESP_LOGW(TAG, "Send random queue fail, span skipped: %s", val.c_str());
+                        free(randomMsg.data);
+                    }
+                    break;
+                }
                 default:
+                    ESP_LOGW(TAG, "Unknown command type %d skipped (delta kept)", static_cast<int>(ct));
                     break;
                 }
 
@@ -1263,6 +1338,11 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::RELOAD_CONFIG:
             {
                 ESP_LOGI(TAG, "Reloading config");
+                // Channel ranges may change, so every random span stops first (T-009).
+                if (!clearRandomSpans("Config reload", pdMS_TO_TICKS(1000)))
+                {
+                    ESP_LOGE(TAG, "Config reload: randomTableMutex timeout - random spans NOT stopped");
+                }
                 loadMaestroConfigs();
                 loadGpioConfig();
                 break;
@@ -1560,6 +1640,346 @@ void gpioQueueTask(void *arg)
             free(msg.data);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+static uint32_t randomNowMs()
+{
+    return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+}
+
+// Panic and RELOAD_CONFIG: stop every random span. The fence and the randomQueue
+// drain share Clear()'s hold, so neither a queued span nor one the random task
+// is already holding can start after this returns.
+static bool clearRandomSpans(const char *reason, TickType_t wait)
+{
+    if (xSemaphoreTake(randomTableMutex, wait) != pdTRUE)
+    {
+        return false;
+    }
+
+    size_t active = randomTable.ActiveCount();
+    randomTable.Clear();
+    randomClearFence.Mark(randomNowMs());
+
+    queue_random_msg_t pending;
+    int dropped = 0;
+    while (xQueueReceive(randomQueue, &pending, 0) == pdTRUE)
+    {
+        free(pending.data);
+        dropped++;
+    }
+
+    xSemaphoreGive(randomTableMutex);
+
+    ESP_LOGI(TAG, "%s: stopped %u random span(s), dropped %d queued", reason, static_cast<unsigned>(active), dropped);
+    return true;
+}
+
+static void logRandomSkip(const char *reason, const char *raw)
+{
+    ESP_LOGW(TAG, "Random span skipped (%s): %s", reason, raw);
+}
+
+// The span checks that need no table lock: parse, read the channel, build the
+// SpanStart. Logs and returns false on any reject. Never called with
+// randomTableMutex held: the Maestro snapshot can wait ~1 s on
+// maestroModulesMutex.
+static bool prepareRandomSpan(const queue_random_msg_t &msg, SpanStart *out)
+{
+    char reason[160];
+    SpanBuildResult built{};
+    int module = 0;
+    int channel = 0;
+    int spanMs = 0;
+    MaestroChannelSnapshot ch{};
+
+    if (msg.type == MODULE_TYPE::MAESTRO_RANDOM)
+    {
+        auto parsed = ParseRandomMaestroCommand(msg.data);
+        if (parsed.error != RandomParseError::NONE)
+        {
+            snprintf(reason, sizeof(reason), "parse %s", RandomParseErrorName(parsed.error));
+            logRandomSkip(reason, msg.data);
+            return false;
+        }
+        module = parsed.cmd.module;
+        channel = parsed.cmd.channel;
+        spanMs = parsed.cmd.spanMs;
+
+        // Same lookup as servoQueueTask: the shared_ptr keeps the module alive
+        // past a concurrent reload.
+        std::shared_ptr<MaestroModule> target;
+        if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+        {
+            logRandomSkip("maestroModulesMutex timeout", msg.data);
+            return false;
+        }
+        auto it = maestroModules.find(module);
+        if (it != maestroModules.end())
+        {
+            target = it->second;
+        }
+        xSemaphoreGive(maestroModulesMutex);
+
+        if (!target)
+        {
+            snprintf(reason, sizeof(reason), "unknown Maestro module %d", module);
+            logRandomSkip(reason, msg.data);
+            return false;
+        }
+        if (!target->GetChannelSnapshot(channel, &ch))
+        {
+            snprintf(reason, sizeof(reason), "Maestro %d ch %d not read: out of range, or the module is busy", module,
+                     channel);
+            logRandomSkip(reason, msg.data);
+            return false;
+        }
+
+        built = BuildMaestroSpan(parsed.cmd, ch, msg.dispatchTickMs);
+        if (built.servoFieldsOnDigital)
+        {
+            ESP_LOGW(TAG,
+                     "Random span config mismatch: Maestro %d ch %d is digital but the span has servo fields (the "
+                     "server thinks it is a servo); running it as a toggle, re-sync the controller config: %s",
+                     module, channel, msg.data);
+        }
+    }
+    else if (msg.type == MODULE_TYPE::GPIO_RANDOM)
+    {
+        auto parsed = ParseRandomGpioCommand(msg.data);
+        if (parsed.error != RandomParseError::NONE)
+        {
+            snprintf(reason, sizeof(reason), "parse %s", RandomParseErrorName(parsed.error));
+            logRandomSkip(reason, msg.data);
+            return false;
+        }
+        channel = parsed.cmd.channel;
+        spanMs = parsed.cmd.spanMs;
+
+        bool level = false;
+        if (!GpioMod.GetLevel(channel, &level))
+        {
+            snprintf(reason, sizeof(reason), "unknown GPIO channel %d", channel);
+            logRandomSkip(reason, msg.data);
+            return false;
+        }
+
+        built = BuildGpioSpan(parsed.cmd, level, msg.dispatchTickMs);
+    }
+    else
+    {
+        snprintf(reason, sizeof(reason), "unexpected command type %d", static_cast<int>(msg.type));
+        logRandomSkip(reason, msg.data);
+        return false;
+    }
+
+    switch (built.reject)
+    {
+    case SpanReject::NONE:
+        *out = built.start;
+        return true;
+    case SpanReject::DISABLED_CHANNEL:
+        snprintf(reason, sizeof(reason), "Maestro %d ch %d is disabled", module, channel);
+        break;
+    case SpanReject::NO_USABLE_RANGE:
+        snprintf(reason, sizeof(reason),
+                 "Maestro %d ch %d has no usable range (min %d us >= max %d us), fix the channel config", module,
+                 channel, ch.minPos, ch.maxPos);
+        break;
+    case SpanReject::DIGITAL_SPAN_ON_SERVO:
+        snprintf(reason, sizeof(reason),
+                 "config mismatch: the server sent a digital span for servo channel Maestro %d ch %d; re-sync the "
+                 "controller config",
+                 module, channel);
+        break;
+    case SpanReject::INVALID_SERVO_FIELDS:
+        snprintf(reason, sizeof(reason), "invalid servo fields for Maestro %d ch %d", module, channel);
+        break;
+    case SpanReject::WITHIN_END_GUARD:
+        snprintf(reason, sizeof(reason), "%d ms is within the %d ms end guard, no change can run", spanMs,
+                 RandomSpanTable::END_GUARD_MS);
+        break;
+    }
+    logRandomSkip(reason, msg.data);
+    return false;
+}
+
+// Under randomTableMutex, with the hold's one `now`. Collect may append changes
+// (when it has to free a slot); the caller posts them.
+static void startRandomSpan(const queue_random_msg_t &msg, const SpanStart &span, uint32_t now,
+                            std::vector<SpanChange> &changes, DropLogThrottle &dropLog)
+{
+    char reason[96];
+
+    if (randomClearFence.Fences(msg.dispatchTickMs))
+    {
+        logRandomSkip("dispatched before a panic or config reload stopped the spans", msg.data);
+        return;
+    }
+    if (SpanArrivedTooLate(msg.dispatchTickMs, span.spanMs, now))
+    {
+        snprintf(reason, sizeof(reason), "arrived %" PRIu32 " ms after dispatch, past the %d ms span's last change",
+                 now - msg.dispatchTickMs, span.spanMs);
+        logRandomSkip(reason, msg.data);
+        return;
+    }
+
+    bool started = randomTable.Start(span);
+    if (!started && randomTable.ActiveCount() == RANDOM_TABLE_CAPACITY)
+    {
+        // A full slot may hold a span already inside its end guard; Collect drops it.
+        randomTable.Collect(now, changes);
+        started = randomTable.Start(span);
+    }
+    if (!started)
+    {
+        if (randomTable.ActiveCount() == RANDOM_TABLE_CAPACITY)
+        {
+            snprintf(reason, sizeof(reason), "table full (%u/%u active)",
+                     static_cast<unsigned>(randomTable.ActiveCount()), static_cast<unsigned>(RANDOM_TABLE_CAPACITY));
+        }
+        else
+        {
+            // The parser accepted these gaps, so the table's copy of the rules
+            // disagrees with it (T-008 pins them together).
+            snprintf(reason, sizeof(reason), "gap rules rejected");
+        }
+        logRandomSkip(reason, msg.data);
+        return;
+    }
+
+    dropLog.Reset(span.key);
+
+    if (span.key.type == MODULE_TYPE::GPIO_RANDOM)
+    {
+        ESP_LOGI(TAG, "Random span started: GPIO ch %d, %d ms, gaps %d-%d ms", span.key.channel, span.spanMs,
+                 span.minGapMs, span.maxGapMs);
+    }
+    else if (span.isServo)
+    {
+        ESP_LOGI(TAG, "Random span started: Maestro %d ch %d servo, %d ms, gaps %d-%d ms, speed %d, accel %d",
+                 span.key.module, span.key.channel, span.spanMs, span.minGapMs, span.maxGapMs, span.speed,
+                 span.acceleration);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Random span started: Maestro %d ch %d digital, %d ms, gaps %d-%d ms", span.key.module,
+                 span.key.channel, span.spanMs, span.minGapMs, span.maxGapMs);
+    }
+}
+
+// Under randomTableMutex, so a panic that takes the mutex sees no post after its
+// Clear(). Zero-wait sends: a full queue drops the change (payload freed here).
+static void postRandomChanges(const std::vector<SpanChange> &changes, DropLogThrottle &dropLog)
+{
+    for (const SpanChange &change : changes)
+    {
+        char command[SPAN_CHANGE_MAX_LEN];
+        size_t len = FormatSpanChange(change, command, sizeof(command));
+        if (len == 0)
+        {
+            ESP_LOGE(TAG, "Random change for type %d not formatted, skipped", change.key.type);
+            continue;
+        }
+
+        bool isGpio = change.key.type == MODULE_TYPE::GPIO_RANDOM;
+        queue_msg_t msg;
+        msg.message_id = isGpio ? 0 : change.key.module;
+        msg.dataSize = len;
+        msg.data = (uint8_t *)malloc(len + 1);
+        if (msg.data == NULL)
+        {
+            ESP_LOGE(TAG, "Malloc random change fail");
+            dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        memcpy(msg.data, command, len + 1);
+
+        if (xQueueSend(isGpio ? gpioQueue : servoQueue, &msg, 0) != pdTRUE)
+        {
+            free(msg.data);
+            if (dropLog.ShouldLog(change.key))
+            {
+                ESP_LOGW(TAG,
+                         "Random change dropped, %s full: %s (first drop for this span; its later changes continue "
+                         "from the dropped value)",
+                         isGpio ? "gpioQueue" : "servoQueue", command);
+            }
+        }
+    }
+}
+
+// Random span events (.docs/protocol.md § C). Takes span commands from the
+// dispatch loop, runs randomTable, and posts each due change to servoQueue /
+// gpioQueue as an ordinary type-1 / type-5 command.
+void randomEffectsTask(void *arg)
+{
+    QueueHandle_t queue = (QueueHandle_t)arg;
+
+    // Collect emits at most one change per slot. When a full table forces
+    // startRandomSpan's extra Collect, that pass can emit for every slot and the
+    // new span then adds its first change, hence the + 1. The loop never
+    // allocates.
+    std::vector<SpanChange> changes;
+    changes.reserve(RANDOM_TABLE_CAPACITY + 1);
+    DropLogThrottle dropLog(RANDOM_TABLE_CAPACITY);
+
+    TickType_t waitTicks = WaitTicksCeil(RANDOM_IDLE_WAIT_MS, portTICK_PERIOD_MS);
+
+    while (1)
+    {
+        auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+        if (highWaterMark < 500)
+        {
+            ESP_LOGW(TAG, "Random Effects Stack HWM: %d", highWaterMark);
+        }
+
+        queue_random_msg_t msg;
+        bool haveMsg = xQueueReceive(queue, &msg, waitTicks) == pdTRUE;
+
+        SpanStart span{};
+        bool haveSpan = haveMsg && prepareRandomSpan(msg, &span);
+
+        if (xSemaphoreTake(randomTableMutex, pdMS_TO_TICKS(100)) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "random_effects_task: table mutex timeout, pass skipped");
+            if (haveSpan)
+            {
+                logRandomSkip("dropped, table mutex timeout", msg.data);
+            }
+            if (haveMsg)
+            {
+                free(msg.data);
+            }
+            waitTicks = 1;
+            continue;
+        }
+
+        // One `now` for the whole hold, sampled after every wait above: with an
+        // earlier one, Collect could emit a change past a span's end (§ C).
+        uint32_t now = randomNowMs();
+        randomClearFence.Expire(now);
+        changes.clear();
+
+        if (haveSpan)
+        {
+            startRandomSpan(msg, span, now, changes, dropLog);
+        }
+
+        randomTable.Collect(now, changes);
+        postRandomChanges(changes, dropLog);
+
+        // Read under the lock: panic and reload Clear() from other tasks.
+        uint32_t waitMs = std::min(randomTable.MsUntilNext(now), RANDOM_IDLE_WAIT_MS);
+        waitTicks = WaitTicksCeil(waitMs, portTICK_PERIOD_MS);
+
+        xSemaphoreGive(randomTableMutex);
+
+        if (haveMsg)
+        {
+            free(msg.data);
+        }
     }
 }
 
@@ -2147,6 +2567,17 @@ static void handlePanicStop(astros_interface_response_t msg)
 {
     // 1. Stop dispatching: no further script events reach the servo queue.
     AnimationCtrl.panicStop();
+
+    // 1b. Stop every random span (T-009) before the drain below, so no random
+    //     move can be enqueued after it: the random task posts changes only
+    //     while holding randomTableMutex, and the table is empty once we give
+    //     it back. clearRandomSpans also drains randomQueue and fences the span
+    //     the random task may be holding.
+    if (!clearRandomSpans("Panic", pdMS_TO_TICKS(1000)))
+    {
+        ESP_LOGE(TAG, "handlePanicStop: randomTableMutex timeout - random spans NOT stopped, a random move can follow "
+                      "the offs");
+    }
 
     // 2. Drop what is already queued. servoQueue holds up to 20 entries and
     //    servoQueueTask drains one per pass, so a multi-servo script event can
