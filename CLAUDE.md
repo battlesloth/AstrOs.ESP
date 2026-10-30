@@ -103,15 +103,30 @@ When pulling pure logic out of a MIXED lib, follow this pattern (piloted on `Ast
 
 ### Extracting a domain from main.cpp
 
-When a feature's logic lives in `main.cpp`, move it into a domain lib so `main.cpp` stays the wiring harness. Pattern piloted on `lib/RandomEffectsController` (T-009); read it as the worked example.
+When a feature's logic lives in `main.cpp`, move it into a domain lib so `main.cpp` stays the wiring harness. The pattern was piloted on `lib/RandomEffectsController` (T-009): read it as the worked example. Each move is its own task and changes no behavior.
 
-1. **Split pure from MIXED.** Decisions that need no FreeRTOS or ESP-IDF go in a `lib_native/` lib with native tests (the recipe above). Everything that takes a lock, waits on a queue, or logs goes in a MIXED lib, `lib/<Domain>Controller/`, with a `library.json` (dependencies) and a `README` (classification, threading, queue ownership).
-2. **One global object, two-step init.** `extern <Domain>Controller <Domain>Ctrl;`, constructed at static-init time, copy deleted. `bool Init(const <domain>_config_t &config)` creates its FreeRTOS objects once the queues exist; `init()` aborts on false.
-3. **Own the queue at both ends.** The controller creates its queue and keeps the message struct private. The producer is a method (`Submit(...)`: malloc, send with a bounded wait, free on failure); the consumer loop is a private `run()` behind `static void TaskEntry(void *arg)`, with the high-water-mark check inside.
-4. **Inject what `main.cpp` owns; call what libs own.** Handles and state `main.cpp` still owns (other domains' queues, the Maestro module map) come in through the config struct, as values or plain function pointers (like `astros_espnow_config_t`). Another lib's global (`GpioMod`, `AnimationCtrl`) is called directly. A callback whose failures log differently returns a reason enum, not `bool` (`MaestroChannelRead`).
+1. **Split pure from MIXED.** Decisions that need no FreeRTOS or ESP-IDF go in a `lib_native/` lib with native tests (the recipe above). Everything that takes a lock, waits on a queue, or logs goes in a MIXED lib: a new `lib/<Domain>Controller/` with a `library.json` and a `README` (classification, threading, queue ownership), or an existing MIXED lib the domain clearly belongs to (`AnimationController`, `AstrOsEspNow`, an OTA lib). `library.json` dependencies name other libs by their `library.json` `name`, or by folder name when they have none (`Modules`). PlatformIO doesn't check the list (it follows `#include`s), so treat it as documentation.
+2. **One global object, two-step init.** `extern <Domain>Controller <Domain>Ctrl;`, with copy deleted. Its constructor runs before `app_main`, in no defined order relative to other files' globals, so it may only size its own members (vectors, tables): no FreeRTOS calls, no logging, no other globals. All of that goes in `bool Init(const <domain>_config_t &config)`, which `init()` calls once the queues exist, aborting on false. New controllers use PascalCase public methods, `trailing_` member names, and `static const char *TAG = "<Domain>";` in the `.cpp`. Older libs use other styles (`AstrOs_` globals, camelCase methods, `esp_err_t` inits) and aren't renamed.
+3. **Queues: own the domain's own queue at both ends; take shared queues as handles.**
+   - A queue whose only producers are `main.cpp` or this lib moves in. The controller creates it and keeps its message struct private. It exposes the producer as a method (`Submit(...)`: malloc, a bounded send, free on failure) and runs the consumer loop in a private `run()` behind `static void TaskEntry(void *arg)`, with the high-water-mark check inside.
+   - A queue that other domains also feed stays created in `main.cpp` and comes in through the config; the controller may still run its consumer loop. Examples: `servoQueue` (dispatch, random spans, servo test, panic's drain), `gpioQueue`, `otaQueue`.
+   - If it's unclear which kind a queue is, stop and ask: it's an architectural decision.
+4. **Dependencies run both ways.**
+   - What `main.cpp` still owns (other domains' queues, the Maestro module map) comes in through the config struct, as values or plain function pointers (like `astros_espnow_config_t`). A callback whose failures log differently returns a reason enum, not `bool` (`MaestroChannelRead`).
+   - Another lib's global (`GpioMod`, `AnimationCtrl`) is called directly, from methods only, never from the constructor.
+   - When `main.cpp` or another controller still needs the moved state, give the new controller a method that does the job (`PanicAll()`, `ReadChannel(...)`). Never expose the raw map or mutex. The ordering decision stays at the call site.
+   - When the domain behind an earlier controller's config callback moves into a lib, replace the callback with a direct call to the new global and delete the config field. For example, `readMaestroChannel` becomes a call on the Maestro controller.
 5. **`main.cpp` keeps one line per touchpoint:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line in `app_main`, and a one-line call wherever the domain is triggered (a dispatch case, a panic step, a service command). Ordering comments (panic order, lock order) stay at the call site, where the order is decided.
 6. **Diagnostics are getters.** Failure counters are atomics on the controller; `maintenanceTimerCallback`'s error line reads them.
-7. **The move changes no behavior.** Prove it with a diff of the moved bodies with the renames mapped back, the native suite, and both board builds; then run the domain's bench cases.
+7. **Prove the move changes no behavior.**
+   - Diff the moved bodies with the renames mapped back:
+     - `git show <base>:src/main.cpp | sed -n '<first>,<last>p' > old.cpp`
+     - map the new file's identifiers back to the old names with `sed 's/table_/randomTable/g; …' > new_mapped.cpp`
+     - `diff -w old.cpp new_mapped.cpp`
+     - expect only member signatures, injected calls, and locals that became members
+   - The accepted log change is the console prefix (the lib's `TAG`). Check QA plans that quote prefixes, and list any reworded line in the task file.
+   - `git grep` every old identifier, comments included.
+   - Run the native suite and both board builds, then the domain's bench cases.
 8. **Update** the lib table above and the `PLAN.md` "main.cpp decomposition" list.
 
 ### Runtime roles: master vs padawan

@@ -2204,7 +2204,7 @@ static void handlePanicStop(astros_interface_response_t msg)
 
     // 1b. Stop every random span (T-009) before the drain below, so no random
     //     move can be enqueued after it: the random task posts changes only
-    //     while holding randomTableMutex, and the table is empty once we give
+    //     while holding its table mutex, and the table is empty once we give
     //     it back. StopAll also drains its queue and fences the span the
     //     random task may be holding.
     if (!RandomEffectsCtrl.StopAll("Panic", pdMS_TO_TICKS(1000)))

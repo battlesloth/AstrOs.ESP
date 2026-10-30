@@ -37,7 +37,7 @@ It does three things:
 
 `main.cpp` is meant to be a wiring harness (CLAUDE.md), so everything below that the Task text places in `main.cpp` lives in a new MIXED lib, **`lib/RandomEffectsController`**. Behavior, the Contract, and the pure lib and its tests are unchanged. This is the pilot for a reusable pattern (CLAUDE.md, "Extracting a domain from main.cpp").
 
-- **One global object,** `RandomEffectsCtrl` (class `RandomEffectsController`, mirroring `AnimationCtrl`). It owns the queue, the queue message struct (private), `randomTableMutex`, the span table, the clear fence, the task loop, the dropped-change throttle and both ends of its queue.
+- **One global object,** `RandomEffectsCtrl` (class `RandomEffectsController`, mirroring `AnimationCtrl`). It owns the queue, the queue message struct (private), the table mutex (the Task text's `randomTableMutex`), the span table, the clear fence, the task loop, the dropped-change throttle and both ends of its queue.
 - **Public surface:**
   - `bool Init(const random_effects_config_t &config)`: creates the queue and mutex; false means `init()` aborts, as for the other queues and mutexes
   - `static void TaskEntry(void *arg)`: the task loop, with its HWM check
@@ -194,7 +194,7 @@ It does three things:
 - [x] `lib/RandomEffectsController` (Structure amendment): move the random code out of `main.cpp` unchanged in behavior; `main.cpp` keeps only the lines listed there. `main.cpp` 2737 → 2361 lines (T-009's net add to it: +65, was +441); a diff of the moved bodies with the renames mapped back shows only the member signatures, the injected Maestro read, and the task locals becoming members
 - [x] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row, wiring-harness text (it claimed ~1500 lines of plumbing); stale `src/main.cpp` / `randomTableMutex` references in the pure lib's comments swept; `PLAN.md` "main.cpp decomposition" project (on develop)
 - [x] `pio test -e test` green (608/608); both boards build, no warnings from touched files; clang-format clean
-- [ ] Fresh-context review of the move (behavior unchanged, pattern sound)
+- [x] Fresh-context review of the move (behavior unchanged, pattern sound): 0 Critical; recipe gaps and a stale comment fixed (Review notes, the extraction)
 - [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
 
 ## Failure-mode inventory
@@ -246,3 +246,19 @@ Fresh-context review of 701c3aa..368ab48: 0 Critical, 1 Important (fixed above).
 - **Fixed:** the half-queue share above; QA case 6 allowed no GPIO toggle after the panic lines, but panic doesn't drain `gpioQueue` (GPIO holds), so a correct build could fail it. It now allows one already-queued toggle.
 - **Deferred (minor):** a few log lines are written while `randomTableMutex` is held, delaying a panic's step 1b by milliseconds (the file's convention is to log after release); "out of range, or the module is busy" covers two reasons in one line; no test pins `SpanArrivedTooLate` to the table's own end-guard boundary; `MaestroModule.cpp` includes all of `RandomSpanAdmission.hpp` for one struct.
 - **Set aside as outside the task, and left as is:** spans on unused GPIO pins (same as type 5); random changes already queued at a reload landing after homing (script commands do the same); spans read during a reload; `panicStop`'s 5 s timeout path (T-004); dispatch timing drift (existing); a change `servoQueueTask` already dequeued (T-004's residual); `GetLevel` / `lastPos` missing a still-queued command (the consumers outrank dispatch); the 4096-byte stack (bench case 3's high-water-mark check decides).
+
+## Review notes (2026-10-30, the extraction)
+
+Fresh-context review of 899cd89..b70a711. No behavior change: a mapped-rename `diff -w` of the moved range, 608/608, and both boards built, all re-run by the reviewer in its own worktree. Static init is safe, nothing uses the controller before `Init`, and the `Modules` dependency resolves. 0 Critical.
+
+- **Fixed in the CLAUDE.md recipe** (the recipe is the deliverable here, so gaps the next `PLAN.md` candidates would hit were graded Important):
+  - shared queues (`servoQueue`, `gpioQueue`, `otaQueue`) stay in `main.cpp` and come in as handles; stop and ask when unclear
+  - the reverse direction: expose a method rather than the raw map or mutex, and replace earlier callbacks once their domain moves
+  - constructor rules (static-init order)
+  - joining an existing lib
+  - how to run the mapped-rename diff
+  - `TAG` and naming for new controllers
+  - `git grep` the old identifiers, comments included
+- **Fixed:** a stale `randomTableMutex` in `handlePanicStop`'s step-1b comment (the post-move sweep had skipped comment lines).
+- **Intended log changes, listed:** the console prefix is now `RandomEffects`; the two caller error lines read "random span table mutex timeout" (were "randomTableMutex timeout"); the maintenance error line adds `random-malloc-fail`.
+- **Deferred (minor):** `"frameworks": "espidf"` in the lib's `library.json` (as `OtaWriter` has), a guard against the native env ever picking up the MIXED lib; chain mode already never builds it there.
