@@ -5,10 +5,10 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     no ESP task in progress — the work moves to AstrOs.Server (its T-006 database guard, then T-007 data and T-008 conversion) before T-009
-Next:    agreed order (2026-10-22): T-007 ✓ → T-008 ✓ → AstrOs.Server T-006/T-007/T-008 → T-009 bench → release v1.3.0 (AstrOs.Server then raises its minimum firmware version and builds the scripter UI). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
-Blocked: T-009 bench sign-off needs AstrOs.Server T-007 + T-008 on the bench server (to deploy scripts carrying spans)
-Last:    2026-10-23 — T-008 complete (PR #63 → develop): random span math and span table, pure and native-tested; nothing calls it until T-009
+Now:     T-009 PR #65 open (`feature/T-009-random-effects-task` → develop): native 608/608, both boards build; fresh-context review done (0 Critical, 1 Important fixed: random changes fill at most half of a change queue). Task file stays in `.docs/tasks/` until the bench passes
+Next:    PR #65 review (Copilot + CI) → bench cases 1–11 (`.docs/qa/random-span-events.md`) → release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
+Blocked: bench sign-off needs the bench server on AstrOs.Server develop (its T-007, T-008 and T-009 merged 2026-10-28..30) to deploy scripts carrying spans
+Last:    2026-10-30 — T-009 implemented, PR #65 open; 2026-10-23 — T-008 complete (PR #63 → develop)
 
 ## Random span events
 
