@@ -33,6 +33,23 @@ It does three things:
 
 ## Task
 
+### Structure (amended 2026-10-30, Jeff: the random code leaves `main.cpp`)
+
+`main.cpp` is meant to be a wiring harness (CLAUDE.md), so everything below that the Task text places in `main.cpp` lives in a new MIXED lib, **`lib/RandomEffectsController`**. Behavior, the Contract, and the pure lib and its tests are unchanged. This is the pilot for a reusable pattern (CLAUDE.md, "Extracting a domain from main.cpp").
+
+- **One global object,** `RandomEffectsCtrl` (class `RandomEffectsController`, mirroring `AnimationCtrl`). It owns the queue, the queue message struct (private), `randomTableMutex`, the span table, the clear fence, the task loop, the dropped-change throttle and both ends of its queue.
+- **Public surface:**
+  - `bool Init(const random_effects_config_t &config)`: creates the queue and mutex; false means `init()` aborts, as for the other queues and mutexes
+  - `static void TaskEntry(void *arg)`: the task loop, with its HWM check
+  - `void Submit(MODULE_TYPE type, const std::string &command, uint32_t dispatchMs)`: the dispatch case's malloc, 100 ms send and free-on-failure
+  - `bool StopAll(const char *reason, TickType_t wait)`: panic step 1b and `RELOAD_CONFIG` (the caller logs the timeout, as today)
+  - `static uint32_t NowMs()`: the clock the dispatch stamp and the task share
+  - `uint32_t MallocFailureCount() const`: read by `maintenanceTimerCallback`'s error-counter line
+- **Dependencies:**
+  - What `main.cpp` owns comes in through `random_effects_config_t`: `servoQueue`, `gpioQueue`, and `readMaestroChannel`, a function in `main.cpp` that looks the module up in `maestroModules` under `maestroModulesMutex` (1 s) and calls `GetChannelSnapshot`. It returns `MaestroChannelRead { OK, MODULES_BUSY, NO_MODULE, NO_CHANNEL }`, so the skip reasons stay distinct.
+  - Other libs' globals (`GpioMod`) are called directly.
+- **What stays in `main.cpp`:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line (stack, priority and core stay in the one table), `readMaestroChannel`, the dispatch stamp and a one-line `Submit` in the dispatch switch, the `StopAll` calls in `handlePanicStop` and `RELOAD_CONFIG`, and the new counter in the maintenance line.
+
 ### `src/main.cpp`
 
 **Queue and message:**
@@ -125,6 +142,7 @@ It does three things:
 
 - **No `VERSION` change:** develop is already at 1.3.0, the release that will carry this.
 - **QA plan** `.docs/qa/random-span-events.md`: add the bench cases in Verification.
+- **CLAUDE.md:** a new "Extracting a domain from main.cpp" recipe (this pilot's pattern), the lib-table row, and the wiring-harness text. **`PLAN.md`:** a "main.cpp decomposition" project listing the remaining domains, unscheduled.
 
 ## Acceptance criteria
 
@@ -173,6 +191,10 @@ It does three things:
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
 - [x] `.docs/qa/random-span-events.md` bench cases
 - [x] Code review (fresh context); address Critical/Important — 0 Critical; 1 Important fixed (random changes fill at most half a change queue), the QA case 6 criterion corrected; minors in Review notes
+- [ ] `lib/RandomEffectsController` (Structure amendment): move the random code out of `main.cpp` unchanged in behavior; `main.cpp` keeps only the lines listed there
+- [ ] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row; `PLAN.md` "main.cpp decomposition" project
+- [ ] `pio test -e test` green; both boards build; clang-format clean
+- [ ] Fresh-context review of the move (behavior unchanged, pattern sound)
 - [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
 
 ## Failure-mode inventory
@@ -209,7 +231,7 @@ It does three things:
 ## Rulings (2026-10-30, during implementation)
 
 - **Pure pieces live in `lib_native/AstrOsRandomEffects`** (`RandomSpanAdmission.hpp`): span building and the snapshot checks, change formatting, the too-late check, the clear fence, the dropped-change log throttle, and the ms → ticks round-up. The Task section describes this logic in `main.cpp` without pinning where it lives. CLAUDE.md's default is to put logic that can be native-tested in a PURE lib, and `main.cpp` keeps the FreeRTOS loop, locks and queues.
-- **The span table is file-static in `main.cpp`**, not a local of `randomEffectsTask`, because panic and `RELOAD_CONFIG` call `Clear()` from other tasks. It is still only touched under `randomTableMutex`.
+- ~~**The span table is file-static in `main.cpp`**, not a local of `randomEffectsTask`, because panic and `RELOAD_CONFIG` call `Clear()` from other tasks.~~ Superseded by the Structure amendment: the table is a member of `RandomEffectsController`, still only touched under its mutex.
 - **`dispatchTickMs` is stamped before `AnimationCtrl.getNextCommandPtr()`.** The fetch and `panicStop()` serialize on `animationMutex`, so a stamp taken before the fetch always precedes the clear. With a stamp taken after the fetch, a command fetched just before the halt could be preempted by the panic (priority 10 against 5, same core), stamped after the clear, and started after the panic. The cost is a span's `startMs` early by the fetch's mutex wait, which is milliseconds: no holder of `animationMutex` does I/O under it (`loadNextScript` reads the SD card outside it).
 - **`lastClearMs` is a `ClearFence`:** a flag plus the clear's time, forgotten 2^30 ms (~12 days) after the clear and checked every pass. The literal `(int32_t)(dispatchTickMs − lastClearMs) <= 0`, with `lastClearMs = 0` at boot, rejects every span once uptime passes ~24.8 days without a clear.
 - **The `NONE` case keeps its existing INFO line.** "Stay silent" is read as "does not reach the new unknown-type WARN".
