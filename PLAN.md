@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-009 PR #65 open (`feature/T-009-random-effects-task` → develop): native 608/608, both boards build; fresh-context review done (0 Critical, 1 Important fixed: random changes fill at most half of a change queue). Task file stays in `.docs/tasks/` until the bench passes
+Now:     T-009 PR #65 open (`feature/T-009-random-effects-task` → develop): native 608/608, both boards build; fresh-context review done (0 Critical, 1 Important fixed: random changes fill at most half of a change queue). The random runtime moved into `lib/RandomEffectsController` in the same PR, the pilot of § main.cpp decomposition. Task file stays in `.docs/tasks/` until the bench passes
 Next:    PR #65 review (Copilot + CI) → bench cases 1–11 (`.docs/qa/random-span-events.md`) → release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
 Blocked: bench sign-off needs the bench server on AstrOs.Server develop (its T-007, T-008 and T-009 merged 2026-10-28..30) to deploy scripts carrying spans
 Last:    2026-10-30 — T-009 implemented, PR #65 open; 2026-10-23 — T-008 complete (PR #63 → develop)
@@ -17,6 +17,18 @@ Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · 
 - [x] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/completed/T-007-random-span-command-parsers.md`) — done 2026-10-22
 - [x] **T-008** — Random span math and span table (pure) (`.docs/tasks/completed/T-008-random-effects-math.md`) — done 2026-10-23
 - [ ] **T-009** — Run random spans on the controller (`.docs/tasks/T-009-random-effects-task.md`) — needs T-007 + T-008
+
+## main.cpp decomposition
+
+Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchpoints; the logic moves into domain libs. Recipe: CLAUDE.md "Extracting a domain from main.cpp". Pilot: `lib/RandomEffectsController` (T-009, PR #65). Unscheduled: each domain is its own task with no behavior change, verified by a diff of the moved bodies with the renames mapped back, both board builds, and the domain's QA cases. Candidates, largest first (line counts as of 2026-10-30, `main.cpp` at 2361 lines):
+
+- [ ] Interface messages: `interfaceResponseQueueTask` and its handlers (`handleRegistrationSync`, `handleSetConfig`, `handleSaveScript`, `handleRunSctipt`, `handleRunCommand`, `handlePanicStop`, `handleFormatSD`, `handleServoTest`), ~500 lines
+- [ ] Script dispatch: `animationDispatchTask` (the per-type switch and the serial `\n` / `\r` unescape) and `animationQueueTask`; likely joins `AnimationController`, ~310 lines
+- [ ] ESP-NOW glue: `espnowQueueTask`, `pollingTimerCallback`, the send/recv callbacks, `cachePeer`, `updateSeviceConfig`; likely joins `AstrOsEspNow`, ~290 lines
+- [ ] Maestro registry: `maestroModules` and its mutex, `loadMaestroConfigs`, `readMaestroChannel`, `servoQueueTask`, `servoShutdownTimerCallback`; panic step 3 and `RandomEffectsCtrl` call into it, ~240 lines
+- [ ] Service and button: `serviceQueueTask`, `buttonListenerTask`, ~165 lines
+- [ ] Serial channels: `serialCh1QueueTask`, `serialCh2QueueTask`, `astrosRxTask`, ~150 lines
+- [ ] Thin consumer loops: `i2cQueueTask`, `gpioQueueTask` and the three OTA task loops move into their libs' `TaskEntry`, ~125 lines
 
 ## Standalone tasks
 
