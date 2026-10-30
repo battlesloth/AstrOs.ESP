@@ -1870,7 +1870,9 @@ static void startRandomSpan(const queue_random_msg_t &msg, const SpanStart &span
 }
 
 // Under randomTableMutex, so a panic that takes the mutex sees no post after its
-// Clear(). Zero-wait sends: a full queue drops the change (payload freed here).
+// Clear(). Zero-wait sends, and random changes fill at most half of a change
+// queue (RandomChangeHasRoom): the rest stays free for the script's own
+// commands. A change that doesn't fit is dropped (payload freed here).
 static void postRandomChanges(const std::vector<SpanChange> &changes, DropLogThrottle &dropLog)
 {
     for (const SpanChange &change : changes)
@@ -1884,28 +1886,36 @@ static void postRandomChanges(const std::vector<SpanChange> &changes, DropLogThr
         }
 
         bool isGpio = change.key.type == MODULE_TYPE::GPIO_RANDOM;
-        queue_msg_t msg;
-        msg.message_id = isGpio ? 0 : change.key.module;
-        msg.dataSize = len;
-        msg.data = (uint8_t *)malloc(len + 1);
-        if (msg.data == NULL)
-        {
-            ESP_LOGE(TAG, "Malloc random change fail");
-            dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
-            continue;
-        }
-        memcpy(msg.data, command, len + 1);
+        QueueHandle_t queue = isGpio ? gpioQueue : servoQueue;
+        bool posted = false;
 
-        if (xQueueSend(isGpio ? gpioQueue : servoQueue, &msg, 0) != pdTRUE)
+        if (RandomChangeHasRoom(uxQueueMessagesWaiting(queue), uxQueueSpacesAvailable(queue)))
         {
-            free(msg.data);
-            if (dropLog.ShouldLog(change.key))
+            queue_msg_t msg;
+            msg.message_id = isGpio ? 0 : change.key.module;
+            msg.dataSize = len;
+            msg.data = (uint8_t *)malloc(len + 1);
+            if (msg.data == NULL)
             {
-                ESP_LOGW(TAG,
-                         "Random change dropped, %s full: %s (first drop for this span; its later changes continue "
-                         "from the dropped value)",
-                         isGpio ? "gpioQueue" : "servoQueue", command);
+                ESP_LOGE(TAG, "Malloc random change fail");
+                dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
+                continue;
             }
+            memcpy(msg.data, command, len + 1);
+
+            posted = xQueueSend(queue, &msg, 0) == pdTRUE;
+            if (!posted)
+            {
+                free(msg.data);
+            }
+        }
+
+        if (!posted && dropLog.ShouldLog(change.key))
+        {
+            ESP_LOGW(TAG,
+                     "Random change dropped, %s half full (the rest is kept for the script): %s (first drop for this "
+                     "span; its later changes continue from the dropped value)",
+                     isGpio ? "gpioQueue" : "servoQueue", command);
         }
     }
 }

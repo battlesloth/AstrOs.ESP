@@ -619,3 +619,26 @@ TEST(RandomSpanAdmission, WaitTicksDoNotOverflow)
     EXPECT_EQ(WaitTicksCeil(UINT32_MAX, 10), 429496730u);
     EXPECT_EQ(WaitTicksCeil(UINT32_MAX, 1), UINT32_MAX);
 }
+
+// ---------------------------------------------------------------- RandomChangeHasRoom
+
+TEST(RandomSpanAdmission, RandomChangesFillAtMostHalfOfAChangeQueue)
+{
+    // servoQueue is 20 deep: random changes stop at 10 queued, leaving 10 for the script.
+    EXPECT_TRUE(RandomChangeHasRoom(0, 20));
+    EXPECT_TRUE(RandomChangeHasRoom(9, 11));
+    EXPECT_FALSE(RandomChangeHasRoom(10, 10));
+    EXPECT_FALSE(RandomChangeHasRoom(11, 9));
+    EXPECT_FALSE(RandomChangeHasRoom(20, 0));
+
+    // gpioQueue is 10 deep: random changes stop at 5.
+    EXPECT_TRUE(RandomChangeHasRoom(4, 6));
+    EXPECT_FALSE(RandomChangeHasRoom(5, 5));
+}
+
+TEST(RandomSpanAdmission, RandomChangeRoomOnOddAndEmptyQueues)
+{
+    EXPECT_TRUE(RandomChangeHasRoom(2, 3)); // 5 deep: up to 3 random
+    EXPECT_FALSE(RandomChangeHasRoom(3, 2));
+    EXPECT_FALSE(RandomChangeHasRoom(0, 0));
+}

@@ -97,6 +97,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 - **change strings:** servo `1|0|m|ch|pct|speed|accel`, digital `1|0|m|ch|2500 or 500|0|0`, GPIO `5|0|ch|1 or 0`; each round-trips through the real `MaestroCommand` / `GpioCommand` parsers the queue consumers use; a non-span type or a buffer too small returns 0 (never a truncated command); the longest possible string fits `SPAN_CHANGE_MAX_LEN`
 - **dropped-change log throttle:** logs a span's first drop only; keys differ by type, module and channel; a reset (new span on the key) logs again; a full throttle still logs a new key and forgets the oldest; capacity 0 logs every drop
 - **ms → ticks:** rounds up (1–10 ms is 1 tick at 100 Hz) without overflowing
+- **change-queue share:** random changes may fill at most half of a change queue (10 of 20, 5 of 10, 3 of 5); a zero-depth queue has no room
 
 28 mutations of `RandomSpanAdmission.cpp` (2026-10-30), each caught by a test.
 
@@ -149,8 +150,8 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 ### 6. Panic mid-span
 
 1. Run cases 1 and 3 together (one script, both spans), then hit panic from the server while both are active.
-2. **Pass:** `Panic: stopped 2 random span(s), dropped 0 queued` appears before `Panic: dropped … queued servo commands`; no `Sending Command => 5|…` or `Queueing servo command => 1|…` from a span after the panic lines; the servo de-energizes (Maestro offs as in `maestro-servo-release.md`).
-3. **Same-start burst:** a script with several spans at the same start time; panic within ~10 ms of that start (start the script and panic in one shell line, e.g. two `curl` calls joined with `;`). **Pass:** no random command after the panic lines. A `Random span skipped (dispatched before a panic or config reload stopped the spans)` line is the fence catching an in-flight span, a pass.
+2. **Pass:** `Panic: stopped 2 random span(s), dropped 0 queued` appears before `Panic: dropped … queued servo commands`; no `Queueing servo command => 1|…` from a span after the panic lines; the servo de-energizes (Maestro offs as in `maestro-servo-release.md`); the LED stops flickering. Panic doesn't drain `gpioQueue` (GPIO holds, T-004), so **at most one** `Sending Command => 5|…` that was already queued may appear right at the panic lines. A second one, or any later, is a fail.
+3. **Same-start burst:** a script with several spans at the same start time; panic within ~10 ms of that start (start the script and panic in one shell line, e.g. two `curl` calls joined with `;`). **Pass:** no random servo command after the panic lines, and at most one already-queued GPIO change per GPIO span right at them. A `Random span skipped (dispatched before a panic or config reload stopped the spans)` line is the fence catching an in-flight span, a pass.
 
 ### 7. Reload mid-span
 
@@ -160,7 +161,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 ### 8. Table full
 
 1. A script with 33 concurrent spans (e.g. 10 GPIO channels + 23 Maestro channels, or any 33 distinct channels), all starting together and lasting 10 s.
-2. **Pass:** 32 `Random span started` lines and one `Random span skipped (table full (32/32 active)): …`; the 32 others run. Expect `Random change dropped, … full` lines at this load: the change queues are 10 (GPIO) and 20 (servo) deep, and each span logs only its first drop.
+2. **Pass:** 32 `Random span started` lines and one `Random span skipped (table full (32/32 active)): …`; the 32 others run. Expect `Random change dropped, … half full` lines at this load: random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo), and each span logs only its first drop.
 
 ### 9. Padawan
 
@@ -171,6 +172,19 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 1. Set a servo channel's min and max to the same µs, deploy the config, then run a servo span on it.
 2. **Pass:** `Random span skipped (Maestro M ch C has no usable range (min X us >= max X us), fix the channel config): 6|…` and nothing moves. Restore the channel afterwards.
+
+### 11. Script commands keep their timing under fast spans
+
+The queue tasks drain about one message per 10 ms tick. Random changes may fill at most half of each change queue, so the script's own commands always find room.
+
+1. A 20 s script with three GPIO spans and two Maestro digital spans, every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
+2. Run it with the master console captured (the ESP log prefix carries milliseconds since boot).
+3. **Pass:**
+   - each scripted event's dispatch line (`GPIO command val: 5|…` / `Maestro command val: 1|…`) is followed by its execution line (`Sending Command => 5|…` / `Queueing servo command => 1|…` with the same string) within about 100 ms for GPIO and 300 ms for servo
+   - no `Send gpio queue fail` or `Send servo queue fail`
+   - the end-time Home runs at the end time (within the same bounds) and the script finishes on time
+   - `Random change dropped, … half full` lines appear: the spans are asking for more than the queue tasks can run
+4. **Fail:** a scripted event 2 s late, a `Send … queue fail`, or a script that ends late.
 
 ### Edge cases and negative checks
 

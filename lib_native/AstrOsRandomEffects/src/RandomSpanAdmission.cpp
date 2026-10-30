@@ -208,6 +208,11 @@ bool DropLogThrottle::ShouldLog(const SpanKey &key)
     return true;
 }
 
+bool RandomChangeHasRoom(size_t waiting, size_t spaces)
+{
+    return waiting < spaces;
+}
+
 uint32_t WaitTicksCeil(uint32_t ms, uint32_t tickPeriodMs)
 {
     return ms / tickPeriodMs + (ms % tickPeriodMs != 0 ? 1 : 0);

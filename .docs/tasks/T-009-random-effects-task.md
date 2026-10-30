@@ -170,10 +170,10 @@ It does three things:
 - [x] `src/main.cpp`: `randomEffectsTask`
 - [x] `src/main.cpp`: panic step 1b and the `RELOAD_CONFIG` clear
 - [x] Purity grep clean; clang-format clean; README / CLAUDE.md lib-table text
-- [ ] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
 - [x] `.docs/qa/random-span-events.md` bench cases
-- [ ] Code review (fresh context); address Critical/Important
-- [ ] Bench (human-gated): cases 1–8 and 10 on the master, case 9 on a padawan
+- [x] Code review (fresh context); address Critical/Important — 0 Critical; 1 Important fixed (random changes fill at most half a change queue), the QA case 6 criterion corrected; minors in Review notes
+- [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
 
 ## Failure-mode inventory
 
@@ -215,3 +215,12 @@ It does three things:
 - **The `NONE` case keeps its existing INFO line.** "Stay silent" is read as "does not reach the new unknown-type WARN".
 - **The `changes` vector is reserved to `RANDOM_TABLE_CAPACITY + 1`.** When the table is full, the extra `Collect` before the retry can emit for all 32 slots (a span that emits and then drops frees one), and the new span's first change is the 33rd.
 - **`GetChannelSnapshot` also returns false on a `stateMutex` timeout** (a reload holds `stateMutex` across the SD read), logging the timeout itself with the module's identity.
+- **Random changes fill at most half of a change queue** (`RandomChangeHasRoom`, from the code review). `servoQueueTask` and `gpioQueueTask` drain about one message per 10 ms tick, and the random task (priority 8) outranks the dispatch loop (5). Spans changing faster than that would keep a queue full, the random task would take each freed slot first, and a scripted command would wait 2 s and be dropped, shifting the rest of the script. The task text's "a full queue drops the change" becomes "a queue that is half full drops it". No contract changes: same queues, same strings, same ownership. QA case 11 measures scripted-event latency under fast spans.
+
+## Review notes (2026-10-30)
+
+Fresh-context review of 701c3aa..368ab48: 0 Critical, 1 Important (fixed above). Panic ordering, the stamp-before-fetch ruling, buffer lifetimes, the zero-tick-wait bound and the `+ 1` reserve were each traced and confirmed.
+
+- **Fixed:** the half-queue share above; QA case 6 allowed no GPIO toggle after the panic lines, but panic doesn't drain `gpioQueue` (GPIO holds), so a correct build could fail it. It now allows one already-queued toggle.
+- **Deferred (minor):** a few log lines are written while `randomTableMutex` is held, delaying a panic's step 1b by milliseconds (the file's convention is to log after release); "out of range, or the module is busy" covers two reasons in one line; no test pins `SpanArrivedTooLate` to the table's own end-guard boundary; `MaestroModule.cpp` includes all of `RandomSpanAdmission.hpp` for one struct.
+- **Set aside as outside the task, and left as is:** spans on unused GPIO pins (same as type 5); random changes already queued at a reload landing after homing (script commands do the same); spans read during a reload; `panicStop`'s 5 s timeout path (T-004); dispatch timing drift (existing); a change `servoQueueTask` already dequeued (T-004's residual); `GetLevel` / `lastPos` missing a still-queued command (the consumers outrank dispatch); the 4096-byte stack (bench case 3's high-water-mark check decides).

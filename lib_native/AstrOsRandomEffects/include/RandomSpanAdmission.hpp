@@ -119,6 +119,14 @@ private:
     size_t next_ = 0; // slot the next new key takes when none is free
 };
 
+// Random changes may fill at most half of a change queue (servoQueue, gpioQueue);
+// the other half stays free for the script's own commands. The queue tasks
+// drain about one message per 10 ms tick, and the random task outranks the
+// dispatch loop, so spans changing faster than that would otherwise keep a queue
+// full: the dispatch loop then waits 2 s on its send and drops the scripted
+// command. True while waiting < spaces (fewer than half the slots in use).
+bool RandomChangeHasRoom(size_t waiting, size_t spaces);
+
 // Ticks for an RTOS wait of ms, rounded up so a 1-9 ms wait at 100 Hz is 1 tick,
 // not 0 (a 0-tick wait would spin until the change is due). Never overflows.
 uint32_t WaitTicksCeil(uint32_t ms, uint32_t tickPeriodMs);
