@@ -191,9 +191,9 @@ It does three things:
 - [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
 - [x] `.docs/qa/random-span-events.md` bench cases
 - [x] Code review (fresh context); address Critical/Important — 0 Critical; 1 Important fixed (random changes fill at most half a change queue), the QA case 6 criterion corrected; minors in Review notes
-- [ ] `lib/RandomEffectsController` (Structure amendment): move the random code out of `main.cpp` unchanged in behavior; `main.cpp` keeps only the lines listed there
-- [ ] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row; `PLAN.md` "main.cpp decomposition" project
-- [ ] `pio test -e test` green; both boards build; clang-format clean
+- [x] `lib/RandomEffectsController` (Structure amendment): move the random code out of `main.cpp` unchanged in behavior; `main.cpp` keeps only the lines listed there. `main.cpp` 2737 → 2361 lines (T-009's net add to it: +65, was +441); a diff of the moved bodies with the renames mapped back shows only the member signatures, the injected Maestro read, and the task locals becoming members
+- [x] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row, wiring-harness text (it claimed ~1500 lines of plumbing); stale `src/main.cpp` / `randomTableMutex` references in the pure lib's comments swept; `PLAN.md` "main.cpp decomposition" project (on develop)
+- [x] `pio test -e test` green (608/608); both boards build, no warnings from touched files; clang-format clean
 - [ ] Fresh-context review of the move (behavior unchanged, pattern sound)
 - [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
 

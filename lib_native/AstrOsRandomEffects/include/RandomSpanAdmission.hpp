@@ -12,7 +12,8 @@
 // turning a parsed command plus the channel's state into a SpanStart, the
 // timing checks before Start, the type-1 / type-5 strings a change becomes, and
 // the log throttle for dropped changes. Behavior: .docs/protocol.md § C. The
-// MIXED caller in src/main.cpp takes the locks, reads the channels and logs.
+// MIXED caller (lib/RandomEffectsController) takes the locks, reads the channels
+// and logs.
 
 // A Maestro channel as the random task needs it, read under the module's
 // stateMutex (MaestroModule::GetChannelSnapshot). Positions are in us.
@@ -64,7 +65,7 @@ bool SpanArrivedTooLate(uint32_t dispatchMs, int spanMs, uint32_t nowMs);
 
 // Panic and config reload clear the table. A span dispatched at or before the
 // latest clear must not start after it, even if it was already in flight.
-// Not thread-safe: the caller holds randomTableMutex around every call.
+// Not thread-safe: the caller holds its table mutex around every call.
 class ClearFence
 {
 public:

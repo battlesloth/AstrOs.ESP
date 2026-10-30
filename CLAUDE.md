@@ -55,14 +55,14 @@ Adding a new board means adding a new `[env:...]` block *and* supplying **all pi
 
 ### The wiring-harness pattern
 
-`src/main.cpp` is ~1500 lines but it is almost entirely plumbing. It:
+`src/main.cpp` is meant to be plumbing. It:
 
-1. Creates **9 FreeRTOS queues** (animation, service, interface-response, serialCh1, serialCh2, servo, i2c, gpio, espnow).
-2. Spawns **11 tasks pinned to specific cores** — most I/O and control tasks on core 1, the ESP-NOW receive path and astros UART RX on core 0.
-3. Creates **4 `esp_timer` timers** — polling (master node, 2 s), maintenance, animation tick, servo move.
+1. Creates the FreeRTOS queues that cross domains (animation, service, interface-response, serial channels, servo, i2c, gpio, espnow, OTA).
+2. Spawns every task pinned to a core — most I/O and control tasks on core 1, the ESP-NOW receive path and astros UART RX on core 0. Stack size, priority and core for every task live in the `xTaskCreatePinnedToCore` calls in `app_main`, one table.
+3. Creates the `esp_timer` timers — polling (master node, 2 s), maintenance, servo shutdown.
 4. Hands queue handles to the singletons in `lib/` and lets them talk to each other through the queues.
 
-The actual behavior lives in `lib/`. When tracing a feature, start at `main.cpp` to find which queue/task handles the entry point, then jump into the relevant lib.
+Today it is ~2400 lines and still holds a lot of domain logic (the dispatch switch, the interface handlers, the Maestro module registry, the ESP-NOW glue). That logic is moving out one domain at a time, following "Extracting a domain from main.cpp" below; `lib/RandomEffectsController` is the first. When tracing a feature, start at `main.cpp` to find which queue/task handles the entry point, then jump into the relevant lib.
 
 ### Library layout (what each thing owns)
 
@@ -74,14 +74,15 @@ Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles u
 | `lib_native/AstrOsSerialProtocol` | PURE | Decodes validated UART messages into `DecodedCommand` / `DecodeReject` records. |
 | `lib_native/AstrOsUtility` | PURE | String, path (`AstrOsPathUtils`), servo, and file utilities. |
 | `lib_native/AstrOsLogging` | PURE | `AstrOsLogger` fn-ptr struct for optional diagnostics injection into PURE libs. |
-| `lib_native/AstrOsAnimationCommands` | PURE | Pipe-delimited command template parsers (`AnimationCommand`, `SerialCommand`, `I2cCommand`, `GpioCommand`, `MaestroCommand`), used by both `AnimationController` and `Modules`; plus `RandomCommands` (random span types 6/7, rich `{ error, cmd }` parse results), used by the random-effects task in `src/main.cpp` (T-009). |
-| `lib_native/AstrOsRandomEffects` | PURE | Random span decisions with an injected RNG: the servo move rule, gap draws, travel-stretched gaps, and `RandomSpanTable` (fixed-capacity table of active spans), owned by the random-effects task in `src/main.cpp` (T-009); plus that task's admission checks, clear fence and change strings (`RandomSpanAdmission.hpp`). |
+| `lib_native/AstrOsAnimationCommands` | PURE | Pipe-delimited command template parsers (`AnimationCommand`, `SerialCommand`, `I2cCommand`, `GpioCommand`, `MaestroCommand`), used by both `AnimationController` and `Modules`; plus `RandomCommands` (random span types 6/7, rich `{ error, cmd }` parse results), used by `lib/RandomEffectsController` (T-009). |
+| `lib_native/AstrOsRandomEffects` | PURE | Random span decisions with an injected RNG: the servo move rule, gap draws, travel-stretched gaps, and `RandomSpanTable` (fixed-capacity table of active spans), owned by `lib/RandomEffectsController` (T-009); plus its admission checks, clear fence and change strings (`RandomSpanAdmission.hpp`). |
 | `lib_native/AstrOsAnimationEngine` | PURE | Script parsing, script-ID circular queue (`ScriptQueue`), and event dispatch (`getNextCommand`). The pure orchestration logic behind `AnimationController`. |
 | `lib_native/AstrOsEspNowProtocol` | PURE | Decodes validated ESP-NOW packets into `HandlerResult { InterfaceMessage, diagnostic }` records. Dispatches by packet type and enforces role gating on master-vs-padawan-only types; peer-state-entangled handlers (registration, poll) remain in `AstrOsEspNow`. |
 | `lib_native/AstrOsEspNowPeers` | PURE | `PeerList` class wrapping the bounded peer vector with named operations (`add`, `contains`, `findByMac`, `resetPollCycle`, `markPollAckReceived`, `listUnacked`). Holds no locks — `AstrOsEspNow` wraps each call with `peersMutex`. Also owns the relocated `espnow_peer_t` struct (NVS wire format, shared with `NvsManager.c` via `espnow_peer.h`). |
 | `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
 | `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
 | `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. Single-record packet decoding delegates to `AstrOsEspNowProtocol`. |
+| `lib/RandomEffectsController` | MIXED | Runs random spans (script types 6/7) on `random_effects_task`: owns its queue at both ends (`Submit` from the dispatch loop, the task loop), the span table and clear fence under its mutex, and `StopAll` for panic and config reload. The decisions are in `lib_native/AstrOsRandomEffects`. Pilot of "Extracting a domain from main.cpp". |
 | `lib/AnimationController` | MIXED | Thin adapter: wraps `AstrOsAnimationEngine` with a FreeRTOS mutex (`animationMutex`) and atomic flags. Owns file I/O (script loading via `AstrOsStorageManager`) and the panic-stop safety contract. |
 | `lib/AstrOsStorageManager` | MIXED | NVS for config + FAT/SD for scripts. Exposes `AstrOs_Storage` singleton. Peer configs, service config, controller fingerprint. |
 | `lib/Modules` | MIXED | Hardware abstractions: `SerialModule`, `I2cModule`, `GpioModule`, `MaestroModule`. Each owns a queue-consumer loop. |
@@ -99,6 +100,19 @@ When pulling pure logic out of a MIXED lib, follow this pattern (piloted on `Ast
 2. **Register it with the CI purity guard** — append the `lib_native/` path to the `PURE_LIBS` array in `.github/workflows/pr-validation.yml` (`native-purity` job).
 3. **Prefer rich return values over logger injection** — return a struct describing what happened (e.g., `{ commands, rejects }` or `{ valid, reason }`) and let the MIXED caller log at the boundary with `ESP_LOGW`/`ESP_LOGE`. Only reach for `lib_native/AstrOsLogging`'s `AstrOsLogger` struct when diagnostics truly must live next to the logic (tight loops, complex internal state).
 4. **Add native tests** under `test/test_native/` — the `[env:test]` target auto-discovers them.
+
+### Extracting a domain from main.cpp
+
+When a feature's logic lives in `main.cpp`, move it into a domain lib so `main.cpp` stays the wiring harness. Pattern piloted on `lib/RandomEffectsController` (T-009); read it as the worked example.
+
+1. **Split pure from MIXED.** Decisions that need no FreeRTOS or ESP-IDF go in a `lib_native/` lib with native tests (the recipe above). Everything that takes a lock, waits on a queue, or logs goes in a MIXED lib, `lib/<Domain>Controller/`, with a `library.json` (dependencies) and a `README` (classification, threading, queue ownership).
+2. **One global object, two-step init.** `extern <Domain>Controller <Domain>Ctrl;`, constructed at static-init time, copy deleted. `bool Init(const <domain>_config_t &config)` creates its FreeRTOS objects once the queues exist; `init()` aborts on false.
+3. **Own the queue at both ends.** The controller creates its queue and keeps the message struct private. The producer is a method (`Submit(...)`: malloc, send with a bounded wait, free on failure); the consumer loop is a private `run()` behind `static void TaskEntry(void *arg)`, with the high-water-mark check inside.
+4. **Inject what `main.cpp` owns; call what libs own.** Handles and state `main.cpp` still owns (other domains' queues, the Maestro module map) come in through the config struct, as values or plain function pointers (like `astros_espnow_config_t`). Another lib's global (`GpioMod`, `AnimationCtrl`) is called directly. A callback whose failures log differently returns a reason enum, not `bool` (`MaestroChannelRead`).
+5. **`main.cpp` keeps one line per touchpoint:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line in `app_main`, and a one-line call wherever the domain is triggered (a dispatch case, a panic step, a service command). Ordering comments (panic order, lock order) stay at the call site, where the order is decided.
+6. **Diagnostics are getters.** Failure counters are atomics on the controller; `maintenanceTimerCallback`'s error line reads them.
+7. **The move changes no behavior.** Prove it with a diff of the moved bodies with the renames mapped back, the native suite, and both board builds; then run the domain's bench cases.
+8. **Update** the lib table above and the `PLAN.md` "main.cpp decomposition" list.
 
 ### Runtime roles: master vs padawan
 
