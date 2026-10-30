@@ -8,6 +8,12 @@ The RNG is injected (Rand32), so native tests script or seed it; the
 random-effects task in src/main.cpp (T-009) owns the table and passes
 esp_random. Parsing lives in AstrOsAnimationCommands (RandomCommands.hpp).
 
+RandomSpanAdmission.hpp holds that task's other pure decisions (T-009): a
+parsed command plus the channel's state becomes a SpanStart or a reject
+reason, the too-late and dispatched-before-a-clear checks, the type-1 /
+type-5 string each change becomes, the dropped-change log throttle, and the
+ms -> RTOS ticks round-up.
+
 Purity rule
 -----------
 
