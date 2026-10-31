@@ -5,10 +5,10 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-009 PR #65 open (`feature/T-009-random-effects-task` → develop): native 608/608, both boards build; fresh-context review done (0 Critical, 1 Important fixed: random changes fill at most half of a change queue). The random runtime moved into `lib/RandomEffectsController` in the same PR, the pilot of § main.cpp decomposition. Task file stays in `.docs/tasks/` until the bench passes
-Next:    PR #65 review (Copilot + CI) → bench cases 1–11 (`.docs/qa/random-span-events.md`) → release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). Do NOT cut a release with T-007 but without T-009: it would pass a 1.3.0 server gate and silently drop every span
+Now:     T-009 merged to develop (PR #65, dafae27, 2026-10-31): native 611/611, both boards build, two fresh-context reviews and a Copilot round addressed. The random runtime lives in `lib/RandomEffectsController`, the pilot of § main.cpp decomposition. Task file stays in `.docs/tasks/` until the bench passes
+Next:    bench cases 1–11 (`.docs/qa/random-span-events.md`; random-span log lines now carry the `RandomEffects` prefix) → T-009 close-out (task file to `completed/`, Log entry) → release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). Do NOT cut a release before the bench passes: develop now runs spans, and nothing has exercised that on hardware yet
 Blocked: bench sign-off needs the bench server on AstrOs.Server develop (its T-007, T-008 and T-009 merged 2026-10-28..30) to deploy scripts carrying spans
-Last:    2026-10-30 — T-009 implemented, PR #65 open; 2026-10-23 — T-008 complete (PR #63 → develop)
+Last:    2026-10-31 — T-009 merged (PR #65), bench pending; 2026-10-23 — T-008 complete (PR #63 → develop)
 
 ## Random span events
 
