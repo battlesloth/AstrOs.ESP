@@ -227,7 +227,12 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
-    xTaskCreatePinnedToCore(&RandomEffectsController::TaskEntry, "random_effects_task", 4096, NULL, 8, NULL, 1);
+    if (xTaskCreatePinnedToCore(&RandomEffectsController::TaskEntry, "random_effects_task", 4096, NULL, 8, NULL, 1) !=
+        pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create random_effects_task — aborting init");
+        abort();
+    }
     if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
     {
         ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");

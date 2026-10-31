@@ -4,6 +4,9 @@
 #include <atomic>
 #include <esp_system.h>
 #include <vector>
+// must be in this order
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 class GpioModule
 {
@@ -11,9 +14,12 @@ private:
     std::vector<int> gpioChannels;
     std::vector<bool> defaults;
     // Last level set per channel, sized once in Init. Written by SendCommand
-    // (gpio queue task) and DefaultGpios (boot / RELOAD_CONFIG), read by
-    // GetLevel (random-effects task, T-009).
+    // (gpio queue task) and DefaultGpios (RELOAD_CONFIG, service task), each
+    // write under levelMutex together with its gpio_set_level, so the cache
+    // always matches the pin. Read by GetLevel (random-effects task, T-009)
+    // without the mutex: each entry is atomic.
     std::vector<std::atomic<bool>> levels;
+    SemaphoreHandle_t levelMutex = nullptr;
 
 public:
     GpioModule();

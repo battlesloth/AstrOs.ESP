@@ -116,7 +116,7 @@ When a feature's logic lives in `main.cpp`, move it into a domain lib so `main.c
    - Another lib's global (`GpioMod`, `AnimationCtrl`) is called directly, from methods only, never from the constructor.
    - When `main.cpp` or another controller still needs the moved state, give the new controller a method that does the job (`PanicAll()`, `ReadChannel(...)`). Never expose the raw map or mutex. The ordering decision stays at the call site.
    - When the domain behind an earlier controller's config callback moves into a lib, replace the callback with a direct call to the new global and delete the config field. For example, `readMaestroChannel` becomes a call on the Maestro controller.
-5. **`main.cpp` keeps one line per touchpoint:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line in `app_main`, and a one-line call wherever the domain is triggered (a dispatch case, a panic step, a service command). Ordering comments (panic order, lock order) stay at the call site, where the order is decided.
+5. **`main.cpp` keeps one line per touchpoint:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line in `app_main` (checked against `pdPASS`, aborting on failure, like the OTA tasks), and a one-line call wherever the domain is triggered (a dispatch case, a panic step, a service command). Ordering comments (panic order, lock order) stay at the call site, where the order is decided.
 6. **Diagnostics are getters.** Failure counters are atomics on the controller; `maintenanceTimerCallback`'s error line reads them.
 7. **Prove the move changes no behavior.**
    - Diff the moved bodies with the renames mapped back:

@@ -98,6 +98,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 - **dropped-change log throttle:** logs a span's first drop only; keys differ by type, module and channel; a reset (new span on the key) logs again; a full throttle still logs a new key and forgets the oldest; capacity 0 logs every drop
 - **ms → ticks:** rounds up (1–10 ms is 1 tick at 100 Hz) without overflowing
 - **change-queue share:** random changes may fill at most half of a change queue (10 of 20, 5 of 10, 3 of 5); a zero-depth queue has no room
+- **send-time expiry:** every change carries its span's end (`Collect` stamps it); `SpanChangeExpired` refuses a change from `deadline − 20 ms` on, the same boundary `Collect` uses, wrap-safe. The random task re-checks it with a fresh clock just before each send
 
 28 mutations of `RandomSpanAdmission.cpp` (2026-10-30), each caught by a test.
 

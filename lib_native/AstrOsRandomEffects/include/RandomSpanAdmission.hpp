@@ -88,6 +88,14 @@ private:
     uint32_t clearMs_ = 0;
 };
 
+// True when a change may no longer be sent: nowMs is at or past its span's end
+// guard (deadlineMs - END_GUARD_MS), the rule Collect applies when it emits.
+// The sender re-checks just before each send: logging can block the random
+// task after Collect, and the dispatch loop may queue the span's end-time
+// event meanwhile, which a late random change must not follow (§ C).
+// Wrap-safe while the times are < 2^31 ms apart.
+bool SpanChangeExpired(const SpanChange &change, uint32_t nowMs);
+
 // Room for the longest change string ("1|0|" and five ints with separators) and its NUL.
 constexpr size_t SPAN_CHANGE_MAX_LEN = 64;
 

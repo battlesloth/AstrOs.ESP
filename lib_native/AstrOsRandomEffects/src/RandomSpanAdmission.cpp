@@ -135,6 +135,12 @@ bool ClearFence::Fences(uint32_t dispatchMs) const
     return marked_ && static_cast<int32_t>(dispatchMs - clearMs_) <= 0;
 }
 
+bool SpanChangeExpired(const SpanChange &change, uint32_t nowMs)
+{
+    uint32_t guardStartMs = change.deadlineMs - static_cast<uint32_t>(RandomSpanTable::END_GUARD_MS);
+    return static_cast<int32_t>(nowMs - guardStartMs) >= 0;
+}
+
 size_t FormatSpanChange(const SpanChange &change, char *buf, size_t size)
 {
     int written;

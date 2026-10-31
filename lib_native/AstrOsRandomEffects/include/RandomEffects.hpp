@@ -92,6 +92,7 @@ struct SpanChange
     bool level;
     int speed;
     int acceleration;
+    uint32_t deadlineMs; // the span's end (startMs + spanMs); the sender re-checks it (SpanChangeExpired)
 };
 
 // Fixed-capacity table of active spans. The table allocates only in its

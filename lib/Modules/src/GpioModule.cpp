@@ -8,6 +8,7 @@
 #include <vector>
 
 static const char *TAG = "GpioModule";
+static const int LEVEL_MUTEX_WAIT_MS = 100;
 
 GpioModule GpioMod;
 
@@ -18,6 +19,13 @@ GpioModule::~GpioModule() {}
 esp_err_t GpioModule::Init(std::vector<int> channels)
 {
     esp_err_t result = ESP_OK;
+
+    this->levelMutex = xSemaphoreCreateMutex();
+    if (this->levelMutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create the GPIO level mutex");
+        return ESP_ERR_NO_MEM;
+    }
 
     for (size_t i = 0; i < channels.size(); i++)
     {
@@ -59,6 +67,12 @@ void GpioModule::UpdateConfig(std::vector<bool> config)
 
 void GpioModule::DefaultGpios()
 {
+    if (xSemaphoreTake(this->levelMutex, pdMS_TO_TICKS(LEVEL_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "DefaultGpios: level mutex timeout, defaults not applied");
+        return;
+    }
+
     for (size_t i = 0; i < this->gpioChannels.size(); i++)
     {
         if (this->defaults.at(i) != -1 && this->gpioChannels.at(i) != -1)
@@ -72,6 +86,8 @@ void GpioModule::DefaultGpios()
             this->levels.at(i).store(false);
         }
     }
+
+    xSemaphoreGive(this->levelMutex);
 }
 
 void GpioModule::SendCommand(uint8_t *cmd)
@@ -91,8 +107,14 @@ void GpioModule::SendCommand(uint8_t *cmd)
         return;
     }
 
+    if (xSemaphoreTake(this->levelMutex, pdMS_TO_TICKS(LEVEL_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "SendCommand: level mutex timeout, GPIO channel %d not set", command.channel);
+        return;
+    }
     gpio_set_level(static_cast<gpio_num_t>(this->gpioChannels.at(command.channel)), command.state);
     this->levels.at(command.channel).store(command.state);
+    xSemaphoreGive(this->levelMutex);
 }
 
 bool GpioModule::GetLevel(int channel, bool *out) const

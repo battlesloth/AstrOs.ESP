@@ -262,3 +262,11 @@ Fresh-context review of 899cd89..b70a711. No behavior change: a mapped-rename `d
 - **Fixed:** a stale `randomTableMutex` in `handlePanicStop`'s step-1b comment (the post-move sweep had skipped comment lines).
 - **Intended log changes, listed:** the console prefix is now `RandomEffects`; the two caller error lines read "random span table mutex timeout" (were "randomTableMutex timeout"); the maintenance error line adds `random-malloc-fail`.
 - **Deferred (minor):** `"frameworks": "espidf"` in the lib's `library.json` (as `OtaWriter` has), a guard against the native env ever picking up the MIXED lib; chain mode already never builds it there.
+
+## PR #65 review notes (2026-10-31, Copilot)
+
+Three medium findings, all verified against the code and fixed:
+
+- **GPIO cache could disagree with the pin.** `DefaultGpios` (service task, priority 6, on reload) could be preempted between its `gpio_set_level` and its cache store by `SendCommand` (gpio task, priority 8). The pin would end HIGH while `GetLevel` read LOW, so a later span's first toggle repeated a level. Fixed with `levelMutex` in `GpioModule`, created in `Init` (which always runs before the first reload or command); each write and its store happen under it, with a bounded 100 ms wait. `GetLevel` stays lock-free (atomic entries).
+- **A collected change could be sent after its span ended.** `Collect` judges changes by the hold's `now`, which is sampled before `startSpan`'s INFO line and before any drop WARN. If console logging blocks the random task, the dispatch loop (priority 5) can queue the span's end-time event, and the stale random change then lands behind it, overriding the end event (§ C). Fixed: `SpanChange.deadlineMs` (stamped by `Collect`) plus pure `SpanChangeExpired` (same boundary as the table's end guard); `postChanges` re-checks each change with a fresh clock just before sending. RED→GREEN: `TableStampsEachChangeWithItsSpanDeadline`, `ChangeExpiresAtItsSpansEndGuard`, `ChangeExpiryIsWrapSafe`.
+- **`random_effects_task` creation was unchecked.** The OTA task creations beside it check `pdPASS` and abort, so it now does the same. The CLAUDE.md recipe step 5 says so. The older unchecked task creations above it are pre-existing and left alone.

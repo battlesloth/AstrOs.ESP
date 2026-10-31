@@ -642,3 +642,30 @@ TEST(RandomSpanAdmission, RandomChangeRoomOnOddAndEmptyQueues)
     EXPECT_FALSE(RandomChangeHasRoom(3, 2));
     EXPECT_FALSE(RandomChangeHasRoom(0, 0));
 }
+
+// ---------------------------------------------------------------- SpanChangeExpired
+
+TEST(RandomSpanAdmission, ChangeExpiresAtItsSpansEndGuard)
+{
+    // Span ends at 6000: a change may still be sent at 5979, not from 5980.
+    SpanChange c{};
+    c.deadlineMs = 6000;
+
+    EXPECT_FALSE(SpanChangeExpired(c, 1000));
+    EXPECT_FALSE(SpanChangeExpired(c, 5979));
+    EXPECT_TRUE(SpanChangeExpired(c, 5980));
+    EXPECT_TRUE(SpanChangeExpired(c, 6000));
+    EXPECT_TRUE(SpanChangeExpired(c, 9000));
+}
+
+TEST(RandomSpanAdmission, ChangeExpiryIsWrapSafe)
+{
+    // 0xFFFFF000 + 5000 wraps to 904; its guard starts at 884.
+    SpanChange c{};
+    c.deadlineMs = 904;
+
+    EXPECT_FALSE(SpanChangeExpired(c, 0xFFFFF000u));
+    EXPECT_FALSE(SpanChangeExpired(c, 0xFFFFFFFFu));
+    EXPECT_FALSE(SpanChangeExpired(c, 883));
+    EXPECT_TRUE(SpanChangeExpired(c, 884));
+}

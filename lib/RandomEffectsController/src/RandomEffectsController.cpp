@@ -291,13 +291,23 @@ void RandomEffectsController::startSpan(const QueuedSpan &msg, const SpanStart &
 }
 
 // Under tableMutex_, so a StopAll that takes the mutex sees no post after its
-// Clear(). Zero-wait sends, and random changes fill at most half of a change
+// Clear(). Each change is re-checked against its span's end guard just before
+// sending. Zero-wait sends, and random changes fill at most half of a change
 // queue (RandomChangeHasRoom): the rest stays free for the script's own
 // commands. A change that doesn't fit is dropped (payload freed here).
 void RandomEffectsController::postChanges()
 {
     for (const SpanChange &change : changes_)
     {
+        // Collect judged these by the hold's `now`. Logging since then can have
+        // blocked this task while the dispatch loop queued the span's end-time
+        // event, which a late random change must not follow (§ C).
+        if (SpanChangeExpired(change, NowMs()))
+        {
+            ESP_LOGD(TAG, "Random change for ch %d past its span's end guard, not sent", change.key.channel);
+            continue;
+        }
+
         char command[SPAN_CHANGE_MAX_LEN];
         size_t len = FormatSpanChange(change, command, sizeof(command));
         if (len == 0)
