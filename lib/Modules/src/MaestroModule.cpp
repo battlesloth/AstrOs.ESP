@@ -7,6 +7,7 @@
 #include <AstrOsServoUtils.hpp>
 #include <AstrOsUtility.h>
 #include <AstrOsUtility_ESP.h>
+#include <RandomSpanAdmission.hpp>
 #include <SerialModule.hpp>
 #include <driver/uart.h>
 #include <esp_log.h>
@@ -282,6 +283,31 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     xSemaphoreGive(this->mutex);
 }
 
+bool MaestroModule::GetChannelSnapshot(int channel, MaestroChannelSnapshot *out)
+{
+    if (channel < 0 || channel > 23)
+    {
+        return false;
+    }
+
+    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "GetChannelSnapshot: state mutex timeout, channel %d on module %d not read", channel, this->idx);
+        return false;
+    }
+
+    out->enabled = channels[channel].enabled;
+    out->isServo = channels[channel].isServo;
+    out->minPos = channels[channel].minPos;
+    out->maxPos = channels[channel].maxPos;
+    out->home = channels[channel].home;
+    out->inverted = channels[channel].inverted;
+    out->lastPos = channels[channel].lastPos;
+
+    xSemaphoreGive(this->stateMutex);
+    return true;
+}
+
 void MaestroModule::Panic()
 {
     // Operator kill-switch. Panic is a STOP, not a reset: every enabled servo
@@ -393,6 +419,7 @@ void MaestroModule::HomeServos()
     struct HomeMove
     {
         bool send;
+        bool digital;
         int ms;
         int oldSpeed;
         int oldAccel;
@@ -419,6 +446,7 @@ void MaestroModule::HomeServos()
 
         if (!channels[i].isServo)
         {
+            moves[i].digital = true;
             moves[i].ms = channels[i].inverted ? 2500 : 500;
         }
         else
@@ -447,6 +475,13 @@ void MaestroModule::HomeServos()
             {
                 failed++;
                 this->reconcileLimits(i, stage, moves[i].oldSpeed, moves[i].oldAccel);
+            }
+            else if (moves[i].digital)
+            {
+                // A servo's lastPos was set to home above. A digital channel's
+                // records its output level now, so a random span reads the level
+                // the channel is really at (an inverted channel homes at 2500).
+                this->recordLastPos(i, moves[i].ms);
             }
         }
     }

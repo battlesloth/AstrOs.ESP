@@ -82,3 +82,114 @@ Malformed commands aren't bench-tested at any stage. AstrOs.Server T-008 rounds 
   - `MsUntilNext`, `Clear`, and a span that crosses the `uint32` millisecond wrap, including a check made just before the wrap while the next change is due after it
 
 T-008 adds no bench cases either: nothing on the controller calls the table until T-009.
+
+## Runtime (T-009): native coverage
+
+`test/test_native/astros_random_span_admission_tests.cpp` covers the random-effects task's pure decisions (`RandomSpanAdmission.hpp`):
+
+- **building a span from a Maestro command and the channel's snapshot:**
+  - a servo copies every field, takes `rangeUs` from the *channel's* µs range (not the span's percents), and starts from `PercentFromPosition(lastPos)`, inversion undone (20 % plain is 80 % inverted)
+  - a digital channel starts from `lastPos >= 1500` (2500, 1500 high; 1499, 500, 0 low) and leaves every servo field zero, even when the command carries some; any one non-zero servo field flags the config mismatch, and the span still runs as a toggle
+  - rejects, in order: disabled channel (servo and digital); servo with `maxPos <= minPos` (1 µs of range is accepted; reported before any field check); a digital span on a servo channel (positions and moves all 0, whatever speed and accel say); invalid servo fields (one non-zero position or move is "invalid", not "mismatch"); a span of 20 ms or less (the end guard), Maestro and GPIO
+- **GPIO:** key `{GPIO_RANDOM, 0, channel}`, starting from the level `GpioModule` last set
+- **too late:** a span dispatched at 1000 for 5000 ms is accepted until 5979 and rejected from 5980; the same across the `uint32` wrap
+- **clear fence:** fences nothing before the first clear; fences a dispatch at or before the latest clear, wrap-safe; keeps a clear for 2^30 ms and then forgets it, so a span dispatched 2^31 ms after a clear isn't read as "before" it
+- **change strings:** servo `1|0|m|ch|pct|speed|accel`, digital `1|0|m|ch|2500 or 500|0|0`, GPIO `5|0|ch|1 or 0`; each round-trips through the real `MaestroCommand` / `GpioCommand` parsers the queue consumers use; a non-span type or a buffer too small returns 0 (never a truncated command); the longest possible string fits `SPAN_CHANGE_MAX_LEN`
+- **dropped-change log throttle:** logs a span's first drop only; keys differ by type, module and channel; a reset (new span on the key) logs again; a full throttle still logs a new key and forgets the oldest; capacity 0 logs every drop
+- **ms → ticks:** rounds up (1–10 ms is 1 tick at 100 Hz) without overflowing
+- **change-queue share:** random changes may fill at most half of a change queue (10 of 20, 5 of 10, 3 of 5); a zero-depth queue has no room
+- **send-time expiry:** every change carries its span's end (`Collect` stamps it); `SpanChangeExpired` refuses a change from `deadline − 20 ms` on, the same boundary `Collect` uses, wrap-safe. The random task re-checks it with a fresh clock just before each send
+
+28 mutations of `RandomSpanAdmission.cpp` (2026-10-30), each caught by a test.
+
+## Runtime (T-009): bench cases
+
+### Bench preconditions
+
+- Firmware from a branch with T-009 on the master (and on the padawan for case 9). Monitor the master with `pio device monitor -e metro_s3`.
+- AstrOs.Server with its T-007, T-008 and T-009. Insert span rows by hand with the SQL shape in AstrOs.Server `.docs/qa/random-span-events.md` case 8 (GPIO span: `module_type 3`, `module_sub_type 301`; Maestro span: `module_type 1`, `module_sub_type 104`, data JSON with `channel`, gaps, positions, moves, speed and acceleration). Set `scripts.duration_ds` to the latest span end, and keep every span within `0 ≤ time < end_time ≤ 6000`. Deploy the script to the controllers, then run it.
+- Useful log lines (master console):
+  - `Random span command val: 6|…` / `7|…`: the dispatch loop handed the span over
+  - `Random span started: GPIO ch C, N ms, gaps A-B ms` / `Maestro M ch C servo, … speed S, accel A` / `… digital …`
+  - every change then shows as a normal command: `Sending Command => 5|0|C|1` (GpioModule) or `Queueing servo command => 1|0|M|C|…` plus `Setting servo …` (MaestroModule)
+  - `Random span skipped (<reason>): <raw command>`: any reject
+  - `Panic: stopped N random span(s), dropped M queued` / `Config reload: stopped …`
+  - `RAM left <bytes>` every 10 s (heap check)
+
+### 1. GPIO flicker
+
+1. A GPIO span of 10 s with gaps 50–400 ms on an LED channel, followed by a GPIO point event at the span's end time setting the channel low.
+2. Run the script.
+3. **Pass:** `Random span started: GPIO ch …, 10000 ms, gaps 50-400 ms`; the LED blinks irregularly for 10 s; the last `5|0|C|…` from the span is logged before the end time, then the end-time event turns the LED off and it stays off.
+
+### 2. Maestro digital flicker
+
+1. The same span on a Maestro channel configured `isServo = false` (an LED on the Maestro output).
+2. **Pass:** as case 1, with `… digital …` in the start line and `1|0|M|C|2500|0|0` / `1|0|M|C|500|0|0` commands.
+
+### 3. Servo twitch
+
+1. A servo span: positions 35–65 %, move 2–8 %, gaps 200–800 ms, speed 0, 20 s.
+2. **Pass:** small irregular twitches; every `1|0|M|C|<pct>|0|0` has a percent from 35 to 65; consecutive targets differ by 2–8 % (except the first move if the servo started outside 35–65 %). After the span the servo releases on its normal deadline.
+3. **Load check** (acceptance criterion): repeat with a 100 ms min gap (gaps 100–200 ms) for 60 s. **Pass:** no `Random Effects Stack HWM`, `Animation Dispatch Stack HWM` or task-watchdog line, and `RAM left` stays flat (within a few hundred bytes) across the minute.
+
+### 4. Panel flap with an end event
+
+1. A servo span over 0–100 %, move 30 % to no max, gaps 400–2000 ms, then a Home (or fixed-position) event at the span's end time.
+2. **Pass:** random flapping; the end-time event's `Queueing servo command` is the last servo command for that channel, and no `1|0|M|C|…` from the span follows it.
+
+### 5. Slow servo
+
+1. A servo span with speed 5, gaps 100–200 ms, move 20 %.
+2. **Pass:** each move visibly completes before the next starts; the logged commands are spaced by the travel time, far more than 200 ms.
+
+### 5b. Accelerated short moves
+
+1. Speed 0, accel 3, move 5–10 %, gaps 100–200 ms.
+2. **Pass:** each move still completes before the next starts (a 10 % move on a 2000 µs channel is modeled at ~925 ms).
+
+### 6. Panic mid-span
+
+1. Run cases 1 and 3 together (one script, both spans), then hit panic from the server while both are active.
+2. **Pass:** `Panic: stopped 2 random span(s), dropped 0 queued` appears before `Panic: dropped … queued servo commands`; no `Queueing servo command => 1|…` from a span after the panic lines; the servo de-energizes (Maestro offs as in `maestro-servo-release.md`); the LED stops flickering. Panic doesn't drain `gpioQueue` (GPIO holds, T-004), so **at most one** `Sending Command => 5|…` that was already queued may appear right at the panic lines. A second one, or any later, is a fail.
+3. **Same-start burst:** a script with several spans at the same start time; panic within ~10 ms of that start (start the script and panic in one shell line, e.g. two `curl` calls joined with `;`). **Pass:** no random servo command after the panic lines, and at most one already-queued GPIO change per GPIO span right at them. A `Random span skipped (dispatched before a panic or config reload stopped the spans)` line is the fence catching an in-flight span, a pass.
+
+### 7. Reload mid-span
+
+1. While a long span runs, deploy the controller config from the server.
+2. **Pass:** `Config reload: stopped 1 random span(s), …`, then the normal Maestro reload and homing lines; no command from the span after it; the new config applies.
+
+### 8. Table full
+
+1. A script with 33 concurrent spans (e.g. 10 GPIO channels + 23 Maestro channels, or any 33 distinct channels), all starting together and lasting 10 s.
+2. **Pass:** 32 `Random span started` lines and one `Random span skipped (table full (32/32 active)): …`; the 32 others run. Expect `Random change dropped, … half full` lines at this load: random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo), and each span logs only its first drop.
+
+### 9. Padawan
+
+1. Cases 1 and 3 on a dome padawan's channels, then panic from the server.
+2. **Pass:** as cases 1, 3 and 6, on the padawan's console; the panic arrives through the ESP-NOW relay and the padawan logs `Panic: stopped …`.
+
+### 10. Channel with no usable range
+
+1. Set a servo channel's min and max to the same µs, deploy the config, then run a servo span on it.
+2. **Pass:** `Random span skipped (Maestro M ch C has no usable range (min X us >= max X us), fix the channel config): 6|…` and nothing moves. Restore the channel afterwards.
+
+### 11. Script commands keep their timing under fast spans
+
+The queue tasks drain about one message per 10 ms tick. Random changes may fill at most half of each change queue, so the script's own commands always find room.
+
+1. A 20 s script with three GPIO spans and two Maestro digital spans, every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
+2. Run it with the master console captured (the ESP log prefix carries milliseconds since boot).
+3. **Pass:**
+   - each scripted event's dispatch line (`GPIO command val: 5|…` / `Maestro command val: 1|…`) is followed by its execution line (`Sending Command => 5|…` / `Queueing servo command => 1|…` with the same string) within about 100 ms for GPIO and 300 ms for servo
+   - no `Send gpio queue fail` or `Send servo queue fail`
+   - the end-time Home runs at the end time (within the same bounds) and the script finishes on time
+   - `Random change dropped, … half full` lines appear: the spans are asking for more than the queue tasks can run
+4. **Fail:** a scripted event 2 s late, a `Send … queue fail`, or a script that ends late.
+
+### Edge cases and negative checks
+
+- **Unknown command type** (optional: the server never sends one, so it needs a script file edited by hand on the SD card): a type 8 command logs `Unknown command type 8 skipped (delta kept)` and the rest plays on time.
+- **Manual commands don't stop a span:** during case 3, send a `SERVO_TEST` to the same channel. The slider move lands; the span keeps going (§ C).
+- **Disabled channel:** a span on a disabled Maestro channel logs `Random span skipped (Maestro M ch C is disabled)`.
+- **Config mismatch:** a digital span (positions 0) sent for a servo channel logs `config mismatch: the server sent a digital span for servo channel …`; a servo span for a digital channel logs the toggle mismatch warning and toggles. Both mean the server's channel config is out of sync with the controller's; re-sync.

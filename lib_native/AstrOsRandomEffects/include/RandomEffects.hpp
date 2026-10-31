@@ -9,8 +9,8 @@
 // Every random decision for the random span script commands (types 6 and 7):
 // the servo move rule, gap draws, the travel-time gap stretch and the table of
 // active spans. Behavior: .docs/protocol.md § C. Pure, with an injected RNG so
-// native tests are deterministic; the random-effects task in src/main.cpp (T-009)
-// owns the table and supplies esp_random.
+// native tests are deterministic; lib/RandomEffectsController (T-009) owns the
+// table and supplies esp_random.
 
 // Must be callable (never empty) and uniform over all 32 bits: UniformInt takes
 // draw % count and the low bit picks a servo direction. esp_random on the
@@ -92,11 +92,12 @@ struct SpanChange
     bool level;
     int speed;
     int acceleration;
+    uint32_t deadlineMs; // the span's end (startMs + spanMs); the sender re-checks it (SpanChangeExpired)
 };
 
 // Fixed-capacity table of active spans. The table allocates only in its
 // constructor; Collect appends to the caller's vector (reserve it to keep the
-// loop allocation-free). Not thread-safe: T-009 guards it with randomTableMutex.
+// loop allocation-free). Not thread-safe: RandomEffectsController guards it with its table mutex.
 // Times are uint32 milliseconds, compared wrap-safe.
 class RandomSpanTable
 {

@@ -886,6 +886,25 @@ TEST(RandomEffects, TableCollectAppends)
     EXPECT_TRUE(SameKey(GPIO_KEY, out[1].key));
 }
 
+// The random task re-checks each change against its span's end just before
+// sending (PR #65 review), so every change carries that end.
+TEST(RandomEffects, TableStampsEachChangeWithItsSpanDeadline)
+{
+    RandomSpanTable table(4, NoDraws());
+    ASSERT_TRUE(table.Start(Toggle(GPIO_KEY, 1000, 5000, 100, false)));
+    ASSERT_TRUE(table.Start(Toggle(MAESTRO_KEY, 1500, 3000, 100, true)));
+    std::vector<SpanChange> out;
+
+    table.Collect(1500, out);
+
+    ASSERT_EQ(2u, out.size());
+    for (const SpanChange &c : out)
+    {
+        uint32_t expected = SameKey(GPIO_KEY, c.key) ? 6000u : 4500u;
+        EXPECT_EQ(expected, c.deadlineMs);
+    }
+}
+
 // A copy would fork the schedule: Collect on the copy reschedules it while the
 // original emits the same changes again.
 static_assert(!std::is_copy_constructible_v<RandomSpanTable>, "RandomSpanTable must not be copyable");

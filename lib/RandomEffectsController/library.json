@@ -1,0 +1,16 @@
+{
+  "name": "RandomEffectsController",
+  "version": "0.1.0",
+  "description": "MIXED lib running random span events (script commands 6 and 7) on a FreeRTOS task: queue, span table, panic/reload stop.",
+  "dependencies": {
+    "AstrOsRandomEffects": "*",
+    "AstrOsAnimationCommands": "*",
+    "AstrOsUtility": "*",
+    "Modules": "*"
+  },
+  "build": {
+    "flags": [
+      "-I include"
+    ]
+  }
+}

@@ -31,6 +31,7 @@
 #include <OtaQueueMessage.h>
 #include <OtaReceiver.hpp>
 #include <OtaWriter.hpp>
+#include <RandomEffectsController.hpp>
 #include <SerialModule.hpp>
 
 #include <AstrOsEspNow.h>
@@ -158,6 +159,7 @@ void init(void);
 static void loadConfig();
 static void loadMaestroConfigs();
 static void loadGpioConfig();
+static MaestroChannelRead readMaestroChannel(int module, int channel, MaestroChannelSnapshot *out);
 
 // timers
 static void initTimers(void);
@@ -225,6 +227,12 @@ void app_main()
     xTaskCreatePinnedToCore(&servoQueueTask, "servo_queue_task", 4096, (void *)servoQueue, 10, NULL, 1);
     xTaskCreatePinnedToCore(&i2cQueueTask, "i2c_queue_task", 3072, (void *)i2cQueue, 8, NULL, 1);
     xTaskCreatePinnedToCore(&gpioQueueTask, "gpio_queue_task", 3072, (void *)gpioQueue, 8, NULL, 1);
+    if (xTaskCreatePinnedToCore(&RandomEffectsController::TaskEntry, "random_effects_task", 4096, NULL, 8, NULL, 1) !=
+        pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create random_effects_task — aborting init");
+        abort();
+    }
     if (xTaskCreatePinnedToCore(&otaReceiverTask, "ota_receiver_task", 4096, (void *)otaQueue, 6, NULL, 1) != pdPASS)
     {
         ESP_LOGE(TAG, "Failed to create ota_receiver_task — aborting init");
@@ -305,6 +313,13 @@ void init(void)
     if (maestroModulesMutex == NULL)
     {
         ESP_LOGE(TAG, "Failed to create maestroModulesMutex — aborting init");
+        abort();
+    }
+
+    if (!RandomEffectsCtrl.Init(
+            {.servoQueue = servoQueue, .gpioQueue = gpioQueue, .readMaestroChannel = &readMaestroChannel}))
+    {
+        ESP_LOGE(TAG, "Failed to initialize RandomEffectsCtrl — aborting init");
         abort();
     }
 
@@ -620,11 +635,13 @@ static void maintenanceTimerCallback(void *arg)
     uint32_t rxOverflow = astrosRxOverflowCount.load(std::memory_order_relaxed);
     uint32_t espnowMallocFail = espnowMallocFailureCount.load(std::memory_order_relaxed);
     uint32_t dispatchMallocFail = dispatchMallocFailureCount.load(std::memory_order_relaxed);
-    if (rxOverflow != 0 || espnowMallocFail != 0 || dispatchMallocFail != 0)
+    uint32_t randomMallocFail = RandomEffectsCtrl.MallocFailureCount();
+    if (rxOverflow != 0 || espnowMallocFail != 0 || dispatchMallocFail != 0 || randomMallocFail != 0)
     {
         ESP_LOGW(TAG,
-                 "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32 " dispatch-malloc-fail=%" PRIu32,
-                 rxOverflow, espnowMallocFail, dispatchMallocFail);
+                 "err-counters rx-overflow=%" PRIu32 " espnow-malloc-fail=%" PRIu32 " dispatch-malloc-fail=%" PRIu32
+                 " random-malloc-fail=%" PRIu32,
+                 rxOverflow, espnowMallocFail, dispatchMallocFail, randomMallocFail);
     }
 }
 
@@ -645,6 +662,11 @@ void animationDispatchTask(void *arg)
 
         if (AnimationCtrl.scriptIsLoaded())
         {
+            // A random span's dispatch time, stamped BEFORE the fetch: the fetch
+            // and AnimationCtrl.panicStop() serialize on animationMutex, so a span
+            // fetched before a panic is always stamped before the panic clears the
+            // spans (RandomEffectsCtrl.StopAll) and can't start after it.
+            uint32_t fetchMs = RandomEffectsController::NowMs();
             auto cmd = AnimationCtrl.getNextCommandPtr();
 
             if (cmd == nullptr)
@@ -800,7 +822,16 @@ void animationDispatchTask(void *arg)
                     }
                     break;
                 }
+                case MODULE_TYPE::MAESTRO_RANDOM:
+                case MODULE_TYPE::GPIO_RANDOM:
+                {
+                    // The script's delta applies as usual; Submit waits at most 100 ms.
+                    ESP_LOGI(TAG, "Random span command val: %s", val.c_str());
+                    RandomEffectsCtrl.Submit(ct, val, fetchMs);
+                    break;
+                }
                 default:
+                    ESP_LOGW(TAG, "Unknown command type %d skipped (delta kept)", static_cast<int>(ct));
                     break;
                 }
 
@@ -1263,6 +1294,11 @@ void serviceQueueTask(void *arg)
             case SERVICE_COMMAND::RELOAD_CONFIG:
             {
                 ESP_LOGI(TAG, "Reloading config");
+                // Channel ranges may change, so every random span stops first (T-009).
+                if (!RandomEffectsCtrl.StopAll("Config reload", pdMS_TO_TICKS(1000)))
+                {
+                    ESP_LOGE(TAG, "Config reload: random span table mutex timeout - random spans NOT stopped");
+                }
                 loadMaestroConfigs();
                 loadGpioConfig();
                 break;
@@ -1770,6 +1806,29 @@ static void loadConfig()
     }
 }
 
+// RandomEffectsCtrl's view of one Maestro channel. Same lookup as
+// servoQueueTask: the shared_ptr keeps the module alive past a concurrent reload.
+static MaestroChannelRead readMaestroChannel(int module, int channel, MaestroChannelSnapshot *out)
+{
+    std::shared_ptr<MaestroModule> target;
+    if (xSemaphoreTake(maestroModulesMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        return MaestroChannelRead::MODULES_BUSY;
+    }
+    auto it = maestroModules.find(module);
+    if (it != maestroModules.end())
+    {
+        target = it->second;
+    }
+    xSemaphoreGive(maestroModulesMutex);
+
+    if (!target)
+    {
+        return MaestroChannelRead::NO_MODULE;
+    }
+    return target->GetChannelSnapshot(channel, out) ? MaestroChannelRead::OK : MaestroChannelRead::NO_CHANNEL;
+}
+
 static void loadMaestroConfigs()
 {
     ESP_LOGI(TAG, "Loading Maestro configurations");
@@ -2147,6 +2206,17 @@ static void handlePanicStop(astros_interface_response_t msg)
 {
     // 1. Stop dispatching: no further script events reach the servo queue.
     AnimationCtrl.panicStop();
+
+    // 1b. Stop every random span (T-009) before the drain below, so no random
+    //     move can be enqueued after it: the random task posts changes only
+    //     while holding its table mutex, and the table is empty once we give
+    //     it back. StopAll also drains its queue and fences the span the
+    //     random task may be holding.
+    if (!RandomEffectsCtrl.StopAll("Panic", pdMS_TO_TICKS(1000)))
+    {
+        ESP_LOGE(TAG, "handlePanicStop: random span table mutex timeout - random spans NOT stopped, a random move "
+                      "can follow the offs");
+    }
 
     // 2. Drop what is already queued. servoQueue holds up to 20 entries and
     //    servoQueueTask drains one per pass, so a multi-servo script event can

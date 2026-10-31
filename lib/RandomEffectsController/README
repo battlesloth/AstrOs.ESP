@@ -1,0 +1,43 @@
+RandomEffectsController
+=======================
+
+MIXED lib. Runs random span events (script commands 6 and 7,
+.docs/protocol.md § C) on random_effects_task. The dispatch loop hands
+each span over with Submit(); the task keeps the span table and posts each
+due change to servoQueue / gpioQueue as an ordinary type-1 / type-5
+command; panic and config reload call StopAll(). The decisions themselves
+(span building, the move rule, the table) are PURE and native-tested in
+lib_native/AstrOsRandomEffects; this lib adds the queue, the lock and the
+logging around them.
+
+It is the pilot for extracting a domain from src/main.cpp (CLAUDE.md,
+"Extracting a domain from main.cpp"): main.cpp keeps only the Init call,
+the task-create line and one-line calls where the domain is triggered.
+
+Classification
+--------------
+
+MIXED: includes <freertos/...>, <esp_log.h>, <esp_timer.h>, <esp_random.h>.
+Does NOT compile under [env:test].
+
+Threading
+---------
+
+- The span table and the clear fence are touched only under the
+  controller's table mutex: by random_effects_task, and by StopAll (panic
+  on interfaceResponseQueueTask, reload on serviceQueueTask).
+- The task never holds the table mutex while waiting on another lock: the
+  Maestro channel read (main.cpp's readMaestroChannel, which takes
+  maestroModulesMutex and the module's stateMutex) happens before the take.
+- Changes are posted while the table mutex is held, so a StopAll that has
+  taken it sees no post after its Clear().
+
+Queue ownership
+---------------
+
+The controller owns its queue at both ends. Submit mallocs the command
+copy and frees it if the send fails; the task frees it after processing;
+StopAll's drain frees what it removes. Change strings posted to
+servoQueue / gpioQueue follow the CLAUDE.md convention: the controller
+mallocs and frees on a failed send, and the queue consumer frees after
+processing.

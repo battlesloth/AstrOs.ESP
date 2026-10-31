@@ -195,7 +195,7 @@ void RandomSpanTable::Collect(uint32_t nowMs, std::vector<SpanChange> &out)
         }
 
         const SpanStart &span = e.span;
-        SpanChange change{span.key, span.isServo, 0, false, 0, 0};
+        SpanChange change{span.key, span.isServo, 0, false, 0, 0, e.deadlineMs};
         int gapMs;
 
         if (span.isServo)

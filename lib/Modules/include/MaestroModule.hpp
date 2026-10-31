@@ -9,6 +9,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+struct MaestroChannelSnapshot; // RandomSpanAdmission.hpp
+
 #define BAUD_RATE_INDICATION 0xAA
 #define SET_SERVO_COMMAND 0x84
 #define SET_SERVO_SPEED_COMMAND 0x87
@@ -141,6 +143,11 @@ public:
     void HomeServos();
     void QueueCommand(uint8_t *cmd);
     void SetServoPosition(int channel, int ms);
+    // A channel's config and last commanded target, copied under stateMutex
+    // (the random-effects task, T-009). False when channel is out of range, or
+    // when stateMutex is busy (a config reload holds it across the SD read;
+    // logged here with the module's identity).
+    bool GetChannelSnapshot(int channel, MaestroChannelSnapshot *out);
     void Panic();
     // periodically check servos to turn them off
     void CheckServos(int msSinceLastCheck);

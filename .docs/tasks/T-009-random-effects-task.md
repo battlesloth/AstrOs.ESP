@@ -33,6 +33,23 @@ It does three things:
 
 ## Task
 
+### Structure (amended 2026-10-30, Jeff: the random code leaves `main.cpp`)
+
+`main.cpp` is meant to be a wiring harness (CLAUDE.md), so everything below that the Task text places in `main.cpp` lives in a new MIXED lib, **`lib/RandomEffectsController`**. Behavior, the Contract, and the pure lib and its tests are unchanged. This is the pilot for a reusable pattern (CLAUDE.md, "Extracting a domain from main.cpp").
+
+- **One global object,** `RandomEffectsCtrl` (class `RandomEffectsController`, mirroring `AnimationCtrl`). It owns the queue, the queue message struct (private), the table mutex (the Task text's `randomTableMutex`), the span table, the clear fence, the task loop, the dropped-change throttle and both ends of its queue.
+- **Public surface:**
+  - `bool Init(const random_effects_config_t &config)`: creates the queue and mutex; false means `init()` aborts, as for the other queues and mutexes
+  - `static void TaskEntry(void *arg)`: the task loop, with its HWM check
+  - `void Submit(MODULE_TYPE type, const std::string &command, uint32_t dispatchMs)`: the dispatch case's malloc, 100 ms send and free-on-failure
+  - `bool StopAll(const char *reason, TickType_t wait)`: panic step 1b and `RELOAD_CONFIG` (the caller logs the timeout, as today)
+  - `static uint32_t NowMs()`: the clock the dispatch stamp and the task share
+  - `uint32_t MallocFailureCount() const`: read by `maintenanceTimerCallback`'s error-counter line
+- **Dependencies:**
+  - What `main.cpp` owns comes in through `random_effects_config_t`: `servoQueue`, `gpioQueue`, and `readMaestroChannel`, a function in `main.cpp` that looks the module up in `maestroModules` under `maestroModulesMutex` (1 s) and calls `GetChannelSnapshot`. It returns `MaestroChannelRead { OK, MODULES_BUSY, NO_MODULE, NO_CHANNEL }`, so the skip reasons stay distinct.
+  - Other libs' globals (`GpioMod`) are called directly.
+- **What stays in `main.cpp`:** the `Init` call in `init()`, the `xTaskCreatePinnedToCore` line (stack, priority and core stay in the one table), `readMaestroChannel`, the dispatch stamp and a one-line `Submit` in the dispatch switch, the `StopAll` calls in `handlePanicStop` and `RELOAD_CONFIG`, and the new counter in the maintenance line.
+
 ### `src/main.cpp`
 
 **Queue and message:**
@@ -125,6 +142,7 @@ It does three things:
 
 - **No `VERSION` change:** develop is already at 1.3.0, the release that will carry this.
 - **QA plan** `.docs/qa/random-span-events.md`: add the bench cases in Verification.
+- **CLAUDE.md:** a new "Extracting a domain from main.cpp" recipe (this pilot's pattern), the lib-table row, and the wiring-harness text. **`PLAN.md`:** a "main.cpp decomposition" project listing the remaining domains, unscheduled.
 
 ## Acceptance criteria
 
@@ -161,6 +179,24 @@ It does three things:
 
   Malformed commands aren't bench-tested. The server never sends one (its validation skips invalid spans), and T-007's native tests cover the firmware rejects.
 
+## Implementation checklist
+
+- [x] Pure helpers in `lib_native/AstrOsRandomEffects` (`RandomSpanAdmission.hpp/.cpp`, see Rulings): `MaestroChannelSnapshot`, `BuildMaestroSpan` / `BuildGpioSpan`, `SpanArrivedTooLate`, `ClearFence`, `FormatSpanChange`, `DropLogThrottle`, `WaitTicksCeil`. RED first: `astros_random_span_admission_tests.cpp` fails to compile, then fails on its assertions against stubs; GREEN. 40 tests; 28 mutations, all caught (including the 4 tests that passed against the stubs)
+- [x] `MaestroModule::GetChannelSnapshot`; `HomeServos`' digital branch records `lastPos`
+- [x] `GpioModule` per-channel level tracking and `GetLevel`
+- [x] `src/main.cpp`: `randomQueue` + `queue_random_msg_t`, `randomTableMutex`, dispatch cases for types 6/7, the `default:` WARN
+- [x] `src/main.cpp`: `randomEffectsTask`
+- [x] `src/main.cpp`: panic step 1b and the `RELOAD_CONFIG` clear
+- [x] Purity grep clean; clang-format clean; README / CLAUDE.md lib-table text
+- [x] Full `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build
+- [x] `.docs/qa/random-span-events.md` bench cases
+- [x] Code review (fresh context); address Critical/Important — 0 Critical; 1 Important fixed (random changes fill at most half a change queue), the QA case 6 criterion corrected; minors in Review notes
+- [x] `lib/RandomEffectsController` (Structure amendment): move the random code out of `main.cpp` unchanged in behavior; `main.cpp` keeps only the lines listed there. `main.cpp` 2737 → 2361 lines (T-009's net add to it: +65, was +441); a diff of the moved bodies with the renames mapped back shows only the member signatures, the injected Maestro read, and the task locals becoming members
+- [x] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row, wiring-harness text (it claimed ~1500 lines of plumbing); stale `src/main.cpp` / `randomTableMutex` references in the pure lib's comments swept; `PLAN.md` "main.cpp decomposition" project (on develop)
+- [x] `pio test -e test` green (608/608); both boards build, no warnings from touched files; clang-format clean
+- [x] Fresh-context review of the move (behavior unchanged, pattern sound): 0 Critical; recipe gaps and a stale comment fixed (Review notes, the extraction)
+- [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
+
 ## Failure-mode inventory
 
 - **§1 External calls / sends:**
@@ -191,3 +227,46 @@ It does three things:
   | dispatch copy | dispatch | random task after parse; dispatch on a failed send | heap leak per span (test by watching heap over case 3) |
   | change string | random task | the servo/gpio consumer; the random task on a failed send | heap leak per change |
   | table entries | `Start` | deadline / `Clear` | none, fixed capacity |
+
+## Rulings (2026-10-30, during implementation)
+
+- **Pure pieces live in `lib_native/AstrOsRandomEffects`** (`RandomSpanAdmission.hpp`): span building and the snapshot checks, change formatting, the too-late check, the clear fence, the dropped-change log throttle, and the ms → ticks round-up. The Task section describes this logic in `main.cpp` without pinning where it lives. CLAUDE.md's default is to put logic that can be native-tested in a PURE lib, and `main.cpp` keeps the FreeRTOS loop, locks and queues.
+- ~~**The span table is file-static in `main.cpp`**, not a local of `randomEffectsTask`, because panic and `RELOAD_CONFIG` call `Clear()` from other tasks.~~ Superseded by the Structure amendment: the table is a member of `RandomEffectsController`, still only touched under its mutex.
+- **`dispatchTickMs` is stamped before `AnimationCtrl.getNextCommandPtr()`.** The fetch and `panicStop()` serialize on `animationMutex`, so a stamp taken before the fetch always precedes the clear. With a stamp taken after the fetch, a command fetched just before the halt could be preempted by the panic (priority 10 against 5, same core), stamped after the clear, and started after the panic. The cost is a span's `startMs` early by the fetch's mutex wait, which is milliseconds: no holder of `animationMutex` does I/O under it (`loadNextScript` reads the SD card outside it).
+- **`lastClearMs` is a `ClearFence`:** a flag plus the clear's time, forgotten 2^30 ms (~12 days) after the clear and checked every pass. The literal `(int32_t)(dispatchTickMs − lastClearMs) <= 0`, with `lastClearMs = 0` at boot, rejects every span once uptime passes ~24.8 days without a clear.
+- **The `NONE` case keeps its existing INFO line.** "Stay silent" is read as "does not reach the new unknown-type WARN".
+- **The `changes` vector is reserved to `RANDOM_TABLE_CAPACITY + 1`.** When the table is full, the extra `Collect` before the retry can emit for all 32 slots (a span that emits and then drops frees one), and the new span's first change is the 33rd.
+- **`GetChannelSnapshot` also returns false on a `stateMutex` timeout** (a reload holds `stateMutex` across the SD read), logging the timeout itself with the module's identity.
+- **Random changes fill at most half of a change queue** (`RandomChangeHasRoom`, from the code review). `servoQueueTask` and `gpioQueueTask` drain about one message per 10 ms tick, and the random task (priority 8) outranks the dispatch loop (5). Spans changing faster than that would keep a queue full, the random task would take each freed slot first, and a scripted command would wait 2 s and be dropped, shifting the rest of the script. The task text's "a full queue drops the change" becomes "a queue that is half full drops it". No contract changes: same queues, same strings, same ownership. QA case 11 measures scripted-event latency under fast spans.
+
+## Review notes (2026-10-30)
+
+Fresh-context review of 701c3aa..368ab48: 0 Critical, 1 Important (fixed above). Panic ordering, the stamp-before-fetch ruling, buffer lifetimes, the zero-tick-wait bound and the `+ 1` reserve were each traced and confirmed.
+
+- **Fixed:** the half-queue share above; QA case 6 allowed no GPIO toggle after the panic lines, but panic doesn't drain `gpioQueue` (GPIO holds), so a correct build could fail it. It now allows one already-queued toggle.
+- **Deferred (minor):** a few log lines are written while `randomTableMutex` is held, delaying a panic's step 1b by milliseconds (the file's convention is to log after release); "out of range, or the module is busy" covers two reasons in one line; no test pins `SpanArrivedTooLate` to the table's own end-guard boundary; `MaestroModule.cpp` includes all of `RandomSpanAdmission.hpp` for one struct.
+- **Set aside as outside the task, and left as is:** spans on unused GPIO pins (same as type 5); random changes already queued at a reload landing after homing (script commands do the same); spans read during a reload; `panicStop`'s 5 s timeout path (T-004); dispatch timing drift (existing); a change `servoQueueTask` already dequeued (T-004's residual); `GetLevel` / `lastPos` missing a still-queued command (the consumers outrank dispatch); the 4096-byte stack (bench case 3's high-water-mark check decides).
+
+## Review notes (2026-10-30, the extraction)
+
+Fresh-context review of 899cd89..b70a711. No behavior change: a mapped-rename `diff -w` of the moved range, 608/608, and both boards built, all re-run by the reviewer in its own worktree. Static init is safe, nothing uses the controller before `Init`, and the `Modules` dependency resolves. 0 Critical.
+
+- **Fixed in the CLAUDE.md recipe** (the recipe is the deliverable here, so gaps the next `PLAN.md` candidates would hit were graded Important):
+  - shared queues (`servoQueue`, `gpioQueue`, `otaQueue`) stay in `main.cpp` and come in as handles; stop and ask when unclear
+  - the reverse direction: expose a method rather than the raw map or mutex, and replace earlier callbacks once their domain moves
+  - constructor rules (static-init order)
+  - joining an existing lib
+  - how to run the mapped-rename diff
+  - `TAG` and naming for new controllers
+  - `git grep` the old identifiers, comments included
+- **Fixed:** a stale `randomTableMutex` in `handlePanicStop`'s step-1b comment (the post-move sweep had skipped comment lines).
+- **Intended log changes, listed:** the console prefix is now `RandomEffects`; the two caller error lines read "random span table mutex timeout" (were "randomTableMutex timeout"); the maintenance error line adds `random-malloc-fail`.
+- **Deferred (minor):** `"frameworks": "espidf"` in the lib's `library.json` (as `OtaWriter` has), a guard against the native env ever picking up the MIXED lib; chain mode already never builds it there.
+
+## PR #65 review notes (2026-10-31, Copilot)
+
+Three medium findings, all verified against the code and fixed:
+
+- **GPIO cache could disagree with the pin.** `DefaultGpios` (service task, priority 6, on reload) could be preempted between its `gpio_set_level` and its cache store by `SendCommand` (gpio task, priority 8). The pin would end HIGH while `GetLevel` read LOW, so a later span's first toggle repeated a level. Fixed with `levelMutex` in `GpioModule`, created in `Init` (which always runs before the first reload or command); each write and its store happen under it, with a bounded 100 ms wait. `GetLevel` stays lock-free (atomic entries).
+- **A collected change could be sent after its span ended.** `Collect` judges changes by the hold's `now`, which is sampled before `startSpan`'s INFO line and before any drop WARN. If console logging blocks the random task, the dispatch loop (priority 5) can queue the span's end-time event, and the stale random change then lands behind it, overriding the end event (§ C). Fixed: `SpanChange.deadlineMs` (stamped by `Collect`) plus pure `SpanChangeExpired` (same boundary as the table's end guard); `postChanges` re-checks each change with a fresh clock just before sending. RED→GREEN: `TableStampsEachChangeWithItsSpanDeadline`, `ChangeExpiresAtItsSpansEndGuard`, `ChangeExpiryIsWrapSafe`.
+- **`random_effects_task` creation was unchecked.** The OTA task creations beside it check `pdPASS` and abort, so it now does the same. The CLAUDE.md recipe step 5 says so. The older unchecked task creations above it are pre-existing and left alone.
