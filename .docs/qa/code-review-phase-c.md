@@ -3,7 +3,7 @@
 Covers the Phase C code-review remediation work landing on branch `fix/code-review-phase-c`.
 
 **Prerequisites:**
-- A flashed master node and at least one padawan node, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command`, `Queueing servo command`, `Setting servo …`) are compiled out.
+- A flashed master node and at least one padawan node, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out (for § 2.1's timestamps; § 1's queue-depth smoke test should also pass on a normal build, where the queue tasks run faster).
 - SD card mounted with deployed scripts covering all five channel types (serial, servo/Maestro, I2C, GPIO, NONE).
 - Serial monitor open on both boards, `esp32_exception_decoder` filter active.
 - Web UI accessible for script deploy / panic-stop.

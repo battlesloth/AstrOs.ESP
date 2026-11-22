@@ -55,7 +55,13 @@ void I2cModule::SendCommand(uint8_t *cmd)
 
     ASTROS_LOG_CMD(TAG, "Sending Command => %s", cmd);
 
-    I2cModule::write(command.channel, (uint8_t *)command.value.c_str(), command.value.size() + 1);
+    esp_err_t err = I2cModule::write(command.channel, (uint8_t *)command.value.c_str(), command.value.size() + 1);
+    if (err != ESP_OK)
+    {
+        // T-011: with the per-command lines compiled out, this is the only trace.
+        ESP_LOGW(TAG, "I2C write to 0x%02X failed: %s, command: %.64s", static_cast<unsigned>(command.channel),
+                 esp_err_to_name(err), reinterpret_cast<char *>(cmd));
+    }
 }
 
 esp_err_t I2cModule::write(uint8_t addr, uint8_t *data, size_t size)

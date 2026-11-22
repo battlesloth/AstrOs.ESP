@@ -728,7 +728,7 @@ void animationDispatchTask(void *arg)
                     serialMsg.data = (uint8_t *)malloc(formatted.size() + 1);
                     if (serialMsg.data == NULL)
                     {
-                        ESP_LOGE(TAG, "Malloc serial dispatch data fail");
+                        ESP_LOGE(TAG, "Malloc serial dispatch data fail, dropped: %.64s", val.c_str());
                         dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
                         break;
                     }
@@ -739,7 +739,7 @@ void animationDispatchTask(void *arg)
                     {
                         if (xQueueSend(serialCh1Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                         {
-                            ESP_LOGW(TAG, "Send serial queue fail");
+                            ESP_LOGW(TAG, "Send serial queue fail, channel 1, dropped: %.64s", val.c_str());
                             free(serialMsg.data);
                         }
                     }
@@ -747,7 +747,7 @@ void animationDispatchTask(void *arg)
                     {
                         if (xQueueSend(serialCh2Queue, &serialMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                         {
-                            ESP_LOGW(TAG, "Send serial queue fail");
+                            ESP_LOGW(TAG, "Send serial queue fail, channel 2, dropped: %.64s", val.c_str());
                             free(serialMsg.data);
                         }
                     }
@@ -766,7 +766,7 @@ void animationDispatchTask(void *arg)
                     servoMsg.data = (uint8_t *)malloc(val.size() + 1);
                     if (servoMsg.data == NULL)
                     {
-                        ESP_LOGE(TAG, "Malloc servo dispatch data fail");
+                        ESP_LOGE(TAG, "Malloc servo dispatch data fail, dropped: %.64s", val.c_str());
                         dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
                         break;
                     }
@@ -775,7 +775,7 @@ void animationDispatchTask(void *arg)
 
                     if (xQueueSend(servoQueue, &servoMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                     {
-                        ESP_LOGW(TAG, "Send servo queue fail");
+                        ESP_LOGW(TAG, "Send servo queue fail, dropped: %.64s", val.c_str());
                         free(servoMsg.data);
                     }
                     break;
@@ -788,7 +788,7 @@ void animationDispatchTask(void *arg)
                     i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
                     if (i2cMsg.data == NULL)
                     {
-                        ESP_LOGE(TAG, "Malloc i2c dispatch data fail");
+                        ESP_LOGE(TAG, "Malloc i2c dispatch data fail, dropped: %.64s", val.c_str());
                         dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
                         break;
                     }
@@ -797,7 +797,7 @@ void animationDispatchTask(void *arg)
 
                     if (xQueueSend(i2cQueue, &i2cMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                     {
-                        ESP_LOGW(TAG, "Send i2c queue fail");
+                        ESP_LOGW(TAG, "Send i2c queue fail, dropped: %.64s", val.c_str());
                         free(i2cMsg.data);
                     }
                     break;
@@ -810,7 +810,7 @@ void animationDispatchTask(void *arg)
                     gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
                     if (gpioMsg.data == NULL)
                     {
-                        ESP_LOGE(TAG, "Malloc gpio dispatch data fail");
+                        ESP_LOGE(TAG, "Malloc gpio dispatch data fail, dropped: %.64s", val.c_str());
                         dispatchMallocFailureCount.fetch_add(1, std::memory_order_relaxed);
                         break;
                     }
@@ -819,7 +819,7 @@ void animationDispatchTask(void *arg)
 
                     if (xQueueSend(gpioQueue, &gpioMsg, pdMS_TO_TICKS(2000)) != pdTRUE)
                     {
-                        ESP_LOGW(TAG, "Send gpio queue fail");
+                        ESP_LOGW(TAG, "Send gpio queue fail, dropped: %.64s", val.c_str());
                         free(gpioMsg.data);
                     }
                     break;

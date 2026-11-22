@@ -39,6 +39,11 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 **Amended 2026-11-22 (Jeff, from the code review):**
 - `src/main.cpp` `i2cQueueTask`'s `I2C Command received on queue =>` (~1559) is a tenth site. It was missed in authoring; its servo and GPIO siblings are already DEBUG.
 - Boot logs one INFO line, `Verbose command logs: on|off` (after the version line), so a bench console shows which build it is.
+- **From the pre-push review (Jeff): failure lines name their command.** With the per-command lines compiled out, they no longer carry the context those lines gave.
+  - Dispatch: `Malloc … dispatch data fail` and `Send … queue fail` (serial with its channel, servo, i2c, gpio) append `dropped: %.64s` of the command.
+  - Modules: the GPIO `invalid GPIO channel` / `GPIO channel %d not available` lines and the Maestro `Invalid channel %d on module %d` lines (script and slider) name the channel and the command.
+  - `I2cModule::SendCommand` logs `I2C write to 0x%02X failed: <esp_err>`; it used to discard `write()`'s error.
+  - The `GpioModule` off-by-one stays a separate Backlog quick fix.
 
 **Stays INFO:** everything else, including `Random span started`, `Turning off servo`, panic, reload, heartbeat and `RAM left`.
 
@@ -48,7 +53,7 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 
 ## Task
 
-- The header and the nine call sites.
+- The header and the ten call sites (nine, plus the amended I2C queue line).
 - Correct the drain comment at `lib_native/AstrOsRandomEffects/include/RandomSpanAdmission.hpp:133` ("drain about one message per 10 ms tick"): the tick is the wait between messages, and the message's own work comes on top. Give this task's measured numbers for both build types.
 - **Bench docs:**
   - **QA plan preconditions:** `random-span-events.md`, `maestro-servo-release.md` and `code-review-phase-c.md` say bench builds need the flag, and that without it the per-command lines don't appear.
@@ -59,13 +64,15 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 ## Acceptance criteria
 
 - [ ] The ten sites use `ASTROS_LOG_CMD`; `git grep -n 'ESP_LOGI(TAG, "\(Queueing servo command\|Setting servo\|Sending Command\|I2C Command received on queue\|[A-Za-z ]*command val\)' -- src lib ':!*.dep'` returns nothing. (Unscoped, it also matches `.docs/completed-plans/` and the retired, uncompiled `lib/Modules/src/ServoModule.cpp.dep`; both are left alone.)
-- [ ] Four builds pass: `lolin_d32_pro` and `metro_s3`, each with and without `-D ASTROS_VERBOSE_COMMANDS`.
-- [ ] `pio test -e test` green.
-- [ ] **Bench, verbose build:** QA case 11 shows every line it names, with results as on 2026-11-22.
+- [x] Four builds pass: `lolin_d32_pro` and `metro_s3`, each with and without `-D ASTROS_VERBOSE_COMMANDS`.
+- [x] On each board's `firmware.elf`, all nine distinct per-command strings (ten sites; GPIO and I2C share `Sending Command =>`) are absent flag-off and present flag-on, while `Turning off servo`, `Random span started` and `Verbose command logs` are present both ways (`strings -a … | grep -cF`; the loop is in Verification). Checked 2026-11-22, after the amendment.
+- [x] `pio test -e test` green (611/611).
+- [ ] **Bench, verbose build:** the boot line reads `Verbose command logs: on`, and QA case 11 shows every line it names, with results as on 2026-11-22.
 - [ ] **Bench, production timing:** recorded in the task file and in case 11, with each number given as dispatch → execution (scripted servo, GPIO) and the same-time offset. Run case 11 three times on a flag-off build with a **throwaway instrumentation commit** that is never merged:
   - It logs at WARN only the dispatch line and the execution line of commands whose delay field is non-zero. In case 11 those are `5|2000|0|1`, `1|3000|1|1|70|0|0` and `5|10000|0|0`.
   - The console then stays near idle, so the timing matches a release build.
-  - Expected (an estimate to check, not a gate): servo ~200 ms, GPIO under 100 ms.
+  - Each run's boot line reads `Verbose command logs: off`.
+  - **Gate:** the scripted servo's dispatch → execution comes in clearly under the verbose 420 ms, at most 250 ms in every run, or the task reopens. Expected: servo ~200 ms, GPIO under 100 ms.
 - [ ] The comment, QA plans, CLAUDE.md and Backlog edits are done.
 
 ## Out of scope
@@ -78,6 +85,9 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 ## Verification
 
 - `pio test -e test`; the four builds; clang-format on touched files.
+- The ELF check, on each board after a flag-off and a flag-on build:
+  `for s in "Serial command val" "Maestro command val" "I2C command val" "GPIO command val" "Random span command val" "Sending Command =>" "Queueing servo command =>" "Setting servo %d on module" "I2C Command received on queue"; do strings -a .pio/build/<env>/firmware.elf | grep -cF "$s"; done`
+  It prints 0 for each string flag-off and ≥ 1 flag-on. `Turning off servo`, `Random span started` and `Verbose command logs` must be ≥ 1 both ways.
 - The two bench runs above, on the master with AstrOs.Server develop driving case 11 by `curl` (bench reference: `.docs/qa/random-span-events.md` § Bench preconditions / Measuring).
 
 ## Implementation checklist
@@ -95,7 +105,7 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 Fresh-context review of the uncommitted diff.
 - **Confirmed from the built artifacts:**
   - `PLATFORMIO_BUILD_FLAGS` appends to each env's `build_flags`, so the pin defines stay (PlatformIO 6.2 `getraw`), and the define reaches `lib/` as well as `src/`.
-  - With the flag off, all nine strings are absent from `firmware.elf`, while `Turning off servo` and `Random span started` remain.
+  - With the flag off, all nine distinct strings (of the ten sites; GPIO and I2C share `Sending Command =>`) are absent from `firmware.elf`, while `Turning off servo` and `Random span started` remain. Re-run after the amendment (the I2C queue line), on both boards.
   - No file overrides `LOG_LOCAL_LEVEL`.
 - **Important 1 (Contract gap; Jeff amended the Contract):** `i2cQueueTask`'s `I2C Command received on queue` becomes a tenth site. Jeff also added a boot line, `Verbose command logs: on|off`.
 - **Important 2:** the executor's grep ruling was wrong. The unscoped grep also matches `.docs/completed-plans/`, so the acceptance grep is now scoped `-- src lib ':!*.dep'`.
@@ -112,3 +122,24 @@ Fresh-context review of the uncommitted diff.
   - Production error lines (`invalid GPIO channel`, `Send servo queue fail`) lost the context the preceding INFO line gave. Consider naming the command in the error line itself.
   - `AstrOs RX Read %d bytes` is INFO per incoming server message.
   - The `GpioModule::SendCommand` off-by-one is already in the Backlog.
+
+## Pre-push review notes (2026-11-22)
+
+`/pr-review-toolkit:review-pr` (five agents, run together with T-010) found nothing Critical in T-011. The branch merges cleanly with T-010, and the merged tree builds both ways.
+
+- **Jeff's amendment** (Contract, above): failure lines name their command; the I2C write error is logged.
+- **Verification hardened:**
+  - The ELF strings check is now a repeatable step in Verification, run on both boards after the amendment.
+  - The production-timing run has a pass/fail gate (servo ≤ 250 ms).
+  - Both bench runs check the boot line.
+- **Docs:**
+  - CLAUDE.md lists the tenth line and words the Logging convention as the rule for new lines, naming the deliberate INFO exceptions; it says "normal (flag-off) builds", not "release".
+  - The header comment separates whole-loop time from logging cost, and names the dispatch loop.
+  - The QA lists say `Sending Command` (GPIO, I2C) and include the I2C queue line.
+  - `code-review-phase-c.md` scopes the flag to § 2.1.
+- **Backlog** (close-out, ESP PLAN.md):
+  - `NONE command queued` at INFO
+  - `AstrOs RX Read …` at INFO per server message
+  - a CI step for the acceptance grep
+  - the bad-command crash evidence: existing `std::stoi` parsers, already in the Backlog
+  - `i2cQueueTask` silently drops unknown `message_id`s

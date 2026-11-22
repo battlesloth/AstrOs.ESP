@@ -47,7 +47,7 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 ## Preconditions
 
 - Board flashed with a build containing T-001 (amended: trapezoid model + floor) and T-002,
-  built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command`, `Queueing servo command`, `Setting servo …`) are compiled out;
+  built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out;
   serial monitor attached (115200). Log lines carry ms-since-boot; subtract
   `Setting servo N …` from `Turning off servo N` to get the observed release time. Both lines
   carry the module id right after the servo number (T-002): `Setting servo N on module M

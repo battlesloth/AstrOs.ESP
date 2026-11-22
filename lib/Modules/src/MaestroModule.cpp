@@ -133,7 +133,8 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     if (servoCmd.channel > 23 || servoCmd.channel < 0)
     {
-        ESP_LOGE(TAG, "Invalid channel %d", servoCmd.channel);
+        ESP_LOGE(TAG, "Invalid channel %d on module %d, command: %.64s", servoCmd.channel, this->idx,
+                 reinterpret_cast<char *>(cmd));
         return;
     }
 
@@ -232,7 +233,7 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     // to uint8_t before this check would wrap 256 to 0 and -1 to 255.
     if (channel < 0 || channel > 23)
     {
-        ESP_LOGE(TAG, "Invalid channel %d", channel);
+        ESP_LOGE(TAG, "Invalid channel %d on module %d (slider, %d us)", channel, this->idx, ms);
         return;
     }
 

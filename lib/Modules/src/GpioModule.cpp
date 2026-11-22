@@ -98,13 +98,13 @@ void GpioModule::SendCommand(uint8_t *cmd)
 
     if (command.channel > this->gpioChannels.size())
     {
-        ESP_LOGE(TAG, "invalid GPIO channel");
+        ESP_LOGE(TAG, "invalid GPIO channel %d, command: %.64s", command.channel, reinterpret_cast<char *>(cmd));
         return;
     }
 
     if (this->gpioChannels.at(command.channel) == -1)
     {
-        ESP_LOGE(TAG, "GPIO channel not available");
+        ESP_LOGE(TAG, "GPIO channel %d not available, command: %.64s", command.channel, reinterpret_cast<char *>(cmd));
         return;
     }
 

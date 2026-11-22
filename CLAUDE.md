@@ -48,7 +48,7 @@ pio test -e test --filter "*servo*"  # run tests matching a pattern
 
 Native tests require a host C++ toolchain. On Windows this is mingw-w64 via MSYS2 (see `README.md`); on Linux any recent g++ works. The `test` env pins `-std=gnu++2a`.
 
-Per-command log lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`) go through `ASTROS_LOG_CMD` (`lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h`): compiled out of normal builds (they throttled the queue tasks at 115200 baud), INFO in bench builds with `-D ASTROS_VERBOSE_COMMANDS`. The bench QA plans that read those lines (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`) need the flag.
+Per-command log lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) go through `ASTROS_LOG_CMD` (`lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h`): compiled out of normal builds (they throttled the queue tasks at 115200 baud), INFO in bench builds with `-D ASTROS_VERBOSE_COMMANDS`. The bench QA plans that read those lines (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`) need the flag.
 
 There is no separate linter configured — rely on the compiler warnings emitted during `pio run`. Per-board `sdkconfig.<env>` files are committed; do not edit `sdkconfig` directly, edit the board-specific one.
 
@@ -168,7 +168,7 @@ When touching these files, prefer fixes that also resolve the relevant review it
 - **Exceptions are effectively disabled**. Avoid `try`/`catch` in new code. Prefer `strtol` + `errno` over `std::stoi`; an uncaught exception will take down the whole FreeRTOS task.
 - **Blocking on `portMAX_DELAY`** is used in several places but is a known footgun — prefer `pdMS_TO_TICKS(...)` timeouts with a log-on-failure path for new code.
 - **Task stack sizes** live in the `xTaskCreatePinnedToCore` calls in `main.cpp`. Every task has a high-water-mark check that warns at 500 bytes remaining — if you see that warning in logs, bump the stack rather than chasing the symptom.
-- **Logging**: use `ESP_LOGI/W/E(TAG, ...)`. Each file defines its own `TAG`. `main.cpp` uses `AstrOsConstants::ModuleName`. A line logged per command or per change on the dispatch or queue-task path uses `ASTROS_LOG_CMD` instead (T-011), so it costs nothing in release builds.
+- **Logging**: use `ESP_LOGI/W/E(TAG, ...)`. Each file defines its own `TAG`. `main.cpp` uses `AstrOsConstants::ModuleName`. A new line logged per command or per change on the dispatch or queue-task path uses `ASTROS_LOG_CMD` (T-011), so it costs nothing in normal (flag-off) builds; the existing `ESP_LOGD` per-command lines (e.g. the servo and GPIO `… Command received on queue`) stay compiled out even with the flag. Deliberate INFO exceptions: `Random span started` (per span) and `NONE command queued` (Backlog). Failure lines name the command they concern, since the per-command lines aren't there to give context.
 
 ## Things that are *not* in the repo
 

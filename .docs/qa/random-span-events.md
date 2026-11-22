@@ -15,7 +15,7 @@ The feature lands in three tasks:
   - For bench cases: built from a branch that contains T-009.
 - **Server:** AstrOs.Server with its T-007 and T-008, so a script can carry a span. Until the scripter UI lands, span rows are inserted by hand. AstrOs.Server T-008 adds that SQL to its own `.docs/qa/random-span-events.md`.
 - **Hardware:** a master with a Maestro wired to at least one servo and one digital output (an LED), plus one ESP GPIO with an LED. Bench cases that cover padawans need one padawan with the same wiring.
-- **Logging:** a serial monitor on the master (`pio device monitor -e metro_s3`). For bench cases, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command`, `Queueing servo command`, `Setting servo …`) are compiled out.
+- **Logging:** a serial monitor on the master (`pio device monitor -e metro_s3`). For bench cases, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out.
 
 ## Parser (T-007): native coverage
 
@@ -106,7 +106,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 ### Bench preconditions
 
-- Firmware from a branch with T-009 on the master (and on the padawan for case 9), built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command`, `Queueing servo command`, `Setting servo …`) are compiled out. Monitor the master with `pio device monitor -e metro_s3`.
+- Firmware from a branch with T-009 on the master (and on the padawan for case 9), built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out. Monitor the master with `pio device monitor -e metro_s3`.
 - AstrOs.Server with its T-007, T-008 and T-009. Insert span rows by hand with the SQL shape in AstrOs.Server `.docs/qa/random-span-events.md` case 8 (GPIO span: `module_type 3`, `module_sub_type 301`; Maestro span: `module_type 1`, `module_sub_type 104`, data JSON with `channel`, gaps, positions, moves, speed and acceleration). Set `scripts.duration_ds` to the latest span end, and keep every span within `0 ≤ time < end_time ≤ 6000`. Deploy the script to the controllers, then run it.
 - Useful log lines (master console):
   - `Random span command val: 6|…` / `7|…`: the dispatch loop handed the span over
