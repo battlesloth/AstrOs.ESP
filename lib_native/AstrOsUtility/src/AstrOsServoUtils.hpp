@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <math.h>
+#include <string>
 
 /// @brief takes a microsecond value and frequency in micorsecond
 // and converts it to a step value for the PCA9685 based on the
@@ -73,14 +74,17 @@ inline void EncodeMaestroTarget(int us, uint8_t &lo, uint8_t &hi)
 // the 8th field of its config entry (.docs/protocol.md § D). It covers
 // full-speed moves and loads whose slew the Maestro speed model does not
 // describe (linear actuators run at their own rate regardless of the
-// commanded pulse ramp). The default is T-005's global floor (was 20 s in
-// T-001); the server sends values in the accepted range.
+// commanded pulse ramp). The default, 5 s, is T-005's global floor (20 s before
+// T-005). parseServoConfig accepts only MIN..MAX; anything else falls back to
+// the default with a warning, and ServoReleaseDeadlineMs clamps the same way.
 constexpr int MAESTRO_RELEASE_DEFAULT_MS = ASTROS_MAESTRO_RELEASE_DEFAULT_MS;
 constexpr int MAESTRO_RELEASE_MIN_MS = 1000;
 constexpr int MAESTRO_RELEASE_MAX_MS = 120000;
 static_assert(MAESTRO_RELEASE_MIN_MS <= MAESTRO_RELEASE_DEFAULT_MS &&
                   MAESTRO_RELEASE_DEFAULT_MS <= MAESTRO_RELEASE_MAX_MS,
               "the default release time must be in the accepted range");
+static_assert(servo_channel{}.releaseMs == MAESTRO_RELEASE_DEFAULT_MS,
+              "a {}-initialized servo_channel must carry the default release time, never 0 ms");
 
 // Proportional margin on the modelled travel time (T-005). The guard range
 // already gives 1.5x on distance; this covers everything else that scales
@@ -116,11 +120,29 @@ int WorstCaseTravelMs(int speed, int acceleration);
 
 /// @brief The release deadline CheckServos uses: the greater of the
 /// channel's floor and the physical worst case (WorstCaseTravelMs) plus
-/// MAESTRO_RELEASE_MARGIN_PERCENT, ceiling. The floor is never a cap.
+/// MAESTRO_RELEASE_MARGIN_PERCENT, ceiling. The floor is never a cap. A floor
+/// outside MAESTRO_RELEASE_MIN_MS..MAX_MS (e.g. 0 from a memset struct) is
+/// replaced by MAESTRO_RELEASE_DEFAULT_MS, as the parser does.
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
 /// @param floorMs the channel's release time (servo_channel::releaseMs)
 /// @return deadline in milliseconds
 int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs);
+
+/// @brief After a config reload: which channels to send an off to. A channel
+/// energized before the reload (`wasEnergized` bit set) that homing didn't
+/// re-arm (`on` false) — because the new config disabled it, or homing failed —
+/// is otherwise never released. An enabled digital channel is left alone:
+/// homing already set its level, and an off frame would undo it.
+/// @param wasEnergized bit i set if channel i was an energized servo before the reload
+/// @param channels the channels after the reload and HomeServos
+/// @param count number of channels (at most 32)
+/// @return bit i set for each channel to send an off to
+uint32_t ChannelsToReleaseAfterReload(uint32_t wasEnergized, const servo_channel *channels, int count);
+
+/// @brief The release times a module applied, for one INFO line after a config
+/// load: enabled servo channels whose release time isn't the default, e.g.
+/// "ch1 15000 ms; others 5000 ms", or "all 5000 ms (default)".
+std::string FormatReleaseTimes(const servo_channel *channels, int count);
 
 #endif

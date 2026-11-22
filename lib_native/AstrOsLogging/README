@@ -19,7 +19,8 @@ null pointers, so `astros_log_*` calls become no-ops on the native host.
 
 On-target code wires the logger through the ESP adapter in
 `lib/AstrOsUtility_ESP/include/AstrOsLoggerEsp.h` (`makeEspLogger()`), which
-forwards each level to `esp_log_writev()`.
+formats each message into a 256 B buffer (truncating longer ones) and logs it
+through the matching `ESP_LOGx` macro (standard `W (ms) TAG:` framing).
 
 Preferred error-channel pattern
 -------------------------------

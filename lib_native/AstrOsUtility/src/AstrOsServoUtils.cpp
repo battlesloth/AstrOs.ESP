@@ -110,7 +110,47 @@ int WorstCaseTravelMs(int speed, int acceleration)
 
 int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs)
 {
+    if (floorMs < MAESTRO_RELEASE_MIN_MS || floorMs > MAESTRO_RELEASE_MAX_MS)
+    {
+        floorMs = MAESTRO_RELEASE_DEFAULT_MS;
+    }
     int travel = WorstCaseTravelMs(speed, acceleration);
     int withMargin = travel + CeilDiv(travel * MAESTRO_RELEASE_MARGIN_PERCENT, 100);
     return std::max(withMargin, floorMs);
+}
+
+uint32_t ChannelsToReleaseAfterReload(uint32_t wasEnergized, const servo_channel *channels, int count)
+{
+    uint32_t release = 0;
+    for (int i = 0; i < count && i < 32; i++)
+    {
+        bool enabledDigital = channels[i].enabled && !channels[i].isServo;
+        if ((wasEnergized & (1u << i)) && !channels[i].on && !enabledDigital)
+        {
+            release |= 1u << i;
+        }
+    }
+    return release;
+}
+
+std::string FormatReleaseTimes(const servo_channel *channels, int count)
+{
+    std::string listed;
+    for (int i = 0; i < count; i++)
+    {
+        if (!channels[i].enabled || !channels[i].isServo || channels[i].releaseMs == MAESTRO_RELEASE_DEFAULT_MS)
+        {
+            continue;
+        }
+        if (!listed.empty())
+        {
+            listed += ", ";
+        }
+        listed += "ch" + std::to_string(i) + " " + std::to_string(channels[i].releaseMs) + " ms";
+    }
+    if (listed.empty())
+    {
+        return "all " + std::to_string(MAESTRO_RELEASE_DEFAULT_MS) + " ms (default)";
+    }
+    return listed + "; others " + std::to_string(MAESTRO_RELEASE_DEFAULT_MS) + " ms";
 }

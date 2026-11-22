@@ -29,6 +29,12 @@
 - **The SD file is unchanged:** it holds the entry string exactly as received, and it is re-parsed at boot and on reload.
 - **Unchanged:** panic, digital channels (never released), `MaestroChannelSnapshot` (random spans don't use the release time), `VERSION` (stays 1.3.0).
 
+**Amended 2026-11-22 (Jeff, from the pre-push review):**
+- **A reload releases what it no longer tracks.** `LoadConfig` records which servo channels were energized before the copy (the copy resets `on`). After `HomeServos`, it sends an off to each one that homing didn't re-arm, whether the new config disabled it or homing failed. Enabled digital channels are left alone, because homing set their level. The selection is the pure `ChannelsToReleaseAfterReload` (`AstrOsServoUtils`).
+  - Before this, a channel a reload disabled while it was energized stayed powered until a power-cycle. T-010's holds of up to 120 s make that likelier.
+- **`ServoReleaseDeadlineMs` clamps an out-of-range floor.** A floor outside 1000–120000 (for example 0 from a memset struct) uses the default.
+  - The rule is still max(floor, travel + 10 %) for every value in range.
+
 ## Task
 
 - **`parseServoConfig`** (`lib_native/AstrOsUtility/src/AstrOsFileUtils.hpp`):
@@ -51,22 +57,22 @@
 
 ## Acceptance criteria
 
-- [ ] `test/test_native/astros_file_utils_tests.cpp` covers:
+- [x] `test/test_native/astros_file_utils_tests.cpp` covers:
   - 7 fields → 5000
   - 8 fields `…:15000` → 15000
   - 8th field `abc`, `999` or `120001` → kept, 5000, with one warning through a test logger
   - 9 fields → kept, the 9th ignored
   - 6 fields → dropped
   - a mix of entries → max id and parsed set agree
-- [ ] `test/test_native/astros_servo_utils_tests.cpp` covers:
+- [x] `test/test_native/astros_servo_utils_tests.cpp` covers:
   - `ServoReleaseDeadlineMs(0, 0, 15000) == 15000`
   - `ServoReleaseDeadlineMs(5, 0, 5000) == 26400` (24000 travel + 10 %)
   - `ServoReleaseDeadlineMs(5, 0, 30000) == 30000`
   - the default constant is 5000
-- [ ] Mutation checks: dropping the 7-field default makes a test fail, and so does using the floor as a cap (`min`).
-- [ ] A default-constructed `servo_channel` and `MaestroModule::channels` read 5000; covered natively where possible.
-- [ ] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build.
-- [ ] Bench (human-gated, joint with AstrOs.Server T-014): the new `maestro-servo-release.md` cases pass.
+- [x] Mutation checks: dropping the 7-field default makes a test fail, and so does using the floor as a cap (`min`).
+- [x] A default-constructed `servo_channel` and `MaestroModule::channels` read 5000; covered natively where possible.
+- [x] `pio test -e test` green; `pio run -e lolin_d32_pro` and `pio run -e metro_s3` build.
+- [ ] Bench (human-gated, joint with AstrOs.Server T-014): the new `maestro-servo-release.md` cases pass, including case 23 (amendment).
 
 ## Out of scope
 
@@ -99,7 +105,7 @@
 
 Fresh-context review of the uncommitted diff. 0 Critical, 2 Important, both fixed.
 
-- **Fixed (Important):** `makeEspLogger` forwarded to `esp_log_writev`, which "adds no formatting" (ESP-IDF 5.5 `esp_log_write.h`). On target the warning would have printed with no `W (…) tag:` prefix and no newline, glued onto the next line. T-010 is its first caller.
+- **Fixed (Important):** `makeEspLogger` forwarded to `esp_log_writev`, which "adds no formatting" (ESP-IDF 5.5 `esp_log_write.h`: it "does not add any formatting elements such as color, timestamp, or tag"). On target the warning would have printed with no `W (…) tag:` prefix and no newline, glued onto the next line. T-010 is its first caller.
   - **Ruling:** fix the adapter in `lib/AstrOsUtility_ESP`, although that lib isn't in the Task list. Each level now formats into a 256 B buffer and logs it through `ESP_LOGx`.
   - Why: the header promises "the normal ESP-IDF logging pipeline", and the task's warning can't be correct without it.
   - Not native-testable (ESP-IDF); bench case 22 checks it.
@@ -113,8 +119,40 @@ Fresh-context review of the uncommitted diff. 0 Critical, 2 Important, both fixe
   - A `static_assert` keeps the default inside the range.
   - The "zero-initialized" wording now says `{}`-initialized, not memset.
   - QA case 22 says reboot only (`RELOAD_CONFIG` comes only from a deploy, which rewrites the SD file).
-  - Stale QA lines: the two-argument deadline, the `MAESTRO_RELEASE_FLOOR_MS` knob, and the intro.
+  - Stale QA lines: the two-argument deadline, the `MAESTRO_RELEASE_FLOOR_MS` knob, and the intro. (The pre-push review found more fixed-floor phrasing; fixed there, see below.)
 - **Ruling (minor 6):** the max-id pass and the parse pass share the structural check (`splitServoEntry`) but not the numeric one. A bad required field still counts toward the vector size and leaves a disabled default slot, exactly as 1.2.x did.
   - Why: moving the numeric parse into the max-id pass would change 1.2.x behavior for no user gain.
   - Cost if wrong: an entry with a bad required field and id ≥ 24 still makes `loadMaestroServos` reject the file, as before.
-- **Accepted (minor 9):** release-time warnings are logged while `LoadConfig` holds `stateMutex`. That's ~8 ms per line, and only for a bad config on the reload path, which already tolerates dropped commands.
+- **Superseded by the pre-push review:** release-time warnings were logged while `LoadConfig` holds `stateMutex`. That's ~8 ms per line, and only for a bad config on the boot or reload path, which already tolerates dropped commands.
+
+## Pre-push review notes (2026-11-22)
+
+`/pr-review-toolkit:review-pr` (five agents) found nothing Critical. The branch merges cleanly with T-011, and the merged tree builds both ways. Changes, each mutation-checked where it is code:
+
+- **Jeff's amendments** (above): the reload-release path (case 23) and the floor clamp. Tested: `ChannelsToReleaseAfterReloadPicksEnergizedChannelsHomingDidNotRearm`, `ServoReleaseDeadlineMsClampsAnOutOfRangeFloorToTheDefault`.
+- **Ruling: one summary warning per kind per parse, not one per channel.**
+  - The kinds are bad release values (up to four listed, each cut to 20 characters), dropped entries, and entries with more than 8 fields.
+  - Why: LoadConfig parses under `stateMutex`. A server bug emitting `…:0:` for all 24 channels would have meant 24 lines (~290 ms) under the lock, dropping script commands.
+  - The exact texts are pinned by tests, and QA case 22 quotes the framed line.
+  - Dropped entries and extra fields used to pass silently. A lost `|` that merges two entries now warns.
+  - Cost if wrong: an operator sees "ch N 'v'" for at most four channels per line.
+- **Ruling: one INFO line per config load,** `Maestro module M release times: ch1 15000 ms; others 5000 ms` (pure `FormatReleaseTimes`). It shows what a board applied, which a log-only padawan otherwise can't (case 21).
+- **Smaller changes:**
+  - `parseReleaseMs` returns `std::optional<int>`, and a blank entry after a final `|` is ignored.
+  - A `static_assert` on `servo_channel{}.releaseMs`.
+  - The adapter skips formatting for compiled-out levels.
+- **New tests:** `…:0:0`, bad-8th-plus-9th, trailing space or tab, an over-long value, and the full warning texts.
+- **QA:**
+  - cases 18 and 19 say accel 0
+  - case 18 is marked as the only per-channel discriminator
+  - case 20 times from `Homing Servos`
+  - case 17 names the RX line
+  - a verbose-build precondition for after T-011
+  - reset ch1 after case 19
+  - the remaining fixed-floor phrasing, and the tuning-knob note (the server always sends field 8)
+- **Docs:** the logger API comments (`AstrOsLogger.hpp`, `README`) now describe the formatting adapter. The `CheckServos` comment path and attribution are corrected, along with the "comes due together" claim.
+- **Rejected:** a claim that `NvsManager.c` uses `servo_channel` in live C code. Lines 249–416 are inside a comment block.
+- **Backlog** (pre-existing; ESP PLAN.md):
+  - SD save and read don't check their errors (`fwrite`/`fclose`, `ferror`).
+  - A testable `CheckServos` helper.
+  - A CI guard for the T-011 grep.

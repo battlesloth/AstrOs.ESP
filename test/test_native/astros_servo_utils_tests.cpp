@@ -214,7 +214,7 @@ TEST(ServoUtils, EncodeMaestroTargetScalesToQuarterMicroseconds)
 
 // T-010: MaestroModule holds `servo_channel channels[24] = {};`. A
 // `{}`-initialized channel must release on the 5 s default, never on a 0 ms floor.
-TEST(ServoUtils, AZeroInitializedChannelArrayReadsTheDefaultReleaseTime)
+TEST(ServoUtils, ABraceInitializedChannelArrayReadsTheDefaultReleaseTime)
 {
     servo_channel channels[3] = {};
     for (const auto &ch : channels)
@@ -222,4 +222,63 @@ TEST(ServoUtils, AZeroInitializedChannelArrayReadsTheDefaultReleaseTime)
         EXPECT_EQ(MAESTRO_RELEASE_DEFAULT_MS, ch.releaseMs);
         EXPECT_EQ(5000, ch.releaseMs);
     }
+}
+
+// T-010 amendment (Jeff): an out-of-range floor (a memset struct, a future
+// writer) falls back to the default instead of releasing at the model alone.
+TEST(ServoUtils, ServoReleaseDeadlineMsClampsAnOutOfRangeFloorToTheDefault)
+{
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 0));      // model 519: would release at ~0.5 s
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 999));    // just below MIN
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 120001)); // just above MAX
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, -1));
+    EXPECT_EQ(120000, ServoReleaseDeadlineMs(0, 0, 120000)); // MAX itself is in range
+}
+
+namespace
+{
+    servo_channel channel(bool enabled, bool isServo, bool on)
+    {
+        servo_channel ch = {};
+        ch.enabled = enabled;
+        ch.isServo = isServo;
+        ch.on = on;
+        return ch;
+    }
+} // namespace
+
+// T-010 amendment (Jeff): after a reload, a servo left energized but no longer
+// tracked (disabled by the new config, or not re-armed because homing failed)
+// must be sent an off, or it stays powered until power-cycle.
+TEST(ServoUtils, ChannelsToReleaseAfterReloadPicksEnergizedChannelsHomingDidNotRearm)
+{
+    servo_channel channels[6] = {
+        channel(false, true, false), // 0: was energized, now disabled -> release
+        channel(true, true, true),   // 1: was energized, homing re-armed it -> keep
+        channel(true, true, false),  // 2: was energized, homing failed to re-arm -> release
+        channel(true, false, false), // 3: was energized, now an enabled digital output -> keep (homing set its level)
+        channel(false, true, false), // 4: not energized before -> nothing to do
+        channel(false, false, false) // 5: was energized, now disabled digital -> release
+    };
+    uint32_t wasEnergized = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
+    EXPECT_EQ((1u << 0) | (1u << 2) | (1u << 5), ChannelsToReleaseAfterReload(wasEnergized, channels, 6));
+    EXPECT_EQ(0u, ChannelsToReleaseAfterReload(0, channels, 6));
+}
+
+// T-010: one INFO line per module shows the release times a board applied, so
+// a log-only padawan can prove what it parsed (QA case 21).
+TEST(ServoUtils, FormatReleaseTimesListsEnabledServosOffTheDefault)
+{
+    servo_channel channels[4] = {};
+    channels[0] = channel(true, true, false);
+    channels[1] = channel(true, true, false);
+    channels[1].releaseMs = 15000;
+    channels[2] = channel(true, false, false); // digital: never released, not listed
+    channels[2].releaseMs = 30000;
+    channels[3] = channel(false, true, false); // disabled: not listed
+    channels[3].releaseMs = 30000;
+    EXPECT_EQ("ch1 15000 ms; others 5000 ms", FormatReleaseTimes(channels, 4));
+
+    servo_channel defaults[2] = {channel(true, true, false), channel(true, true, false)};
+    EXPECT_EQ("all 5000 ms (default)", FormatReleaseTimes(defaults, 2));
 }

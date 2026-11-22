@@ -88,8 +88,8 @@ extern "C"
         bool on;
         // Minimum ms the channel stays powered after a move (T-010). C++ code
         // (every user of this struct) gets the default for any `{}`- or
-        // default-initialized channel (not a memset one), so a channel never
-        // means 0 ms; C sees the same layout.
+        // default-initialized channel, never 0 ms (a memset one reads 0, and
+        // ServoReleaseDeadlineMs then clamps it to the default); C sees the same layout.
         int releaseMs
 #ifdef __cplusplus
             = ASTROS_MAESTRO_RELEASE_DEFAULT_MS

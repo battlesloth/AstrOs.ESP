@@ -5,10 +5,12 @@
 
 namespace
 {
-    // esp_log_writev takes a fully formatted line and adds no level, timestamp,
-    // tag or newline, so format into a bounded buffer first, then log it through
-    // the ESP_LOGx macros, which add the standard "W (ms) TAG: … \n" framing
-    // (T-010 is the first caller). Longer messages are truncated.
+    // esp_log_writev adds no level letter, timestamp, tag or newline
+    // (esp_log_write.h), and the ESP_LOGx macros that do add them take varargs,
+    // not a va_list. So each level formats into a LOG_LINE_MAX stack buffer and
+    // logs it with ESP_LOGx(tag, "%s", buf); longer messages are truncated.
+    // Verbose and debug are compiled out at CONFIG_LOG_MAXIMUM_LEVEL=3, so those
+    // two return before formatting.
     constexpr size_t LOG_LINE_MAX = 256;
 
     void format(char (&buf)[LOG_LINE_MAX], const char *fmt, va_list args)
@@ -18,6 +20,10 @@ namespace
 
     void espLogVerbose(const char *tag, const char *fmt, va_list args)
     {
+        if (LOG_LOCAL_LEVEL < ESP_LOG_VERBOSE)
+        {
+            return;
+        }
         char buf[LOG_LINE_MAX];
         format(buf, fmt, args);
         ESP_LOGV(tag, "%s", buf);
@@ -25,6 +31,10 @@ namespace
 
     void espLogDebug(const char *tag, const char *fmt, va_list args)
     {
+        if (LOG_LOCAL_LEVEL < ESP_LOG_DEBUG)
+        {
+            return;
+        }
         char buf[LOG_LINE_MAX];
         format(buf, fmt, args);
         ESP_LOGD(tag, "%s", buf);

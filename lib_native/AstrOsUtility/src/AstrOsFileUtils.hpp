@@ -11,6 +11,7 @@
 #include <climits>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -96,19 +97,64 @@ private:
 
     // The 8th field: a whole number of ms in MAESTRO_RELEASE_MIN_MS..MAX_MS,
     // digits only (safeStoi tolerates trailing characters; this must not).
-    static bool parseReleaseMs(const std::string &field, int &result)
+    // Returns nothing on a bad value, so a caller can't store a partial or 0.
+    static std::optional<int> parseReleaseMs(const std::string &field)
     {
         if (field.empty() || !std::all_of(field.begin(), field.end(), [](unsigned char c) { return std::isdigit(c); }))
         {
-            return false;
+            return std::nullopt;
         }
         int value = 0;
         if (!safeStoi(field, value) || value < MAESTRO_RELEASE_MIN_MS || value > MAESTRO_RELEASE_MAX_MS)
         {
-            return false;
+            return std::nullopt;
         }
-        result = value;
-        return true;
+        return value;
+    }
+
+    static bool isBlank(const std::string &entry)
+    {
+        return std::all_of(entry.begin(), entry.end(), [](unsigned char c) { return std::isspace(c); });
+    }
+
+    // At most one warning per kind per parse: LoadConfig parses under stateMutex,
+    // so a whole module of bad entries must cost a few console lines, not one per
+    // channel (~10 ms each at 115200 baud). Bad values are listed up to 4, each
+    // cut to 20 characters, to stay inside the ESP logger's 256 B line.
+    static void reportServoConfigProblems(const AstrOsLogger &logger,
+                                          const std::vector<std::pair<int, std::string>> &badRelease, int dropped,
+                                          int extraFields)
+    {
+        if (!badRelease.empty())
+        {
+            std::string list;
+            for (size_t i = 0; i < badRelease.size() && i < 4; i++)
+            {
+                if (!list.empty())
+                {
+                    list += ", ";
+                }
+                list += "ch " + std::to_string(badRelease[i].first) + " '" + badRelease[i].second.substr(0, 20) + "'";
+            }
+            if (badRelease.size() > 4)
+            {
+                list += " (+" + std::to_string(badRelease.size() - 4) + " more)";
+            }
+            astros_log_warn(logger, "AstrOsFileUtils",
+                            "Maestro channels with an invalid release time (accepted %d-%d ms), using %d ms: %s",
+                            MAESTRO_RELEASE_MIN_MS, MAESTRO_RELEASE_MAX_MS, MAESTRO_RELEASE_DEFAULT_MS, list.c_str());
+        }
+        if (dropped > 0)
+        {
+            astros_log_warn(logger, "AstrOsFileUtils",
+                            "Maestro channel entries dropped (fewer than 7 fields or a bad required field): %d",
+                            dropped);
+        }
+        if (extraFields > 0)
+        {
+            astros_log_warn(logger, "AstrOsFileUtils",
+                            "Maestro channel entries with more than 8 fields (extra fields ignored): %d", extraFields);
+        }
     }
 
 public:
@@ -185,11 +231,21 @@ public:
         // Pre-allocate vector with default servo_channels
         std::vector<servo_channel> channels(maxId + 1);
 
+        std::vector<std::pair<int, std::string>> badRelease;
+        int dropped = 0;
+        int extraFields = 0;
+
         for (const auto &cfig : cfigs)
         {
+            if (isBlank(cfig)) // e.g. a final newline after the last '|'
+            {
+                continue;
+            }
+
             std::vector<std::string> parts;
             if (!splitServoEntry(cfig, parts))
             {
+                dropped++;
                 continue;
             }
 
@@ -203,12 +259,14 @@ public:
                 !safeStoi(parts[3], ch.minPos) || !safeStoi(parts[4], ch.maxPos) || !safeStoi(parts[5], home) ||
                 !safeStoi(parts[6], inverted))
             {
+                dropped++;
                 continue;
             }
 
             // Validate id is within bounds
             if (ch.id < 0 || ch.id > maxId)
             {
+                dropped++;
                 continue;
             }
 
@@ -227,13 +285,21 @@ public:
                 ch.home = ch.minPos > home ? ch.minPos : std::clamp(home, ch.minPos, ch.maxPos);
             }
 
-            // ch.releaseMs starts at the struct default; parseReleaseMs writes only on success.
-            if (parts.size() >= 8 && !parseReleaseMs(parts[7], ch.releaseMs))
+            // ch.releaseMs starts at the struct default.
+            if (parts.size() > 8)
             {
-                astros_log_warn(logger, "AstrOsFileUtils",
-                                "Maestro channel %d: release time '%s' is not a whole number in %d-%d ms, using %d ms",
-                                ch.id, parts[7].c_str(), MAESTRO_RELEASE_MIN_MS, MAESTRO_RELEASE_MAX_MS,
-                                MAESTRO_RELEASE_DEFAULT_MS);
+                extraFields++;
+            }
+            if (parts.size() >= 8)
+            {
+                if (auto releaseMs = parseReleaseMs(parts[7]))
+                {
+                    ch.releaseMs = *releaseMs;
+                }
+                else
+                {
+                    badRelease.emplace_back(ch.id, parts[7]);
+                }
             }
 
             ch.currentPos = ch.minPos;
@@ -247,6 +313,7 @@ public:
             channels[ch.id] = ch;
         }
 
+        reportServoConfigProblems(logger, badRelease, dropped, extraFields);
         return channels;
     }
 };

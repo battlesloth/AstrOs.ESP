@@ -26,7 +26,7 @@ The shutdown timer checks every 300 ms and counts its first tick after a command
 300 ms, so observed release lands between deadline − 300 ms and deadline + one tick, plus a
 small late drift (measured 2026-09-06 on the old 20 s floor: 19.81–20.04 s).
 
-Reference deadlines (max of 5 s and model + 10 %):
+Reference deadlines for a channel at the default release time (max of 5 s and model + 10 %):
 
 | speed / accel | model | deadline | note |
 |---|---|---|---|
@@ -99,11 +99,11 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
    - Expected: servo moves; `Turning off servo N` ~5.3 s after the slider message (was ~20.3 s
      before T-005); servo free by hand. Pre-T-001 (third pass) the slider path never armed
      tracking, so a released servo stayed energized indefinitely after a slider move. **On linear actuators:** the
-     stroke must complete well before release — if it is cut short, that is the tuning signal
-     for the floor / per-channel setting (PLAN.md Backlog).
+     stroke must complete well before release — if it is cut short, that is the signal to raise
+     that channel's release time (case 17; `.docs/protocol.md` § D).
 
 2b. **Continuous slider drag (noisy stream)**
-   - Drag the slider back and forth for ~30 s (well past the 5 s floor), then stop.
+   - Drag the slider back and forth for ~30 s (well past the channel's release time), then stop.
    - Expected: no `Turning off servo N` for that channel during the drag — every message
      resets the clock; exactly one `Turning off servo N` ~5.3 s after the *last* slider
      message; no per-message log lines from `MaestroModule` during the drag (only the
@@ -283,36 +283,44 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 - AstrOs.Server with its T-014, which sends `releaseMs` as the 8th channel field (`.docs/protocol.md` § D). Set the values by SQL (`UPDATE maestro_channels SET release_ms = 15000 WHERE id = '<channel id>'`) until its T-015 UI lands.
 - **Flash every controller with a T-010 build before the first sync.** A `1.3.0-dev` build without T-010 passes the server's gate, drops 8-field entries, and loses its Maestro channels until reflashed.
 - Master console captured (`pio device monitor -e metro_s3`, or a timestamping logger).
+- Firmware built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` once T-011 is in it, so `Queueing servo command` is logged (cases 17–21 time releases from it). The boot line reads `Verbose command logs: on`.
+- Every config load logs `Maestro module M release times: …` (e.g. `ch1 15000 ms; others 5000 ms`), the release times the board applied.
+- After case 19, reset ch1 to 5000 (`UPDATE maestro_channels SET release_ms = 5000 …`) and sync: cases 1–16 assume default channels.
 
 17. **A channel's own release time** (T-010)
-   - Set Right Pan (ch1) to 15000, sync, and run a scripted move at speed 0.
-   - Expected: `Turning off servo 1 on module 1` ~15 s after the move's `Queueing servo command`, not at 5 s. The master log's `DEPLOY_CONFIG` entry for ch1 ends `…:15000`.
+   - Set Right Pan (ch1) to 15000, sync, and run a scripted move at speed 0, accel 0.
+   - Expected: after the sync, `Maestro module 1 release times: ch1 15000 ms; others 5000 ms`; then `Turning off servo 1 on module 1` ~15 s after the move's `Queueing servo command`, not at 5 s. The config's entry for ch1 ends `…:15000` in the `AstrOs RX: Read N bytes: '…'` line.
 
 18. **Default channel unchanged** (T-010)
-   - With ch1 at 15000, run a speed-0 move on ch6 (left at the default 5000).
-   - Expected: ch6 releases ~5 s after its move, as in case 1.
+   - With ch1 at 15000, run a speed-0, accel-0 move on ch6 (left at the default 5000).
+   - Expected: ch6 releases ~5 s after its move, as in case 1. This is the only case that tells a per-channel time from a single global one: don't skip it.
 
 19. **Travel beyond the release time** (T-010)
-   - Set ch1 to 10000 and run a speed-5 move (models 24000 ms + 10 %).
+   - Set ch1 to 10000 and run a speed-5, accel-0 move (models 24000 ms + 10 %; accel would change the number).
    - Expected: the release comes ~26.4 s after the move: the model wins over a smaller setting, and the setting is never a cap.
 
 20. **1.2.x SD files after the OTA update** (T-010)
    - On a board synced under 1.2.x (7-field `/sdcard/maestro/<idx>.cfg`), flash 1.3.0 over OTA and **do not sync**.
-   - Expected: it boots, loads every Maestro channel, homes them, and releases at 5 s, the same as before the flash.
+   - Expected: it boots, loads every Maestro channel (`Maestro module M release times: all 5000 ms (default)`), homes them, and releases them ~5 s after `Homing Servos` (an OTA image is a normal build, so time from that line), the same as before the flash.
 
 21. **Padawan** (T-010; log-only works: a Maestro configured with nothing attached)
    - Repeat case 17 on a padawan's channel.
-   - Expected: the padawan's console shows the release ~15 s after the move.
+   - Expected: the padawan's console shows `Maestro module M release times: ch… 15000 ms; …` after the sync, and the release ~15 s after the move.
 
 22. **A bad release field keeps the channel** (T-010)
    - Hand-edit a channel entry's 8th field on the SD card to `abc` (or `999`), then reboot. (Not `RELOAD_CONFIG`: the only path that sends it, a config deploy, rewrites the SD file first.)
-   - Expected: one warning, `Maestro channel <id>: release time 'abc' is not a whole number in 1000-120000 ms, using 5000 ms`. The channel stays enabled and releases at 5 s.
-   - An entry with more than 8 fields keeps its channel, with the extras ignored.
+   - Expected: one warning on its own line, `W (<ms>) AstrOsFileUtils: Maestro channels with an invalid release time (accepted 1000-120000 ms), using 5000 ms: ch <id> 'abc'`. The `W (…) AstrOsFileUtils:` prefix and the line break are the logger-adapter fix. Several bad channels share that one line (up to four listed, then `(+N more)`). The channel stays enabled and releases at 5 s.
+   - An entry with more than 8 fields keeps its channel, with the extras ignored and one `Maestro channel entries with more than 8 fields (extra fields ignored): N` warning.
+
+23. **A reload releases a servo it no longer tracks** (T-010, amended; Jeff)
+   - Set ch1 to 30000 and run a move, so ch1 stays energized for 30 s. Within those 30 s, disable ch1 on the server and sync.
+   - Expected: after `Homing Servos`, `LoadConfig: module 1 sent offs to channels 0x000002 left energized by the reload`, and the servo goes limp at once. Before T-010 (and with any channel that was energized when a reload disabled it), it stayed powered until a power-cycle.
+   - Re-enable ch1 and reset it to 5000 afterwards.
 
 ## Edge cases / negative tests
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
-  inputs are clamped; servo releases at the floor (~5 s).
+  inputs are clamped; servo releases at the channel's release time (~5 s by default).
 - **Panic with a wedged serial path** (T-004; hard to provoke): if the module's send mutex
   cannot be taken within ~2.2 s the monitor shows `Panic: send mutex timeout on module M - offs
   NOT sent` at ERROR and no off frames go out — the serial path could not have delivered them
@@ -336,7 +344,9 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 - **Tuning knob** is the per-channel release time (T-010), set on the server and sent as the
   channel entry's 8th field (`.docs/protocol.md` § D). Its default comes from
   `ASTROS_MAESTRO_RELEASE_DEFAULT_MS` (`AstrOsStructs.h`), and its range and margin from
-  `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp`. Do not hand-edit deadlines elsewhere.
+  `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp`. The firmware default only applies to a
+  7-field entry or a rejected value: the server always sends field 8 (its column defaults to 5000),
+  so changing the firmware default doesn't change synced channels. Do not hand-edit deadlines elsewhere.
 - **Command during config reload** (T-003): send a *script* move while a `RELOAD_CONFIG` is in
   progress. Expected: either the move applies normally or the monitor shows
   `QueueCommand: state mutex timeout, dropping command for channel N on module M` — a dropped

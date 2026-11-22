@@ -109,10 +109,24 @@ void MaestroModule::LoadConfig()
     // `loading` guard in SetServoPosition; a script command waits up to
     // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN; Panic waits
     // the same and then sends its offs from an unlocked read of `enabled`.
+    // The copy below resets `on` for every parsed channel, so remember which
+    // servos were energized: one the new config disables, or that homing fails
+    // to re-arm, is otherwise never released (T-010).
+    uint32_t wasEnergized = 0;
+    std::string releaseTimes;
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
+        for (size_t i = 0; i < 24; i++)
+        {
+            if (channels[i].isServo && channels[i].on)
+            {
+                wasEnergized |= 1u << i;
+            }
+        }
         AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
+        releaseTimes = FormatReleaseTimes(channels, 24);
         xSemaphoreGive(this->stateMutex);
+        ESP_LOGI(TAG, "Maestro module %d release times: %s", this->idx, releaseTimes.c_str());
     }
     else
     {
@@ -121,8 +135,57 @@ void MaestroModule::LoadConfig()
     }
 
     this->HomeServos();
+    this->releaseUntrackedServos(wasEnergized);
 
     this->loading = false;
+}
+
+void MaestroModule::releaseUntrackedServos(uint32_t wasEnergized)
+{
+    if (wasEnergized == 0)
+    {
+        return;
+    }
+
+    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG,
+                 "LoadConfig: state mutex timeout on module %d, servos energized before the reload (0x%06lx) may stay "
+                 "powered",
+                 this->idx, static_cast<unsigned long>(wasEnergized));
+        return;
+    }
+    uint32_t release = ChannelsToReleaseAfterReload(wasEnergized, channels, 24);
+    xSemaphoreGive(this->stateMutex);
+
+    if (release == 0)
+    {
+        return;
+    }
+
+    if (!this->takeSendMutex())
+    {
+        ESP_LOGE(TAG, "LoadConfig: send mutex timeout on module %d, channels 0x%06lx left powered", this->idx,
+                 static_cast<unsigned long>(release));
+        return;
+    }
+    int failed = 0;
+    for (size_t i = 0; i < 24; i++)
+    {
+        if ((release & (1u << i)) && this->setServoOff(i, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS)) != EnqueueResult::Queued)
+        {
+            failed++;
+        }
+    }
+    xSemaphoreGive(this->mutex);
+
+    ESP_LOGI(TAG, "LoadConfig: module %d sent offs to channels 0x%06lx left energized by the reload", this->idx,
+             static_cast<unsigned long>(release));
+    if (failed > 0)
+    {
+        ESP_LOGE(TAG, "LoadConfig: module %d: %d off(s) not queued, those channels may stay powered", this->idx,
+                 failed);
+    }
 }
 
 void MaestroModule::QueueCommand(uint8_t *cmd)
@@ -501,9 +564,9 @@ void MaestroModule::HomeServos()
 /// enough time to cover its entire range (worst case, with slack).
 /// While a move is active, currentPos serves as the elapsed-ms
 /// accumulator; the deadline comes from ServoReleaseDeadlineMs
-/// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp): the physical
+/// (lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp): the physical
 /// worst case for the channel's speed/accel plus 10 %, or the channel's own
-/// release time (releaseMs, 5 s by default; T-010), whichever is greater (T-005).
+/// release time (releaseMs, 5 s by default), whichever is greater (T-005, T-010).
 ///
 /// Runs on the esp_timer task, so nothing here may block: stateMutex and
 /// the send mutex are try-taken with zero wait and the off frame is
@@ -512,7 +575,7 @@ void MaestroModule::HomeServos()
 /// stateMutex so a new command cannot land its target between them.
 /// Outcomes are logged only after stateMutex is released: a console line
 /// is a multi-ms blocking write, and every channel homed together comes
-/// due on the same tick (they share the default 5 s floor), so logging inside
+/// due on the same tick when they share a release time (all of them, at the default), so logging inside
 /// the lock would hold it past the command paths' 50 ms wait.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)

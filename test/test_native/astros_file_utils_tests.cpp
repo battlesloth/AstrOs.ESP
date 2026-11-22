@@ -76,37 +76,41 @@ TEST(FileUtils, ParseServoConfig)
     EXPECT_FALSE(channels[2].on);
 }
 
-// T-010: the 8th channel field is releaseMs (.docs/protocol.md § D).
+// T-010: the 8th channel field is releaseMs (.docs/protocol.md § D). Problems
+// are reported as at most one summary warning per kind per parse, so a whole
+// module of bad entries costs a few console lines, not one per channel.
 namespace
 {
-    int g_releaseWarnings = 0;
-    std::string g_lastReleaseWarning;
+    std::vector<std::string> g_warnings;
 
-    void captureReleaseWarning(const char *, const char *fmt, va_list args)
+    void captureWarning(const char *, const char *fmt, va_list args)
     {
-        char buf[256];
+        char buf[512];
         vsnprintf(buf, sizeof(buf), fmt, args);
-        g_releaseWarnings++;
-        g_lastReleaseWarning = buf;
+        g_warnings.push_back(buf);
     }
 
-    AstrOsLogger releaseWarningCapture()
+    AstrOsLogger warningCapture()
     {
-        g_releaseWarnings = 0;
-        g_lastReleaseWarning.clear();
+        g_warnings.clear();
         AstrOsLogger logger;
-        logger.warn = captureReleaseWarning;
+        logger.warn = captureWarning;
         return logger;
     }
+
+    const char *BAD_RELEASE_PREFIX =
+        "Maestro channels with an invalid release time (accepted 1000-120000 ms), using 5000 ms: ";
 } // namespace
 
 TEST(FileUtils, ParseServoConfigDefaultsReleaseTimeForSevenFields)
 {
     // Break: a 1.2.x SD file (7 fields) losing its 5 s floor on a 1.3.0 board.
-    auto channels = AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0|1:1:0:1000:2000:1250:1|");
+    auto logger = warningCapture();
+    auto channels = AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0|1:1:0:1000:2000:1250:1|", logger);
     ASSERT_EQ(2u, channels.size());
     EXPECT_EQ(5000, channels[0].releaseMs);
     EXPECT_EQ(5000, channels[1].releaseMs);
+    EXPECT_TRUE(g_warnings.empty());
 }
 
 TEST(FileUtils, ParseServoConfigReadsTheEighthFieldAsReleaseTime)
@@ -121,11 +125,12 @@ TEST(FileUtils, ParseServoConfigReadsTheEighthFieldAsReleaseTime)
     EXPECT_TRUE(channels[2].inverted);
 }
 
-TEST(FileUtils, ParseServoConfigKeepsAChannelWithABadReleaseTime)
+TEST(FileUtils, ParseServoConfigKeepsChannelsWithABadReleaseTimeAndWarnsOnce)
 {
     // Break: a bad optional field deleting the channel (a typo would make it
-    // silently stop working) instead of falling back to the default.
-    auto logger = releaseWarningCapture();
+    // silently stop working) instead of falling back to the default; or one
+    // console line per channel while LoadConfig holds stateMutex.
+    auto logger = warningCapture();
     auto channels = AstrOsFileUtils::parseServoConfig(
         "0:1:1:500:2500:1500:0:abc|1:1:1:500:2500:1500:0:999|2:1:1:500:2500:1500:0:120001|"
         "3:1:1:500:2500:1500:0:15000x",
@@ -137,71 +142,95 @@ TEST(FileUtils, ParseServoConfigKeepsAChannelWithABadReleaseTime)
         EXPECT_TRUE(channels[i].enabled);
         EXPECT_EQ(5000, channels[i].releaseMs);
     }
-    EXPECT_EQ(4, g_releaseWarnings);
-    EXPECT_NE(std::string::npos, g_lastReleaseWarning.find("channel 3")) << g_lastReleaseWarning;
+    ASSERT_EQ(1u, g_warnings.size());
+    EXPECT_EQ(std::string(BAD_RELEASE_PREFIX) + "ch 0 'abc', ch 1 '999', ch 2 '120001', ch 3 '15000x'", g_warnings[0]);
+}
+
+TEST(FileUtils, ParseServoConfigListsAtMostFourBadReleaseTimes)
+{
+    auto logger = warningCapture();
+    AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:0|1:1:1:500:2500:1500:0:0|2:1:1:500:2500:1500:0:0|"
+                                      "3:1:1:500:2500:1500:0:0|4:1:1:500:2500:1500:0:0|5:1:1:500:2500:1500:0:0",
+                                      logger);
+    ASSERT_EQ(1u, g_warnings.size());
+    EXPECT_EQ(std::string(BAD_RELEASE_PREFIX) + "ch 0 '0', ch 1 '0', ch 2 '0', ch 3 '0' (+2 more)", g_warnings[0]);
+}
+
+TEST(FileUtils, ParseServoConfigTruncatesALongBadValueInTheWarning)
+{
+    auto logger = warningCapture();
+    AstrOsFileUtils::parseServoConfig("4:1:1:500:2500:1500:0:aaaaaaaaaabbbbbbbbbbcccccccccc", logger);
+    ASSERT_EQ(1u, g_warnings.size());
+    EXPECT_EQ(std::string(BAD_RELEASE_PREFIX) + "ch 4 'aaaaaaaaaabbbbbbbbbb'", g_warnings[0]);
 }
 
 TEST(FileUtils, ParseServoConfigWarnsOnAnEmptyEighthField)
 {
     // Break: "…:0:" (what a server mapping bug that drops releaseMs emits, since
     // JS joins undefined as '') defaulting silently, so the setting never applies.
-    auto logger = releaseWarningCapture();
+    auto logger = warningCapture();
     auto channels = AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:|1:1:1:500:2500:1500:0:\n", logger);
     ASSERT_EQ(2u, channels.size());
     EXPECT_TRUE(channels[0].enabled);
     EXPECT_EQ(5000, channels[0].releaseMs);
     EXPECT_EQ(5000, channels[1].releaseMs);
-    EXPECT_EQ(2, g_releaseWarnings);
+    ASSERT_EQ(1u, g_warnings.size());
+    EXPECT_EQ(std::string(BAD_RELEASE_PREFIX) + "ch 0 '', ch 1 ''", g_warnings[0]);
 }
 
 TEST(FileUtils, ParseServoConfigToleratesTrailingWhitespace)
 {
-    // Break: a hand-edited SD file saved with a final newline (vim, nano) losing
-    // its last channel's release time; 1.2.x tolerated trailing whitespace.
-    auto logger = releaseWarningCapture();
+    // Break: a hand-edited SD file saved with a final newline (LF or CRLF) or a
+    // stray space or tab losing its last channel's release time; 1.2.x
+    // tolerated trailing whitespace. A blank entry after a final '|' is ignored.
+    auto logger = warningCapture();
     auto channels =
-        AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:15000|1:1:1:500:2500:1500:0:7000\r\n", logger);
+        AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:15000 \t|1:1:1:500:2500:1500:0:7000\r\n|\n", logger);
     ASSERT_EQ(2u, channels.size());
     EXPECT_EQ(15000, channels[0].releaseMs);
     EXPECT_EQ(7000, channels[1].releaseMs);
-    EXPECT_EQ(0, g_releaseWarnings);
+    EXPECT_TRUE(g_warnings.empty());
 }
 
-TEST(FileUtils, ParseServoConfigNamesTheBadValueInTheWarning)
+TEST(FileUtils, ParseServoConfigIgnoresFieldsAfterTheEighthWithOneWarning)
 {
-    auto logger = releaseWarningCapture();
-    AstrOsFileUtils::parseServoConfig("4:1:1:500:2500:1500:0:999", logger);
-    EXPECT_EQ(1, g_releaseWarnings);
-    EXPECT_NE(std::string::npos, g_lastReleaseWarning.find("channel 4")) << g_lastReleaseWarning;
-    EXPECT_NE(std::string::npos, g_lastReleaseWarning.find("999")) << g_lastReleaseWarning;
-}
-
-TEST(FileUtils, ParseServoConfigIgnoresFieldsAfterTheEighth)
-{
-    // Break: a future 9th field wiping channels on 1.3.0, as an 8th does on 1.2.x.
-    auto channels = AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:15000:99|1:1:1:500:2500:1500:0:7000:x:y");
-    ASSERT_EQ(2u, channels.size());
+    // Break: a future 9th field wiping channels on 1.3.0, as an 8th does on
+    // 1.2.x; or a merged entry (a lost '|') passing silently.
+    auto logger = warningCapture();
+    auto channels = AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500:0:15000:99|1:1:1:500:2500:1500:0:7000:x:y|"
+                                                      "2:1:1:500:2500:1500:0:abc:99",
+                                                      logger);
+    ASSERT_EQ(3u, channels.size());
     EXPECT_EQ(15000, channels[0].releaseMs);
     EXPECT_EQ(7000, channels[1].releaseMs);
     EXPECT_TRUE(channels[1].enabled);
+    EXPECT_EQ(5000, channels[2].releaseMs);
+    ASSERT_EQ(2u, g_warnings.size());
+    EXPECT_EQ(std::string(BAD_RELEASE_PREFIX) + "ch 2 'abc'", g_warnings[0]);
+    EXPECT_EQ("Maestro channel entries with more than 8 fields (extra fields ignored): 3", g_warnings[1]);
 }
 
-TEST(FileUtils, ParseServoConfigStillDropsShortOrBadRequiredEntries)
+TEST(FileUtils, ParseServoConfigStillDropsShortOrBadRequiredEntriesAndCountsThem)
 {
     // 6 fields (id 0) and a bad minPos (id 2) are dropped as before; id 1 parses.
-    auto channels =
-        AstrOsFileUtils::parseServoConfig("0:1:1:500:2500:1500|1:1:1:500:2500:1500:0:15000|2:1:1:x:2500:1500:0:5000");
+    auto logger = warningCapture();
+    auto channels = AstrOsFileUtils::parseServoConfig(
+        "0:1:1:500:2500:1500|1:1:1:500:2500:1500:0:15000|2:1:1:x:2500:1500:0:5000", logger);
     ASSERT_EQ(3u, channels.size()); // max id 2: a bad required field still counts toward the size
     EXPECT_FALSE(channels[0].enabled);
     EXPECT_EQ(5000, channels[0].releaseMs); // dropped slots keep the default, never 0 ms
     EXPECT_EQ(15000, channels[1].releaseMs);
     EXPECT_FALSE(channels[2].enabled);
     EXPECT_EQ(5000, channels[2].releaseMs);
+    ASSERT_EQ(1u, g_warnings.size());
+    EXPECT_EQ("Maestro channel entries dropped (fewer than 7 fields or a bad required field): 2", g_warnings[0]);
 }
 
 TEST(FileUtils, ParseServoConfigCountsAChannelWithABadReleaseTimeTowardTheSize)
 {
-    // Break: the max-id pass and the parse pass disagreeing on validity.
+    // Break: the max-id pass and the parse pass disagreeing on structural
+    // validity (splitServoEntry): a short entry sizing the vector, or an entry
+    // the max-id pass counted being rejected later for its shape.
     auto channels = AstrOsFileUtils::parseServoConfig("5:1:1:500:2500:1500:0:abc|7:1:1:500");
     ASSERT_EQ(6u, channels.size());
     EXPECT_TRUE(channels[5].enabled);
