@@ -86,4 +86,11 @@
 
 ## Implementation checklist
 
-<!-- Added when work starts. -->
+- [ ] RED → GREEN: `ServoReleaseDeadlineMs(speed, accel, floorMs)` tests in `astros_servo_utils_tests.cpp`; new signature + `MAESTRO_RELEASE_{DEFAULT,MIN,MAX}_MS`; existing two-argument tests moved to the default floor; `CheckServos` passes `channels[i].releaseMs`
+- [ ] RED → GREEN: `parseServoConfig` cases in `astros_file_utils_tests.cpp` (7 / 8 / bad 8th with a capturing test logger / 9 / 6 fields, mixed max id); `servo_channel.releaseMs` with the default; shared per-entry helper; `AstrOsLogger` parameter
+- [ ] `loadMaestroServos` passes `makeEspLogger()`; `MaestroModule::channels` default reads 5000
+- [ ] Comment sweep: `git grep -n "5 s floor\|MAESTRO_RELEASE_FLOOR"`
+- [ ] Mutation checks: drop the 7-field default; floor as a cap (`min`)
+- [ ] `pio test -e test`; both boards build; clang-format on touched files
+- [ ] QA plan `maestro-servo-release.md` cases; code review
+- [ ] Bench (joint with AstrOs.Server T-014, human-gated)
