@@ -86,11 +86,35 @@
 
 ## Implementation checklist
 
-- [ ] RED → GREEN: `ServoReleaseDeadlineMs(speed, accel, floorMs)` tests in `astros_servo_utils_tests.cpp`; new signature + `MAESTRO_RELEASE_{DEFAULT,MIN,MAX}_MS`; existing two-argument tests moved to the default floor; `CheckServos` passes `channels[i].releaseMs`
-- [ ] RED → GREEN: `parseServoConfig` cases in `astros_file_utils_tests.cpp` (7 / 8 / bad 8th with a capturing test logger / 9 / 6 fields, mixed max id); `servo_channel.releaseMs` with the default; shared per-entry helper; `AstrOsLogger` parameter
-- [ ] `loadMaestroServos` passes `makeEspLogger()`; `MaestroModule::channels` default reads 5000
-- [ ] Comment sweep: `git grep -n "5 s floor\|MAESTRO_RELEASE_FLOOR"`
-- [ ] Mutation checks: drop the 7-field default; floor as a cap (`min`)
-- [ ] `pio test -e test`; both boards build; clang-format on touched files
-- [ ] QA plan `maestro-servo-release.md` cases; code review
+- [x] RED → GREEN: `ServoReleaseDeadlineMs(speed, accel, floorMs)` tests in `astros_servo_utils_tests.cpp`; new signature + `MAESTRO_RELEASE_{DEFAULT,MIN,MAX}_MS`; existing two-argument tests moved to the default floor; `CheckServos` passes `channels[i].releaseMs`
+- [x] RED → GREEN: `parseServoConfig` cases in `astros_file_utils_tests.cpp` (7 / 8 / bad 8th with a capturing test logger / 9 / 6 fields, mixed max id); `servo_channel.releaseMs` with the default; shared per-entry helper; `AstrOsLogger` parameter
+- [x] `loadMaestroServos` passes `makeEspLogger()`; `MaestroModule::channels` default reads 5000 (native test on the same `{}` form)
+- [x] Comment sweep: `git grep -n "5 s floor\|MAESTRO_RELEASE_FLOOR"`
+- [x] Mutation checks: require 8 fields; no struct default; floor as a cap (`min`); no trailing-colon rule; no whitespace trim — each fails its tests
+- [x] `pio test -e test` 623/623; both boards build; clang-format 18.1.8 clean on touched files
+- [x] QA plan `maestro-servo-release.md` cases 17–22; code review (see Review notes)
 - [ ] Bench (joint with AstrOs.Server T-014, human-gated)
+
+## Review notes (2026-11-22)
+
+Fresh-context review of the uncommitted diff. 0 Critical, 2 Important, both fixed.
+
+- **Fixed (Important):** `makeEspLogger` forwarded to `esp_log_writev`, which "adds no formatting" (ESP-IDF 5.5 `esp_log_write.h`). On target the warning would have printed with no `W (…) tag:` prefix and no newline, glued onto the next line. T-010 is its first caller.
+  - **Ruling:** fix the adapter in `lib/AstrOsUtility_ESP`, although that lib isn't in the Task list. Each level now formats into a 256 B buffer and logs it through `ESP_LOGx`.
+  - Why: the header promises "the normal ESP-IDF logging pipeline", and the task's warning can't be correct without it.
+  - Not native-testable (ESP-IDF); bench case 22 checks it.
+  - Cost if wrong: another caller relying on the raw form. There is none.
+- **Fixed (Important):** an entry ending in `:` (an empty 8th field) now warns.
+  - This overturns the earlier ruling that it parses as 7 fields silently: a server mapping bug that drops `releaseMs` emits `…:0:` (JS `join` turns `undefined` into `''`), which is the spec's "setting silently doesn't apply" anti-goal.
+  - `splitServoEntry` restores the empty part `splitString` drops.
+- **Fixed (minor):**
+  - Trailing whitespace is trimmed, so a hand-edited file's final newline no longer rejects the last channel's release time; 1.2.x tolerated it.
+  - The redundant `ch.releaseMs = DEFAULT` is removed (the struct default covers it).
+  - A `static_assert` keeps the default inside the range.
+  - The "zero-initialized" wording now says `{}`-initialized, not memset.
+  - QA case 22 says reboot only (`RELOAD_CONFIG` comes only from a deploy, which rewrites the SD file).
+  - Stale QA lines: the two-argument deadline, the `MAESTRO_RELEASE_FLOOR_MS` knob, and the intro.
+- **Ruling (minor 6):** the max-id pass and the parse pass share the structural check (`splitServoEntry`) but not the numeric one. A bad required field still counts toward the vector size and leaves a disabled default slot, exactly as 1.2.x did.
+  - Why: moving the numeric parse into the max-id pass would change 1.2.x behavior for no user gain.
+  - Cost if wrong: an entry with a bad required field and id ≥ 24 still makes `loadMaestroServos` reject the file, as before.
+- **Accepted (minor 9):** release-time warnings are logged while `LoadConfig` holds `stateMutex`. That's ~8 ms per line, and only for a bad config on the reload path, which already tolerates dropped commands.

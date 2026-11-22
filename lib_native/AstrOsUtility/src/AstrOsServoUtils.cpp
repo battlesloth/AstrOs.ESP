@@ -108,9 +108,9 @@ int WorstCaseTravelMs(int speed, int acceleration)
     return CeilSqrt(CeilDiv(38400000, acceleration));
 }
 
-int ServoReleaseDeadlineMs(int speed, int acceleration)
+int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs)
 {
     int travel = WorstCaseTravelMs(speed, acceleration);
     int withMargin = travel + CeilDiv(travel * MAESTRO_RELEASE_MARGIN_PERCENT, 100);
-    return std::max(withMargin, MAESTRO_RELEASE_FLOOR_MS);
+    return std::max(withMargin, floorMs);
 }

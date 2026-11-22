@@ -4,7 +4,7 @@ Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001)
 per-instance channel state that backs it (T-002), the locking between the shutdown timer
 and the command paths (T-003), panic stop reaching the Maestro (T-004), and the other half
 of the lifecycle — re-energizing a released servo where it is so the next scripted move
-honours speed/accel (T-006, cases 12–16).
+honours speed/accel (T-006, cases 12–16), and the per-channel release time (T-010, cases 17–22).
 
 Re-energize (T-006): a released servo has no position as far as the Maestro is concerned, so
 it jumps straight to the first target it receives. Every scripted move therefore sends a
@@ -14,8 +14,9 @@ target. Pre-T-006 that frame went out in raw µs where the Maestro expects quart
 home position; since T-006 both target frames share one encoder and `lastPos` is the last
 target sent on that channel (script or slider). GPIO-type channels get no pre-position frame.
 
-Deadline model (T-005): `ServoReleaseDeadlineMs(speed, accel)` = max(5 s floor, `WorstCaseTravelMs`
-+ 10 %). Before T-005 it was max(model, 20 s).
+Deadline model: `ServoReleaseDeadlineMs(speed, accel, releaseMs)` = max(the channel's release time,
+`WorstCaseTravelMs` + 10 %). The release time is per channel since T-010 (5 s by default, the T-005
+floor); before T-005 the floor was 20 s.
 `WorstCaseTravelMs` is the physical trapezoid over the 0–3000 µs guard range using true
 Maestro units: cruise = 120000 / speed ms (speed 0 → 255); accel adds a ramp of
 80 × speed / accel ms (accel is speed-units per 80 ms, **not** a speed cap); when the cap is
@@ -276,6 +277,38 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
      preceded by a LOW frame; with the encoder fix that would have become a HIGH blip for any
      channel whose configured min was ≥ 1500 µs, so the frame is no longer sent.
 
+### Per-channel release time (T-010)
+
+**Preconditions:**
+- AstrOs.Server with its T-014, which sends `releaseMs` as the 8th channel field (`.docs/protocol.md` § D). Set the values by SQL (`UPDATE maestro_channels SET release_ms = 15000 WHERE id = '<channel id>'`) until its T-015 UI lands.
+- **Flash every controller with a T-010 build before the first sync.** A `1.3.0-dev` build without T-010 passes the server's gate, drops 8-field entries, and loses its Maestro channels until reflashed.
+- Master console captured (`pio device monitor -e metro_s3`, or a timestamping logger).
+
+17. **A channel's own release time** (T-010)
+   - Set Right Pan (ch1) to 15000, sync, and run a scripted move at speed 0.
+   - Expected: `Turning off servo 1 on module 1` ~15 s after the move's `Queueing servo command`, not at 5 s. The master log's `DEPLOY_CONFIG` entry for ch1 ends `…:15000`.
+
+18. **Default channel unchanged** (T-010)
+   - With ch1 at 15000, run a speed-0 move on ch6 (left at the default 5000).
+   - Expected: ch6 releases ~5 s after its move, as in case 1.
+
+19. **Travel beyond the release time** (T-010)
+   - Set ch1 to 10000 and run a speed-5 move (models 24000 ms + 10 %).
+   - Expected: the release comes ~26.4 s after the move: the model wins over a smaller setting, and the setting is never a cap.
+
+20. **1.2.x SD files after the OTA update** (T-010)
+   - On a board synced under 1.2.x (7-field `/sdcard/maestro/<idx>.cfg`), flash 1.3.0 over OTA and **do not sync**.
+   - Expected: it boots, loads every Maestro channel, homes them, and releases at 5 s, the same as before the flash.
+
+21. **Padawan** (T-010; log-only works: a Maestro configured with nothing attached)
+   - Repeat case 17 on a padawan's channel.
+   - Expected: the padawan's console shows the release ~15 s after the move.
+
+22. **A bad release field keeps the channel** (T-010)
+   - Hand-edit a channel entry's 8th field on the SD card to `abc` (or `999`), then reboot. (Not `RELOAD_CONFIG`: the only path that sends it, a config deploy, rewrites the SD file first.)
+   - Expected: one warning, `Maestro channel <id>: release time 'abc' is not a whole number in 1000-120000 ms, using 5000 ms`. The channel stays enabled and releases at 5 s.
+   - An entry with more than 8 fields keeps its channel, with the extras ignored.
+
 ## Edge cases / negative tests
 
 - **Out-of-range speed/accel** (hand-crafted command with speed > 255 or negative):
@@ -300,8 +333,10 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   and the cast to the wire byte happens only after it passes.
 - **Servo commanded to its current position** (no physical motion): still releases
   on the same deadline — the model is time-based, not motion-based.
-- **Tuning knob** lives in `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp` only:
-  `MAESTRO_RELEASE_FLOOR_MS` (slow loads). Do not hand-edit deadlines elsewhere.
+- **Tuning knob** is the per-channel release time (T-010), set on the server and sent as the
+  channel entry's 8th field (`.docs/protocol.md` § D). Its default comes from
+  `ASTROS_MAESTRO_RELEASE_DEFAULT_MS` (`AstrOsStructs.h`), and its range and margin from
+  `lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp`. Do not hand-edit deadlines elsewhere.
 - **Command during config reload** (T-003): send a *script* move while a `RELOAD_CONFIG` is in
   progress. Expected: either the move applies normally or the monitor shows
   `QueueCommand: state mutex timeout, dropping command for channel N on module M` — a dropped

@@ -1,6 +1,8 @@
 #ifndef ASTROSFILEUTILS_H
 #define ASTROSFILEUTILS_H
 
+#include <AstrOsLogger.hpp>
+#include <AstrOsServoUtils.hpp>
 #include <AstrOsStringUtils.hpp>
 #include <AstrOsStructs.h>
 #include <algorithm>
@@ -59,6 +61,56 @@ private:
         return true;
     }
 
+    // One Maestro channel entry (.docs/protocol.md § D):
+    // id:enabled:isServo:minPos:maxPos:home:inverted[:releaseMs[:…]].
+    // Fewer than 7 fields, or an empty one among the first 7, drops the entry.
+    // Fields after the 8th are ignored (T-010), so a future field can't drop channels.
+    // Trailing whitespace is trimmed (a hand-edited file's final newline). A
+    // trailing ':' keeps its empty 8th field, which splitString would drop, so
+    // "…:0:" (a server that lost releaseMs) warns instead of defaulting silently.
+    static bool splitServoEntry(const std::string &entry, std::vector<std::string> &parts)
+    {
+        std::string trimmed = entry;
+        while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.back())))
+        {
+            trimmed.pop_back();
+        }
+        parts = AstrOsStringUtils::splitString(trimmed, ':');
+        if (!trimmed.empty() && trimmed.back() == ':')
+        {
+            parts.push_back("");
+        }
+        if (parts.size() < 7)
+        {
+            return false;
+        }
+        for (size_t i = 0; i < 7; i++)
+        {
+            if (parts[i].empty())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The 8th field: a whole number of ms in MAESTRO_RELEASE_MIN_MS..MAX_MS,
+    // digits only (safeStoi tolerates trailing characters; this must not).
+    static bool parseReleaseMs(const std::string &field, int &result)
+    {
+        if (field.empty() || !std::all_of(field.begin(), field.end(), [](unsigned char c) { return std::isdigit(c); }))
+        {
+            return false;
+        }
+        int value = 0;
+        if (!safeStoi(field, value) || value < MAESTRO_RELEASE_MIN_MS || value > MAESTRO_RELEASE_MAX_MS)
+        {
+            return false;
+        }
+        result = value;
+        return true;
+    }
+
 public:
     static std::vector<maestro_config> parseMaestroConfig(const std::string maestroFile)
     {
@@ -97,7 +149,8 @@ public:
         return configs;
     }
 
-    static std::vector<servo_channel> parseServoConfig(const std::string servoFile)
+    static std::vector<servo_channel> parseServoConfig(const std::string servoFile,
+                                                       const AstrOsLogger &logger = AstrOsLogger{})
     {
         auto cfigs = AstrOsStringUtils::splitString(servoFile, '|');
 
@@ -111,24 +164,8 @@ public:
         int maxId = 0;
         for (const auto &cfig : cfigs)
         {
-            auto parts = AstrOsStringUtils::splitString(cfig, ':');
-            if (parts.size() != 7) // must have 7 parts
-            {
-                continue;
-            }
-
-            // Check if any field is empty
-            bool hasEmptyField = false;
-            for (const auto &part : parts)
-            {
-                if (part.empty())
-                {
-                    hasEmptyField = true;
-                    break;
-                }
-            }
-
-            if (hasEmptyField)
+            std::vector<std::string> parts;
+            if (!splitServoEntry(cfig, parts))
             {
                 continue;
             }
@@ -150,24 +187,8 @@ public:
 
         for (const auto &cfig : cfigs)
         {
-            auto parts = AstrOsStringUtils::splitString(cfig, ':');
-            if (parts.size() != 7) // must have 7 parts
-            {
-                continue;
-            }
-
-            // Check if any field is empty
-            bool hasEmptyField = false;
-            for (const auto &part : parts)
-            {
-                if (part.empty())
-                {
-                    hasEmptyField = true;
-                    break;
-                }
-            }
-
-            if (hasEmptyField)
+            std::vector<std::string> parts;
+            if (!splitServoEntry(cfig, parts))
             {
                 continue;
             }
@@ -204,6 +225,15 @@ public:
             else
             {
                 ch.home = ch.minPos > home ? ch.minPos : std::clamp(home, ch.minPos, ch.maxPos);
+            }
+
+            // ch.releaseMs starts at the struct default; parseReleaseMs writes only on success.
+            if (parts.size() >= 8 && !parseReleaseMs(parts[7], ch.releaseMs))
+            {
+                astros_log_warn(logger, "AstrOsFileUtils",
+                                "Maestro channel %d: release time '%s' is not a whole number in %d-%d ms, using %d ms",
+                                ch.id, parts[7].c_str(), MAESTRO_RELEASE_MIN_MS, MAESTRO_RELEASE_MAX_MS,
+                                MAESTRO_RELEASE_DEFAULT_MS);
             }
 
             ch.currentPos = ch.minPos;

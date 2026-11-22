@@ -63,15 +63,12 @@ private:
     int idx;
     int baudRate;
 
-    // Per-instance channel state (config + release tracking). Zero-initialized
-    // at construction. LoadConfig() copies the parsed file over entries
-    // 0..maxId as whole structs (release tracking there is reset, then
-    // HomeServos() re-arms it); entries above the file's highest id -- and all
-    // entries if the file is missing or unparseable -- keep prior state on
-    // reload. Both run on the boot / RELOAD_CONFIG path. Written by
-    // QueueCommand and SetServoPosition on task context and by Panic() on
-    // interfaceResponseQueueTask (T-004); read-modify-written by
-    // CheckServos() on the esp_timer task.
+    // Per-instance channel state (config + release tracking). `{}`-initialized
+    // at construction (zeros, except releaseMs, which takes its 5 s default). LoadConfig() copies the parsed file over
+    // entries 0..maxId as whole structs (release tracking there is reset, then HomeServos() re-arms it); entries above
+    // the file's highest id -- and all entries if the file is missing or unparseable -- keep prior state on reload.
+    // Both run on the boot / RELOAD_CONFIG path. Written by QueueCommand and SetServoPosition on task context and by
+    // Panic() on interfaceResponseQueueTask (T-004); read-modify-written by CheckServos() on the esp_timer task.
     //
     // Locking (T-003): every access is under stateMutex. QueueCommand,
     // SetServoPosition and HomeServos each hold `mutex` (the send mutex) once

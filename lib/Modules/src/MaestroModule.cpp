@@ -251,8 +251,8 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     // Direct (slider) moves arrive as a stream at full speed. Arm release
     // tracking on every one, exactly as QueueCommand does: each re-arm just
     // resets the clock, so CheckServos turns the servo off one deadline (the
-    // 5 s floor at full speed) after the *last* message and never mid-drag. Deliberately no INFO log
-    // here -- it would spam the monitor at drag rate.
+    // channel's release time at full speed, 5 s by default) after the *last* message and never mid-drag. Deliberately
+    // no INFO log here -- it would spam the monitor at drag rate.
     int oldSpeed = channels[channel].speed;
     int oldAccel = channels[channel].acceleration;
 
@@ -502,8 +502,8 @@ void MaestroModule::HomeServos()
 /// While a move is active, currentPos serves as the elapsed-ms
 /// accumulator; the deadline comes from ServoReleaseDeadlineMs
 /// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp): the physical
-/// worst case for the channel's speed/accel plus 10 %, or a 5 s floor,
-/// whichever is greater (T-005).
+/// worst case for the channel's speed/accel plus 10 %, or the channel's own
+/// release time (releaseMs, 5 s by default; T-010), whichever is greater (T-005).
 ///
 /// Runs on the esp_timer task, so nothing here may block: stateMutex and
 /// the send mutex are try-taken with zero wait and the off frame is
@@ -512,7 +512,7 @@ void MaestroModule::HomeServos()
 /// stateMutex so a new command cannot land its target between them.
 /// Outcomes are logged only after stateMutex is released: a console line
 /// is a multi-ms blocking write, and every channel homed together comes
-/// due on the same tick (they all hit the 5 s floor), so logging inside
+/// due on the same tick (they share the default 5 s floor), so logging inside
 /// the lock would hold it past the command paths' 50 ms wait.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
@@ -535,7 +535,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
             continue;
         }
 
-        int deadline = ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration);
+        int deadline = ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration, channels[i].releaseMs);
 
         // Stop accumulating once due, so a wedged send path cannot overflow it.
         if (channels[i].currentPos < deadline)

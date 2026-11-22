@@ -139,31 +139,48 @@ TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
     EXPECT_EQ(551, WorstCaseTravelMs(999, 300)); // (255,255): 471 + 80
 }
 
-// Policy layer: the deadline CheckServos actually uses (T-005): the greater
-// of a 5 s floor and the physical model plus 10 % (ceiling).
+// Policy layer: the deadline CheckServos actually uses: the greater of the
+// channel's release floor (T-010; MAESTRO_RELEASE_DEFAULT_MS = 5 s, T-005's
+// floor) and the physical model plus 10 % (ceiling).
 TEST(ServoUtils, ServoReleaseDeadlineMsAppliesFloorWhenModelIsFaster)
 {
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0));    // model 471  -> 519
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(255, 44)); // model 935  -> 1029
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 5));    // model 2772 -> 3050
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, MAESTRO_RELEASE_DEFAULT_MS));    // model 471  -> 519
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(255, 44, MAESTRO_RELEASE_DEFAULT_MS)); // model 935  -> 1029
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 5, MAESTRO_RELEASE_DEFAULT_MS));    // model 2772 -> 3050
 }
 
 TEST(ServoUtils, ServoReleaseDeadlineMsAddsTenPercentWhenModelIsSlower)
 {
-    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0));  // 6000 + 600
-    EXPECT_EQ(7480, ServoReleaseDeadlineMs(20, 2));  // 6800 + 680 (the reported bug case)
-    EXPECT_EQ(13640, ServoReleaseDeadlineMs(10, 2)); // 12400 + 1240
-    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0));  // 24000 + 2400
-    EXPECT_EQ(26840, ServoReleaseDeadlineMs(5, 1));  // 24400 + 2440
-    EXPECT_EQ(132000, ServoReleaseDeadlineMs(1, 0)); // 120000 + 12000
+    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0, MAESTRO_RELEASE_DEFAULT_MS));  // 6000 + 600
+    EXPECT_EQ(7480, ServoReleaseDeadlineMs(20, 2, MAESTRO_RELEASE_DEFAULT_MS));  // 6800 + 680 (the reported bug case)
+    EXPECT_EQ(13640, ServoReleaseDeadlineMs(10, 2, MAESTRO_RELEASE_DEFAULT_MS)); // 12400 + 1240
+    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0, MAESTRO_RELEASE_DEFAULT_MS));  // 24000 + 2400
+    EXPECT_EQ(26840, ServoReleaseDeadlineMs(5, 1, MAESTRO_RELEASE_DEFAULT_MS));  // 24400 + 2440
+    EXPECT_EQ(132000, ServoReleaseDeadlineMs(1, 0, MAESTRO_RELEASE_DEFAULT_MS)); // 120000 + 12000
 }
 
 TEST(ServoUtils, ServoReleaseDeadlineMsMarginCeilsAndCrossesFloorNearFourAndAHalfSeconds)
 {
     // 10 % of 4382 is 438.2 -> 439; 4821 < 5000 so the floor wins
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 2)); // model 4382
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 2, MAESTRO_RELEASE_DEFAULT_MS)); // model 4382
     // speed 26 -> cruise ceil(120000/26) = 4616; +462 = 5078 > 5000 so the model wins
-    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0));
+    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0, MAESTRO_RELEASE_DEFAULT_MS));
+}
+
+// T-010: the floor is the channel's own release time. It is a floor, never a
+// cap: a slow move still gets its modeled travel plus 10 %.
+TEST(ServoUtils, ServoReleaseDeadlineMsUsesTheChannelFloorWhenItExceedsTheModel)
+{
+    EXPECT_EQ(15000, ServoReleaseDeadlineMs(0, 0, 15000)); // model 519: an actuator's 15 s wins
+    EXPECT_EQ(30000, ServoReleaseDeadlineMs(5, 0, 30000)); // model 26400 < 30000
+    EXPECT_EQ(1000, ServoReleaseDeadlineMs(0, 0, 1000));   // a floor below 5 s releases sooner
+}
+
+TEST(ServoUtils, ServoReleaseDeadlineMsKeepsTheModelWhenItExceedsTheChannelFloor)
+{
+    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0, 10000)); // 24000 + 2400 > 10000
+    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0, 6000));  // 6000 + 600 > 6000
+    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0, 1000));  // 4616 + 462 > 1000
 }
 
 // Maestro Set Target payload (T-006): the target is in quarter-microseconds,
@@ -193,4 +210,16 @@ TEST(ServoUtils, EncodeMaestroTargetScalesToQuarterMicroseconds)
     EncodeMaestroTarget(2500, lo, hi); // 10000
     EXPECT_EQ(0x10, lo);
     EXPECT_EQ(0x4E, hi);
+}
+
+// T-010: MaestroModule holds `servo_channel channels[24] = {};`. A
+// `{}`-initialized channel must release on the 5 s default, never on a 0 ms floor.
+TEST(ServoUtils, AZeroInitializedChannelArrayReadsTheDefaultReleaseTime)
+{
+    servo_channel channels[3] = {};
+    for (const auto &ch : channels)
+    {
+        EXPECT_EQ(MAESTRO_RELEASE_DEFAULT_MS, ch.releaseMs);
+        EXPECT_EQ(5000, ch.releaseMs);
+    }
 }

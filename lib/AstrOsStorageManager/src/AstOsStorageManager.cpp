@@ -1,3 +1,4 @@
+#include <AstrOsLoggerEsp.h>
 #include <AstrOsPathUtils.hpp>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
@@ -280,7 +281,7 @@ bool AstrOsStorageManager::loadMaestroServos(int idx, servo_channel *servos, int
         return false;
     }
 
-    std::vector<servo_channel> channels = AstrOsFileUtils::parseServoConfig(servoFile);
+    std::vector<servo_channel> channels = AstrOsFileUtils::parseServoConfig(servoFile, makeEspLogger());
 
     if (channels.size() > arraySize)
     {

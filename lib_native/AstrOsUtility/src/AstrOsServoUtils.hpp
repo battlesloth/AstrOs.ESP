@@ -1,6 +1,7 @@
 #ifndef ASTROSSERVOUTILS_H
 #define ASTROSSERVOUTILS_H
 
+#include <AstrOsStructs.h>
 #include <algorithm>
 #include <cstdint>
 #include <math.h>
@@ -68,12 +69,18 @@ inline void EncodeMaestroTarget(int us, uint8_t &lo, uint8_t &hi)
     hi = (quarterUs >> 7) & 0x7F;
 }
 
-// Floor on the release deadline: covers full-speed moves and loads whose
-// slew the Maestro speed model does not describe (linear actuators run at
-// their own rate regardless of the commanded pulse ramp). Was 20 s (T-001,
-// matching the old math's full-speed hold); 5 s since T-005. Stand-in until
-// a per-channel release setting exists.
-constexpr int MAESTRO_RELEASE_FLOOR_MS = 5000;
+// The release floor is per channel (T-010): the channel's releaseMs, sent as
+// the 8th field of its config entry (.docs/protocol.md § D). It covers
+// full-speed moves and loads whose slew the Maestro speed model does not
+// describe (linear actuators run at their own rate regardless of the
+// commanded pulse ramp). The default is T-005's global floor (was 20 s in
+// T-001); the server sends values in the accepted range.
+constexpr int MAESTRO_RELEASE_DEFAULT_MS = ASTROS_MAESTRO_RELEASE_DEFAULT_MS;
+constexpr int MAESTRO_RELEASE_MIN_MS = 1000;
+constexpr int MAESTRO_RELEASE_MAX_MS = 120000;
+static_assert(MAESTRO_RELEASE_MIN_MS <= MAESTRO_RELEASE_DEFAULT_MS &&
+                  MAESTRO_RELEASE_DEFAULT_MS <= MAESTRO_RELEASE_MAX_MS,
+              "the default release time must be in the accepted range");
 
 // Proportional margin on the modelled travel time (T-005). The guard range
 // already gives 1.5x on distance; this covers everything else that scales
@@ -107,12 +114,13 @@ constexpr int CeilDiv(int a, int b)
 /// @return worst-case travel in milliseconds
 int WorstCaseTravelMs(int speed, int acceleration);
 
-/// @brief The release deadline CheckServos uses: the greater of
-/// MAESTRO_RELEASE_FLOOR_MS and the physical worst case (WorstCaseTravelMs)
-/// plus MAESTRO_RELEASE_MARGIN_PERCENT, ceiling.
+/// @brief The release deadline CheckServos uses: the greater of the
+/// channel's floor and the physical worst case (WorstCaseTravelMs) plus
+/// MAESTRO_RELEASE_MARGIN_PERCENT, ceiling. The floor is never a cap.
 /// @param speed Maestro speed value (0-255)
 /// @param acceleration Maestro acceleration value (0-255)
+/// @param floorMs the channel's release time (servo_channel::releaseMs)
 /// @return deadline in milliseconds
-int ServoReleaseDeadlineMs(int speed, int acceleration);
+int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs);
 
 #endif
