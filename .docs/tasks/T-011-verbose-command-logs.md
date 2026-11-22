@@ -78,4 +78,10 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 
 ## Implementation checklist
 
-<!-- Added when work starts. -->
+- [ ] `lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h` with `ASTROS_LOG_CMD`; the nine sites switched (text unchanged); the acceptance grep returns nothing
+- [ ] Four builds (both boards × flag on/off) and `pio test -e test`; clang-format on touched files
+- [ ] `RandomSpanAdmission.hpp:133` drain comment corrected (numbers filled in after the bench)
+- [ ] QA plan preconditions (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`), CLAUDE.md monitoring note, PLAN.md Backlog strike
+- [ ] Code review
+- [ ] Bench, verbose build: case 11 as on 2026-11-22
+- [ ] Bench, production timing: flag-off build with a throwaway instrumentation commit (never merged), case 11 ×3; record the numbers in this file and in case 11
