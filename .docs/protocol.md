@@ -312,6 +312,44 @@ When extending this table, **append**. Never renumber.
   - A new span on the same channel replaces the old one.
   - Manual commands (`RUN_COMMAND`, `SERVO_TEST`) do not stop a span.
 
+## D. Module config (Server → ESP, inside `DEPLOY_CONFIG`)
+
+Added 2026-11-22 for per-channel servo release times (spec: AstrOs.Server `.docs/specs/20261122-0847-per-channel-servo-release-design.md`). The format before field 8 already existed and is documented here as it stands.
+
+### Grammar
+
+- One controller's config is one string: sections separated by `;`, and each section's parts separated by `@`. There is no trailing `;`. Every number is base 10.
+- The first part of a section is its module type number, which firmware reads as an integer. It must be numeric: a non-numeric type aborts on firmware built without exceptions.
+- **Unknown section types:** firmware skips a section whose type it doesn't know. Verified back to v1.2.0 (`saveModuleConfigs`, `default: break`).
+
+| Type | Section | Parts |
+|---|---|---|
+| 5 | onboard GPIO | `5@<level>\|<level>\|…`, one `0`/`1` per GPIO channel in channel order (`1` = default high; a disabled channel sends `0`) |
+| 1 | Maestro module | `1@<idx>:<uartChannel>:<baud>@<entry>\|<entry>\|…`, one section per Maestro module; `idx` is the module's id in script commands (§ C `maestroIdx`) |
+
+### Maestro channel entry
+
+`id:enabled:isServo:minPos:maxPos:home:inverted:releaseMs`
+
+| # | Field | Values |
+|---|---|---|
+| 1 | `id` | channel number, ≥ 0 |
+| 2 | `enabled` | `0` / `1` |
+| 3 | `isServo` | `1` servo, `0` digital |
+| 4–6 | `minPos`, `maxPos`, `home` | µs |
+| 7 | `inverted` | `0` / `1` |
+| 8 | `releaseMs` | the minimum time a servo channel stays powered after a move, in whole ms; the server sends 1000–120000; digital channels ignore it |
+
+- **Release rule:** a servo channel powers off at max(`releaseMs`, modeled travel + 10 %).
+- **Firmware ≥ 1.3.0:**
+  - Accepts 7 or more fields. With 7 fields, `releaseMs` is 5000.
+  - An 8th field that isn't a whole number in 1000–120000 keeps the channel, with `releaseMs` 5000 and a warning.
+  - Fields after the 8th are ignored, and the channel is kept.
+  - An entry with fewer than 7 fields, or a bad required field, is dropped, as before.
+- **Firmware < 1.3.0 drops every entry that doesn't have exactly 7 fields.** The server therefore sends config only to controllers reporting firmware ≥ 1.3.0 (its config-sync gate), and it always sends 8 fields.
+- Firmware stores the entries unchanged on the SD card (`/sdcard/maestro/<idx>.cfg`) and re-parses them at boot and on every config reload. A controller rolled back to 1.2.x after a 1.3.0 sync drops its Maestro channels until it is reflashed.
+- **Adding a field:** append it. A new field still needs the server to gate on the firmware version that understands it, so the setting isn't silently ignored.
+
 ## How to amend this document
 
 1. Edit the file in **both** repos in coordinated commits or PRs that reference each other.

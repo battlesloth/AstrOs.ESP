@@ -4,11 +4,11 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     no task in progress. T-009 complete 2026-11-22: bench cases 1–11 passed against AstrOs.Server develop (case 9 on the core padawan, log-only), and native tests, both boards and the QA plan were re-checked on develop 71e556a. The firmware side of random spans is done
-Next:    release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). The bench added three Backlog items: the master's 1 s serial read, per-command INFO logging slowing the queue tasks, and 16 B of heap lost per script run. All three are pre-existing and none blocks the release
-Blocked: none
-Last:    2026-11-22 — T-009 complete, bench passed; 2026-10-31 — T-009 merged (PR #65)
+Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010; plus T-011 (quieter per-command logs). Random span events' firmware side is done (T-007–T-009)
+Now:     no task in progress. v1.3.0 is held (Jeff, 2026-11-22): it ships random spans together with per-channel release times (T-010), which the v1.2.1 notes promised for 1.3, and T-011. Tasks authored 2026-11-22; protocol § D pinned in both repos
+Next:    T-010 (in parallel with AstrOs.Server T-012 → T-013 → T-014) → joint bench (T-010's cases with server T-014) → T-011 + its bench → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels)
+Blocked: v1.3.0 waits on T-010, T-011 and the joint bench
+Last:    2026-11-22 — T-009 complete, bench passed; v1.3.0 held for T-010 + T-011; 2026-10-31 — T-009 merged (PR #65)
 
 ## Random span events
 
@@ -17,6 +17,18 @@ Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · 
 - [x] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/completed/T-007-random-span-command-parsers.md`) — done 2026-10-22
 - [x] **T-008** — Random span math and span table (pure) (`.docs/tasks/completed/T-008-random-effects-math.md`) — done 2026-10-23
 - [x] **T-009** — Run random spans on the controller (`.docs/tasks/completed/T-009-random-effects-task.md`) — done 2026-11-22 (merged PR #65 2026-10-31; bench 2026-11-22)
+
+## Per-channel servo release time
+
+Spec: AstrOs.Server `.docs/specs/20261122-0847-per-channel-servo-release-design.md` (approved by Jeff, 2026-11-22) · wire format: `.docs/protocol.md` § D (identical in both repos) · server side: AstrOs.Server `PLAN.md` § Per-channel servo release time
+
+**What changes:**
+- Each Maestro servo channel releases at max(its own minimum on-time, modeled travel + 10 %). The default is 5 s (today's T-005 behavior), and the server's range is 1–120 s.
+- The server sends the value as an 8th channel-entry field, and refuses config sync to firmware below 1.3.0, which drops 8-field entries.
+
+**History:** this is the "per-channel release-time setting" that the 2026-09 Log entries and the T-001/T-005 task files point to. Its Backlog bullet was never written.
+
+- [ ] **T-010** — Release each Maestro servo channel on its own minimum time (`.docs/tasks/T-010-per-channel-release.md`) — bench joint with AstrOs.Server T-014
 
 ## main.cpp decomposition
 
@@ -38,6 +50,7 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
 - [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
 - [x] **T-006** — Re-energize released Maestro servos at their last commanded position (`.docs/tasks/completed/T-006-maestro-reenergize-at-last-position.md`) — done 2026-09-14
+- [ ] **T-011** — Log per-command lines only in verbose bench builds (`.docs/tasks/T-011-verbose-command-logs.md`) — before v1.3.0 (Jeff, 2026-11-22)
 
 ## Backlog (unscheduled candidates)
 
@@ -60,7 +73,7 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
   - Fix candidates: a short timeout (e.g. 20 ms), or the UART event queue / pattern detect on the command terminator. Keep the 8 KB command-buffer assembly, which already joins partial reads.
   - Re-measure QA `maestro-servo-release.md` case 7 after.
   - Found 2026-11-22 (T-009 bench).
-- **Per-command INFO logging slows the queue tasks.**
+- ~~**Per-command INFO logging slows the queue tasks.**~~ → T-011 (Jeff, 2026-11-22: behind a `-D ASTROS_VERBOSE_COMMANDS` bench flag).
   - Under QA case 11's load (five spans at 20–40 ms gaps) the console ran at ~81 % of 115200 baud (95 % in bursts). The queue tasks drained one message per ~20 ms (GPIO) and ~40 ms (servo) instead of the ~10 ms tick: `Queueing servo command` + `Setting servo …` alone are ~240 B (~21 ms) per servo command.
   - Effect: a scripted servo command waits up to ~400 ms behind the random half of `servoQueue`, and the dispatcher's own INFO lines slow same-time command bursts.
   - Candidates: DEBUG level for the per-command lines (`Setting servo`, `Queueing servo command`, `Sending Command`, the dispatch `… command val`), or a faster console baud.
