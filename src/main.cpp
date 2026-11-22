@@ -34,6 +34,7 @@
 #include <RandomEffectsController.hpp>
 #include <SerialModule.hpp>
 
+#include <AstrOsCommandLog.h>
 #include <AstrOsEspNow.h>
 #include <AstrOsInterfaceResponseMsg.hpp>
 #include <AstrOsNames.h>
@@ -279,6 +280,7 @@ void init(void)
 {
     ESP_LOGI(TAG, "init called");
     ESP_LOGI(TAG, "AstrOs.ESP version %s (sha: %s)", AstrOsConstants::Version, AstrOsConstants::GitSha);
+    ESP_LOGI(TAG, "Verbose command logs: %s", ASTROS_VERBOSE_COMMANDS_ENABLED ? "on" : "off");
 
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_POSEDGE; // Interrupt on rising edge
@@ -699,7 +701,7 @@ void animationDispatchTask(void *arg)
                 case MODULE_TYPE::KANGAROO:
                 case MODULE_TYPE::GENERIC_SERIAL:
                 {
-                    ESP_LOGI(TAG, "Serial command val: %s", val.c_str());
+                    ASTROS_LOG_CMD(TAG, "Serial command val: %s", val.c_str());
 
                     // replace any occurances of \n with actual new line character
                     std::string formatted;
@@ -758,7 +760,7 @@ void animationDispatchTask(void *arg)
                 }
                 case MODULE_TYPE::MAESTRO:
                 {
-                    ESP_LOGI(TAG, "Maestro command val: %s", val.c_str());
+                    ASTROS_LOG_CMD(TAG, "Maestro command val: %s", val.c_str());
                     queue_msg_t servoMsg;
                     servoMsg.message_id = module;
                     servoMsg.data = (uint8_t *)malloc(val.size() + 1);
@@ -780,7 +782,7 @@ void animationDispatchTask(void *arg)
                 }
                 case MODULE_TYPE::I2C:
                 {
-                    ESP_LOGI(TAG, "I2C command val: %s", val.c_str());
+                    ASTROS_LOG_CMD(TAG, "I2C command val: %s", val.c_str());
                     queue_msg_t i2cMsg;
                     i2cMsg.message_id = 0;
                     i2cMsg.data = (uint8_t *)malloc(val.size() + 1);
@@ -802,7 +804,7 @@ void animationDispatchTask(void *arg)
                 }
                 case MODULE_TYPE::GPIO:
                 {
-                    ESP_LOGI(TAG, "GPIO command val: %s", val.c_str());
+                    ASTROS_LOG_CMD(TAG, "GPIO command val: %s", val.c_str());
                     queue_msg_t gpioMsg;
                     gpioMsg.message_id = 0;
                     gpioMsg.data = (uint8_t *)malloc(val.size() + 1);
@@ -826,7 +828,7 @@ void animationDispatchTask(void *arg)
                 case MODULE_TYPE::GPIO_RANDOM:
                 {
                     // The script's delta applies as usual; Submit waits at most 100 ms.
-                    ESP_LOGI(TAG, "Random span command val: %s", val.c_str());
+                    ASTROS_LOG_CMD(TAG, "Random span command val: %s", val.c_str());
                     RandomEffectsCtrl.Submit(ct, val, fetchMs);
                     break;
                 }
@@ -1555,7 +1557,7 @@ void i2cQueueTask(void *arg)
                 ESP_LOGW(TAG, "I2C Queue Stack HWM: %d", highWaterMark);
             }
 
-            ESP_LOGI(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
+            ASTROS_LOG_CMD(TAG, "I2C Command received on queue => %d, %s", msg.message_id, msg.data);
 
             if (msg.message_id == 0)
             {

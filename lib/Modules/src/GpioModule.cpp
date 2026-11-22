@@ -1,4 +1,5 @@
 #include <AnimationCommands.hpp>
+#include <AstrOsCommandLog.h>
 #include <AstrOsUtility_ESP.h>
 #include <GpioModule.hpp>
 
@@ -93,7 +94,7 @@ void GpioModule::DefaultGpios()
 void GpioModule::SendCommand(uint8_t *cmd)
 {
     auto command = GpioCommand(std::string(reinterpret_cast<char *>(cmd)));
-    ESP_LOGI(TAG, "Sending Command => %s", cmd);
+    ASTROS_LOG_CMD(TAG, "Sending Command => %s", cmd);
 
     if (command.channel > this->gpioChannels.size())
     {

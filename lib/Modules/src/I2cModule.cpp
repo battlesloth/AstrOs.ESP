@@ -1,4 +1,5 @@
 #include <AnimationCommands.hpp>
+#include <AstrOsCommandLog.h>
 #include <AstrOsDisplay.hpp>
 #include <AstrOsUtility.h>
 #include <I2cModule.hpp>
@@ -52,7 +53,7 @@ void I2cModule::SendCommand(uint8_t *cmd)
 {
     auto command = I2cCommand(std::string(reinterpret_cast<char *>(cmd)));
 
-    ESP_LOGI(TAG, "Sending Command => %s", cmd);
+    ASTROS_LOG_CMD(TAG, "Sending Command => %s", cmd);
 
     I2cModule::write(command.channel, (uint8_t *)command.value.c_str(), command.value.size() + 1);
 }

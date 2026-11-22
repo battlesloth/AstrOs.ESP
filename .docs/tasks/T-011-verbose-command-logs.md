@@ -36,6 +36,10 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
   - `Queueing servo command =>` (~130)
   - `Setting servo …` (~200)
 
+**Amended 2026-11-22 (Jeff, from the code review):**
+- `src/main.cpp` `i2cQueueTask`'s `I2C Command received on queue =>` (~1559) is a tenth site. It was missed in authoring; its servo and GPIO siblings are already DEBUG.
+- Boot logs one INFO line, `Verbose command logs: on|off` (after the version line), so a bench console shows which build it is.
+
 **Stays INFO:** everything else, including `Random span started`, `Turning off servo`, panic, reload, heartbeat and `RAM left`.
 
 **Builds:**
@@ -54,7 +58,7 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 
 ## Acceptance criteria
 
-- [ ] The nine sites use `ASTROS_LOG_CMD`; `git grep -n 'ESP_LOGI(TAG, "\(Queueing servo command\|Setting servo\|Sending Command\|[A-Za-z ]*command val\)'` returns nothing.
+- [ ] The ten sites use `ASTROS_LOG_CMD`; `git grep -n 'ESP_LOGI(TAG, "\(Queueing servo command\|Setting servo\|Sending Command\|I2C Command received on queue\|[A-Za-z ]*command val\)' -- src lib ':!*.dep'` returns nothing. (Unscoped, it also matches `.docs/completed-plans/` and the retired, uncompiled `lib/Modules/src/ServoModule.cpp.dep`; both are left alone.)
 - [ ] Four builds pass: `lolin_d32_pro` and `metro_s3`, each with and without `-D ASTROS_VERBOSE_COMMANDS`.
 - [ ] `pio test -e test` green.
 - [ ] **Bench, verbose build:** QA case 11 shows every line it names, with results as on 2026-11-22.
@@ -78,10 +82,33 @@ Release builds log at INFO (`CONFIG_LOG_DEFAULT_LEVEL=3`), so a droid pays the s
 
 ## Implementation checklist
 
-- [ ] `lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h` with `ASTROS_LOG_CMD`; the nine sites switched (text unchanged); the acceptance grep returns nothing
-- [ ] Four builds (both boards × flag on/off) and `pio test -e test`; clang-format on touched files
+- [x] `lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h` with `ASTROS_LOG_CMD`; the ten sites switched (nine + the I2C queue line, amended) and the boot line (text unchanged); the acceptance grep returns nothing
+- [x] Four builds (both boards × flag on/off) and `pio test -e test` 611/611; clang-format clean
 - [ ] `RandomSpanAdmission.hpp:133` drain comment corrected (numbers filled in after the bench)
-- [ ] QA plan preconditions (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`), CLAUDE.md monitoring note, PLAN.md Backlog strike
-- [ ] Code review
+- [x] QA plan preconditions (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`), CLAUDE.md monitoring note, PLAN.md Backlog strike
+- [x] Code review (see Review notes)
 - [ ] Bench, verbose build: case 11 as on 2026-11-22
 - [ ] Bench, production timing: flag-off build with a throwaway instrumentation commit (never merged), case 11 ×3; record the numbers in this file and in case 11
+
+## Review notes (2026-11-22)
+
+Fresh-context review of the uncommitted diff.
+- **Confirmed from the built artifacts:**
+  - `PLATFORMIO_BUILD_FLAGS` appends to each env's `build_flags`, so the pin defines stay (PlatformIO 6.2 `getraw`), and the define reaches `lib/` as well as `src/`.
+  - With the flag off, all nine strings are absent from `firmware.elf`, while `Turning off servo` and `Random span started` remain.
+  - No file overrides `LOG_LOCAL_LEVEL`.
+- **Important 1 (Contract gap; Jeff amended the Contract):** `i2cQueueTask`'s `I2C Command received on queue` becomes a tenth site. Jeff also added a boot line, `Verbose command logs: on|off`.
+- **Important 2:** the executor's grep ruling was wrong. The unscoped grep also matches `.docs/completed-plans/`, so the acceptance grep is now scoped `-- src lib ':!*.dep'`.
+- **Minors fixed:**
+  - CLAUDE.md: the lib-table row, the Logging convention, the named QA plans, and "Sending Command (GPIO, I2C)"
+  - the header comment
+  - `code-review-phase-c.md`'s stale `ESP_LOGI` mention
+  - "built with" in the QA plans
+  - the include placement in `MaestroModule.cpp`
+  - case 11's verbose-build qualifier
+- **Not done:**
+  - A Windows/PowerShell note for `PLATFORMIO_BUILD_FLAGS` (it persists for the shell session), since bench work is on Linux.
+- **Backlog candidates from the review** (outside this task):
+  - Production error lines (`invalid GPIO channel`, `Send servo queue fail`) lost the context the preceding INFO line gave. Consider naming the command in the error line itself.
+  - `AstrOs RX Read %d bytes` is INFO per incoming server message.
+  - The `GpioModule::SendCommand` off-by-one is already in the Backlog.

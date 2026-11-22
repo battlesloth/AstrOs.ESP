@@ -39,6 +39,7 @@ Commands:
 pio run -e metro_s3                  # build firmware for metro_s3
 pio run -e metro_s3 -t upload        # build + flash
 pio device monitor -e metro_s3       # serial monitor (115200, esp32_exception_decoder)
+PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS" pio run -e metro_s3 -t upload  # bench build: per-command log lines (T-011)
 
 pio test -e test                     # run all native unit tests
 pio test -e test -f test_native      # run a specific test folder
@@ -46,6 +47,8 @@ pio test -e test --filter "*servo*"  # run tests matching a pattern
 ```
 
 Native tests require a host C++ toolchain. On Windows this is mingw-w64 via MSYS2 (see `README.md`); on Linux any recent g++ works. The `test` env pins `-std=gnu++2a`.
+
+Per-command log lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`) go through `ASTROS_LOG_CMD` (`lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h`): compiled out of normal builds (they throttled the queue tasks at 115200 baud), INFO in bench builds with `-D ASTROS_VERBOSE_COMMANDS`. The bench QA plans that read those lines (`random-span-events.md`, `maestro-servo-release.md`, `code-review-phase-c.md`) need the flag.
 
 There is no separate linter configured — rely on the compiler warnings emitted during `pio run`. Per-board `sdkconfig.<env>` files are committed; do not edit `sdkconfig` directly, edit the board-specific one.
 
@@ -79,7 +82,7 @@ Each lib is classified **PURE** (no ESP-IDF/FreeRTOS/driver includes; compiles u
 | `lib_native/AstrOsAnimationEngine` | PURE | Script parsing, script-ID circular queue (`ScriptQueue`), and event dispatch (`getNextCommand`). The pure orchestration logic behind `AnimationController`. |
 | `lib_native/AstrOsEspNowProtocol` | PURE | Decodes validated ESP-NOW packets into `HandlerResult { InterfaceMessage, diagnostic }` records. Dispatches by packet type and enforces role gating on master-vs-padawan-only types; peer-state-entangled handlers (registration, poll) remain in `AstrOsEspNow`. |
 | `lib_native/AstrOsEspNowPeers` | PURE | `PeerList` class wrapping the bounded peer vector with named operations (`add`, `contains`, `findByMac`, `resetPollCycle`, `markPollAckReceived`, `listUnacked`). Holds no locks — `AstrOsEspNow` wraps each call with `peersMutex`. Also owns the relocated `espnow_peer_t` struct (NVS wire format, shared with `NvsManager.c` via `espnow_peer.h`). |
-| `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`. |
+| `lib/AstrOsUtility_ESP` | MIXED | ESP-side helpers — `logError`, `makeEspLogger`, `ASTROS_LOG_CMD` (`AstrOsCommandLog.h`, T-011). |
 | `lib/AstrOsSerialMsgHandler` | MIXED | Thin adapter: validates, calls `AstrOsSerialProtocol`, hands responses to the interface-response queue. |
 | `lib/AstrOsEspNow` | MIXED | ESP-NOW mesh: peer registration, polling (master → padawans), fragmentation (respects the 250 B ESP-NOW payload limit via a 20 B header + 180 B payload scheme), callbacks for send/recv. Single-record packet decoding delegates to `AstrOsEspNowProtocol`. |
 | `lib/RandomEffectsController` | MIXED | Runs random spans (script types 6/7) on `random_effects_task`: owns its queue at both ends (`Submit` from the dispatch loop, the task loop), the span table and clear fence under its mutex, and `StopAll` for panic and config reload. The decisions are in `lib_native/AstrOsRandomEffects`. Pilot of "Extracting a domain from main.cpp". |
@@ -165,7 +168,7 @@ When touching these files, prefer fixes that also resolve the relevant review it
 - **Exceptions are effectively disabled**. Avoid `try`/`catch` in new code. Prefer `strtol` + `errno` over `std::stoi`; an uncaught exception will take down the whole FreeRTOS task.
 - **Blocking on `portMAX_DELAY`** is used in several places but is a known footgun — prefer `pdMS_TO_TICKS(...)` timeouts with a log-on-failure path for new code.
 - **Task stack sizes** live in the `xTaskCreatePinnedToCore` calls in `main.cpp`. Every task has a high-water-mark check that warns at 500 bytes remaining — if you see that warning in logs, bump the stack rather than chasing the symptom.
-- **Logging**: use `ESP_LOGI/W/E(TAG, ...)`. Each file defines its own `TAG`. `main.cpp` uses `AstrOsConstants::ModuleName`.
+- **Logging**: use `ESP_LOGI/W/E(TAG, ...)`. Each file defines its own `TAG`. `main.cpp` uses `AstrOsConstants::ModuleName`. A line logged per command or per change on the dispatch or queue-task path uses `ASTROS_LOG_CMD` instead (T-011), so it costs nothing in release builds.
 
 ## Things that are *not* in the repo
 
