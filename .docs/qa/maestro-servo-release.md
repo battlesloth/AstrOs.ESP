@@ -181,8 +181,10 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
    0 WARN/ERROR; recovery normal — pass. Re-run after panic was narrowed to servo channels:
    `7 off(s) queued, 0 failed` (relay ch0 excluded), no release after — pass. Observed on the
    hardware: the servos stopped at the panic. 7a not coverable (padawan has no Maestro); relay to
-   the padawan measured at 40 ms. Note the server's serial pipeline adds ~1.0 s between the
-   HTTP call and the board for both run and panic — that is server-side latency, not firmware.
+   the padawan measured at 40 ms. Note ~1.0 s passes between the HTTP call and the board for both
+   run and panic. The 2026-11-22 bench traced it to the master's own serial read: `uart_read_bytes`
+   asks for 1024 bytes and returns only after a 1 s timeout following the last byte. So at least
+   1 s of it is firmware, not the server; 2026-11-22 measured 1.09 s in all (`PLAN.md` Backlog).
 
 8. **Two Maestro modules keep independent channel state** (T-002; human-gated on a second
    Maestro being wired to serial channel 2)

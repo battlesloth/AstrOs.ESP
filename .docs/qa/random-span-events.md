@@ -115,6 +115,11 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
   - `Random span skipped (<reason>): <raw command>`: any reject
   - `Panic: stopped N random span(s), dropped M queued` / `Config reload: stopped …`
   - `RAM left <bytes>` every 10 s (heap check)
+- Measuring (from the 2026-11-22 bench):
+  - The controller keeps the last-loaded script in RAM, so switching to a different script moves `RAM left` by the size difference. Compare idle `RAM left` only between runs of the same script.
+  - The master hands each server command over 1 s after its last byte arrives (its serial read waits out a 1 s timeout; `PLAN.md` Backlog). Run and panic both carry that second (1.09 s measured from the HTTP call). Two commands sent within it arrive together.
+  - Driving run, panic and upload with `curl` and logging both consoles with host timestamps gives send-to-arrival times on one clock.
+  - A padawan needs no hardware for log-level checks: a Maestro module configured on it with nothing attached keeps its channel state and logs every move the same way.
 
 ### 1. GPIO flicker
 
@@ -153,6 +158,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 1. Run cases 1 and 3 together (one script, both spans), then hit panic from the server while both are active.
 2. **Pass:** `Panic: stopped 2 random span(s), dropped 0 queued` appears before `Panic: dropped … queued servo commands`; no `Queueing servo command => 1|…` from a span after the panic lines; the servo de-energizes (Maestro offs as in `maestro-servo-release.md`); the LED stops flickering. Panic doesn't drain `gpioQueue` (GPIO holds, T-004), so **at most one** `Sending Command => 5|…` that was already queued may appear right at the panic lines. A second one, or any later, is a fail.
 3. **Same-start burst:** a script with several spans at the same start time; panic within ~10 ms of that start (start the script and panic in one shell line, e.g. two `curl` calls joined with `;`). **Pass:** no random servo command after the panic lines, and at most one already-queued GPIO change per GPIO span right at them. A `Random span skipped (dispatched before a panic or config reload stopped the spans)` line is the fence catching an in-flight span, a pass.
+   - Through the server, the master's 1 s serial read delivers the run and the panic in one batch, so the panic lands before the spans dispatch. The in-flight fence can't be reached this way; native tests cover it.
 
 ### 7. Reload mid-span
 
@@ -166,8 +172,8 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 ### 9. Padawan
 
-1. Cases 1 and 3 on a dome padawan's channels, then panic from the server.
-2. **Pass:** as cases 1, 3 and 6, on the padawan's console; the panic arrives through the ESP-NOW relay and the padawan logs `Panic: stopped …`.
+1. Cases 1 and 3 on a padawan's channels (one script, both spans), then panic from the server while both are active.
+2. **Pass:** as cases 1, 3 and 6, on the padawan's console; the panic arrives through the ESP-NOW relay and the padawan logs `Panic: stopped 2 random span(s), …` and its Maestro off. The master logs `Panic: stopped 0 random span(s)`: each board stops only its own spans. The relay adds milliseconds; nearly all the panic's latency is the master's serial read.
 
 ### 10. Channel with no usable range
 
@@ -176,16 +182,22 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 ### 11. Script commands keep their timing under fast spans
 
-The queue tasks drain about one message per 10 ms tick. Random changes may fill at most half of each change queue, so the script's own commands always find room.
+Random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo). A scripted command therefore always finds room, but it can still sit behind up to that many random changes.
+
+Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included. Measured on the master on 2026-11-22 under this case's load, that came to about 20 ms per GPIO message and 40 ms per servo message. A servo message logs `Queueing servo command` and `Setting servo …`, about 240 bytes at 115200 baud, and writes to the Maestro. So a scripted command waits up to about 5 × 20 = 100 ms on the GPIO queue, or 10 × 40 = 400 ms on the servo queue.
 
 1. A 20 s script with three GPIO spans and two Maestro digital spans, every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
 2. Run it with the master console captured (the ESP log prefix carries milliseconds since boot).
 3. **Pass:**
-   - each scripted event's dispatch line (`GPIO command val: 5|…` / `Maestro command val: 1|…`) is followed by its execution line (`Sending Command => 5|…` / `Queueing servo command => 1|…` with the same string) within about 100 ms for GPIO and 300 ms for servo
+   - each scripted event's dispatch line is followed by its execution line within about 120 ms for GPIO and 450 ms for servo
+     - dispatch lines are `GPIO command val: …` / `Maestro command val: …`, carrying the command as the script holds it, delay field included, e.g. `5|2000|0|1`
+     - execution lines are `Sending Command => …` / `Queueing servo command => …`, with the same string
    - no `Send gpio queue fail` or `Send servo queue fail`
-   - the end-time Home runs at the end time (within the same bounds) and the script finishes on time
-   - `Random change dropped, … half full` lines appear: the spans are asking for more than the queue tasks can run
-4. **Fail:** a scripted event 2 s late, a `Send … queue fail`, or a script that ends late.
+   - the scripted events keep the script's spacing (within ~20 ms), and the end-time Home is the last scripted event
+     - Every event after the same-time span starts is dispatched late by one fixed offset, about 290 ms with five spans at t=0, and the offset doesn't grow.
+     - The offset exists because the dispatcher waits each delay from when the previous command finished (`vTaskDelay`, at least 10 ms per command), and the span starts took that long with the console busy.
+   - one `Random change dropped, … half full` line per span (each span logs only its first drop): the spans are asking for more than the queue tasks can run
+4. **Fail:** a scripted event 2 s late, a `Send … queue fail`, or a script that ends later than its end time plus the fixed offset.
 
 ### Edge cases and negative checks
 

@@ -5,10 +5,10 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Random span events (cross-repo with AstrOs.Server) — T-007 parsers, T-008 math + span table, T-009 runtime
-Now:     T-009 merged to develop (PR #65, dafae27, 2026-10-31): native 611/611, both boards build, two fresh-context reviews and a Copilot round addressed. The random runtime lives in `lib/RandomEffectsController`, the pilot of § main.cpp decomposition. Task file stays in `.docs/tasks/` until the bench passes
-Next:    bench cases 1–11 (`.docs/qa/random-span-events.md`; random-span log lines now carry the `RandomEffects` prefix) → T-009 close-out (task file to `completed/`, Log entry) → release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). Do NOT cut a release before the bench passes: develop now runs spans, and nothing has exercised that on hardware yet
-Blocked: bench sign-off needs the bench server on AstrOs.Server develop (its T-007, T-008 and T-009 merged 2026-10-28..30) to deploy scripts carrying spans
-Last:    2026-10-31 — T-009 merged (PR #65), bench pending; 2026-10-23 — T-008 complete (PR #63 → develop)
+Now:     no task in progress. T-009 complete 2026-11-22: bench cases 1–11 passed against AstrOs.Server develop (case 9 on the core padawan, log-only), and native tests, both boards and the QA plan were re-checked on develop 71e556a. The firmware side of random spans is done
+Next:    release v1.3.0 (AstrOs.Server then runs its T-010, the scripter UI, and raises its minimum firmware version). The bench added three Backlog items: the master's 1 s serial read, per-command INFO logging slowing the queue tasks, and 16 B of heap lost per script run. All three are pre-existing and none blocks the release
+Blocked: none
+Last:    2026-11-22 — T-009 complete, bench passed; 2026-10-31 — T-009 merged (PR #65)
 
 ## Random span events
 
@@ -16,7 +16,7 @@ Spec: AstrOs.Server `.docs/specs/20261022-0748-random-span-events-design.md` · 
 
 - [x] **T-007** — Parse random span commands (types 6 and 7) (`.docs/tasks/completed/T-007-random-span-command-parsers.md`) — done 2026-10-22
 - [x] **T-008** — Random span math and span table (pure) (`.docs/tasks/completed/T-008-random-effects-math.md`) — done 2026-10-23
-- [ ] **T-009** — Run random spans on the controller (`.docs/tasks/T-009-random-effects-task.md`) — needs T-007 + T-008
+- [x] **T-009** — Run random spans on the controller (`.docs/tasks/completed/T-009-random-effects-task.md`) — done 2026-11-22 (merged PR #65 2026-10-31; bench 2026-11-22)
 
 ## main.cpp decomposition
 
@@ -53,14 +53,44 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
 - **Existing per-type parsers use unchecked `std::stoi`** (`MaestroCommand.cpp`, `GpioCommand.cpp`, `SerialCommand.cpp`, `I2cCommand.cpp`). With exceptions disabled, a non-numeric field aborts and reboots the controller. An older AstrOs.Server reading a newer DB could send `position = undefined` this way; the server's T-006 guard covers future builds only. Harden to `strtol` like T-007's parsers. Found 2026-10-22 (random span events design).
 - **`GpioModule::SendCommand` bounds check is off by one** (`command.channel > gpioChannels.size()`, ~line 78): `channel == size` passes and `.at()` throws. Quick fix on its own branch. Found 2026-10-22.
 - **`.docs/protocol.md` copies have drifted between repos** (OTA sections: Server has master self-flash `FW_PROGRESS` rows; ESP has `OTA_FLASH_RESULT`). § C was added identically on 2026-10-22; reconcile the rest.
+- **The master holds every server command for 1 s.**
+  - Cause: `astrosRxTask` calls `uart_read_bytes(ASTRO_PORT, data, RX_BUF_SIZE = 1024, 1000 ms)` (`src/main.cpp` ~line 1158). ESP-IDF returns only when it has all 1024 bytes or one receive waits the full timeout, so a short command is handed over 1 s after its last byte.
+  - Measured 2026-11-22: HTTP panic → master 1.09 s, then → padawan +9 ms; deploy and run ~1.2 s. Commands sent within the same second arrive in one read.
+  - This is most of the kill switch's latency: the panic handler itself takes ~10 ms.
+  - Fix candidates: a short timeout (e.g. 20 ms), or the UART event queue / pattern detect on the command terminator. Keep the 8 KB command-buffer assembly, which already joins partial reads.
+  - Re-measure QA `maestro-servo-release.md` case 7 after.
+  - Found 2026-11-22 (T-009 bench).
+- **Per-command INFO logging slows the queue tasks.**
+  - Under QA case 11's load (five spans at 20–40 ms gaps) the console ran at ~81 % of 115200 baud (95 % in bursts). The queue tasks drained one message per ~20 ms (GPIO) and ~40 ms (servo) instead of the ~10 ms tick: `Queueing servo command` + `Setting servo …` alone are ~240 B (~21 ms) per servo command.
+  - Effect: a scripted servo command waits up to ~400 ms behind the random half of `servoQueue`, and the dispatcher's own INFO lines slow same-time command bursts.
+  - Candidates: DEBUG level for the per-command lines (`Setting servo`, `Queueing servo command`, `Sending Command`, the dispatch `… command val`), or a faster console baud.
+  - When that lands, fix the "drain about one message per 10 ms tick" comment at `lib_native/AstrOsRandomEffects/include/RandomSpanAdmission.hpp:133` and re-measure QA case 11's bounds.
+  - Found 2026-11-22 (T-009 bench).
+- **Same-time commands shift the rest of the script.**
+  - The dispatch loop sleeps `max(delay, MIN_WAKE_MS = 10)` measured from when the previous command finished (`vTaskDelay`, `src/main.cpp` ~line 854; the relative timing is deliberate there). So N commands at one time push everything after them back by at least 10·N ms plus their processing: +290 ms after five span starts with a busy console (QA case 11). The offset is fixed and doesn't grow.
+  - Fixing it needs absolute scheduling from the script start, without catch-up bursts. That is a design decision.
+  - Pre-existing; found 2026-11-22 (T-009 bench).
+- **The master heap loses 16 B per script run.**
+  - Seven runs across three scripts each stepped idle `RAM left` down 16 B, spans or not; a GPIO-only control did the same. Idle otherwise holds flat (45 min overnight). ~16 KB per 1000 runs.
+  - Suspects: the `RUN_SCRIPT` handling, `AnimationController`'s load, the ESP-NOW run relay.
+  - Measure between runs of the same script: the last-loaded script stays resident, so switching scripts moves the baseline by their size difference.
+  - Pre-existing; found 2026-11-22 (T-009 bench).
 
-Cross-repo: measured 2026-09-07 — the server's serial pipeline adds ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike; the kill-switch's end-to-end latency is dominated by that, not by the firmware (whose panic handler completes in ~10 ms). Worth a server-side look. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
+Cross-repo: measured 2026-09-07 — ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike. The 2026-09 note blamed the server's serial pipeline. The 2026-11-22 bench found the master's own serial read holds each command 1 s (Backlog above), which covers all but ~0.1 s of it, so it is firmware. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
 ## Completed projects
 
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-11-22 T-009 complete — random spans run on the controller (PR #65 → develop 2026-10-31; bench 2026-11-22)
+  - bench: develop 71e556a on the master (body) and the core padawan; AstrOs.Server develop with spans inserted by SQL; both consoles captured with host timestamps; cases 9 and 11 driven by `curl` for timing. Cases 1–11 pass; results table in the task file
+  - case 9 ran log-only on a padawan with no hardware: a Maestro configured with nothing attached keeps state and logs the same. The panic relay adds 9 ms; the master's serial read adds 1 s
+  - case 11: a scripted servo command waited 420 ms behind the random half of `servoQueue` (the plan said ~300 ms). The queue tasks drain ~20 / 40 ms per message under load, not one per 10 ms tick. Jeff: pass, with the QA bound corrected to cap × measured drain
+  - verification re-run on develop: 611/611, both boards build
+  - found (Backlog, all pre-existing): the master holds every server command 1 s (`uart_read_bytes`), which corrects the 2026-09 "server serial pipeline" note; per-command INFO logging throttles the queue tasks; same-time commands shift the rest of a script; 16 B of heap lost per script run
+  - open: the GPIO gap mean read 202 ms against 225 expected on the master (n = 130) but 225 on the padawan, so run a 5-minute GPIO span on the next bench; the padawan's first boot after flashing hit one SD mount timeout (0x102); the same-start-burst fence is reachable only in native tests through the server (the 1 s read batches run and panic)
 
 - 2026-10-23 T-008 complete — random span math and span table, pure (PR #63 → develop)
   - PURE lib `AstrOsRandomEffects` with an injected `Rand32`: `UniformInt`, `NextGapMs`, `NextServoTarget` (§ C move rule: forced up near min, down near max, size capped by room and `maxMove`, clamped), `MoveTravelMs`, and `RandomSpanTable` (fixed capacity, same-key replace, `[[nodiscard]] Start` re-checks the gap rules, 20 ms end guard, wrap-safe `uint32` times, not copyable)

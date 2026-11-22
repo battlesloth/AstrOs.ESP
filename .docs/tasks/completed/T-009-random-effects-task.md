@@ -146,11 +146,11 @@ It does three things:
 
 ## Acceptance criteria
 
-- [ ] Both boards build, and `pio test -e test` is green (no regressions).
-- [ ] Bench cases 1–8 and 10 below pass on the master, and case 9 passes on a padawan.
-- [ ] No high-water-mark or task-watchdog warning for `random_effects_task` or `animation_dispatch_task` during case 3 at a 100 ms min gap for 60 s.
-- [ ] Panic mid-span (case 6) shows no servo movement after the panic log line.
-- [ ] `.docs/qa/random-span-events.md` has the bench cases with expected results.
+- [x] Both boards build, and `pio test -e test` is green (no regressions). Re-run on develop 71e556a, 2026-11-22: 611/611, `lolin_d32_pro` and `metro_s3` SUCCESS.
+- [x] Bench cases 1–8 and 10 below pass on the master, and case 9 passes on a padawan (2026-11-22, Bench results below).
+- [x] No high-water-mark or task-watchdog warning for `random_effects_task` or `animation_dispatch_task` during case 3 at a 100 ms min gap for 60 s (none; `RAM left` spread 144 B).
+- [x] Panic mid-span (case 6) shows no servo movement after the panic log line.
+- [x] `.docs/qa/random-span-events.md` has the bench cases with expected results (case 11's bounds corrected from the bench).
 
 ## Out of scope
 
@@ -195,7 +195,7 @@ It does three things:
 - [x] CLAUDE.md recipe "Extracting a domain from main.cpp", lib-table row, wiring-harness text (it claimed ~1500 lines of plumbing); stale `src/main.cpp` / `randomTableMutex` references in the pure lib's comments swept; `PLAN.md` "main.cpp decomposition" project (on develop)
 - [x] `pio test -e test` green (608/608); both boards build, no warnings from touched files; clang-format clean
 - [x] Fresh-context review of the move (behavior unchanged, pattern sound): 0 Critical; recipe gaps and a stale comment fixed (Review notes, the extraction)
-- [ ] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan
+- [x] Bench (human-gated): cases 1–8, 10 and 11 on the master, case 9 on a padawan — all pass 2026-11-22 (Bench results below)
 
 ## Failure-mode inventory
 
@@ -238,6 +238,7 @@ It does three things:
 - **The `changes` vector is reserved to `RANDOM_TABLE_CAPACITY + 1`.** When the table is full, the extra `Collect` before the retry can emit for all 32 slots (a span that emits and then drops frees one), and the new span's first change is the 33rd.
 - **`GetChannelSnapshot` also returns false on a `stateMutex` timeout** (a reload holds `stateMutex` across the SD read), logging the timeout itself with the module's identity.
 - **Random changes fill at most half of a change queue** (`RandomChangeHasRoom`, from the code review). `servoQueueTask` and `gpioQueueTask` drain about one message per 10 ms tick, and the random task (priority 8) outranks the dispatch loop (5). Spans changing faster than that would keep a queue full, the random task would take each freed slot first, and a scripted command would wait 2 s and be dropped, shifting the rest of the script. The task text's "a full queue drops the change" becomes "a queue that is half full drops it". No contract changes: same queues, same strings, same ownership. QA case 11 measures scripted-event latency under fast spans.
+  - Bench 2026-11-22: the "one message per 10 ms tick" estimate is low under load. The tick is only the wait between messages; INFO logging and the Maestro write come on top. Case 11 measured about 20 ms per GPIO message and 40 ms per servo message, so a scripted servo command waited 420 ms behind the random half (the plan said ~300 ms). The half share works as designed: no queue fails, nothing near the 2 s drop. Jeff (2026-11-22): a pass, with the QA bound corrected to cap × measured drain. The same estimate is in a comment at `RandomSpanAdmission.hpp:133` (`PLAN.md` Backlog).
 
 ## Review notes (2026-10-30)
 
@@ -270,3 +271,32 @@ Three medium findings, all verified against the code and fixed:
 - **GPIO cache could disagree with the pin.** `DefaultGpios` (service task, priority 6, on reload) could be preempted between its `gpio_set_level` and its cache store by `SendCommand` (gpio task, priority 8). The pin would end HIGH while `GetLevel` read LOW, so a later span's first toggle repeated a level. Fixed with `levelMutex` in `GpioModule`, created in `Init` (which always runs before the first reload or command); each write and its store happen under it, with a bounded 100 ms wait. `GetLevel` stays lock-free (atomic entries).
 - **A collected change could be sent after its span ended.** `Collect` judges changes by the hold's `now`, which is sampled before `startSpan`'s INFO line and before any drop WARN. If console logging blocks the random task, the dispatch loop (priority 5) can queue the span's end-time event, and the stale random change then lands behind it, overriding the end event (§ C). Fixed: `SpanChange.deadlineMs` (stamped by `Collect`) plus pure `SpanChangeExpired` (same boundary as the table's end guard); `postChanges` re-checks each change with a fresh clock just before sending. RED→GREEN: `TableStampsEachChangeWithItsSpanDeadline`, `ChangeExpiresAtItsSpansEndGuard`, `ChangeExpiryIsWrapSafe`.
 - **`random_effects_task` creation was unchecked.** The OTA task creations beside it check `pdPASS` and abort, so it now does the same. The CLAUDE.md recipe step 5 says so. The older unchecked task creations above it are pre-existing and left alone.
+
+## Bench results (2026-11-22)
+
+Setup:
+- **Master:** a Metro S3 (body) on develop 71e556a (`1.3.0-dev.131`).
+- **Padawan:** "Ashoka" (core), same build, flashed for case 9.
+- **Server:** AstrOs.Server develop on the dev machine, with spans inserted by SQL into a bench copy of the database.
+- **Logging:** both consoles captured with host timestamps. Cases 9 and 11 were driven by `curl` against the API, so send and arrival times share one clock.
+
+| Case | Result |
+|---|---|
+| 1 GPIO flicker | pass: 51 toggles, gaps 50–400 ms, the end-time low held |
+| 2 Maestro digital | pass: 2500/500 toggles, ends off (LED seen) |
+| 3 Servo twitch | pass. Load check (60 s, gaps 100–200 ms): 390 moves, targets 35–65 %, steps 2–8 %, gaps 100–210 ms; no HWM or watchdog line; `RAM left` spread 144 B |
+| 4 Panel flap | pass: the end-time Home is the channel's last command |
+| 5 Slow servo | pass: gaps stretched to ~860 ms by travel; release ~26 s (the speed-5 deadline) |
+| 5b Accelerated | pass: the gap follows the move's distance |
+| 6 Panic | pass. Same-start burst: criteria held over 5 tries. Through the server, run and panic arrive in one 1 s serial batch, so the in-flight fence isn't reachable on the bench (native tests cover it) |
+| 7 Reload | pass |
+| 8 Table full | pass: 32 started, one `table full (32/32 active)`, 23 first-drop lines. RAM stepped 2.2 KB once (a second run: −16 B, see below) |
+| 9 Padawan | pass, log-only (a Maestro configured on core UART 1 with nothing attached). Both spans ran on the padawan: 44 toggles (gaps 70–410 ms, mean 225), 21 moves (targets 35–65 %, steps 2–8 %, gaps 220–770 ms). Panic: master 1.092 s after the HTTP call, padawan +9 ms, `Panic: stopped 2 random span(s)`, module 25 off; nothing from either span after it |
+| 10 No usable range | pass: the exact skip message, nothing moved |
+| 11 Fast spans | pass with the bound corrected (Rulings). Three runs: GPIO 90–110 ms dispatch to execution, servo 420 ms each run, Home 110–140 ms. Every scripted event was offset +280–300 ms by the t=0 burst, with no drift after it. 0 queue fails; one first-drop line per span. Console at ~81 % of 115200 baud (95 % in the burst) |
+
+Observations, for `PLAN.md`:
+- **The master adds 1 s to every server command.** `uart_read_bytes` asks for 1024 bytes with a 1 s timeout, so a short command is handed over 1 s after its last byte. This, not the server, is most of the "~1.0 s HTTP→board" measured in 2026-09.
+- **The master heap loses 16 B per script run**, with or without spans: seven runs across three scripts each stepped −16 B, and a GPIO-only control did the same. Idle holds flat. This is pre-existing.
+- **The GPIO gap mean on the master** was 202 ms against 225 expected (n = 130, z ≈ −2.6). The padawan read 225 (n = 43), and servo gaps matched. A 5-minute GPIO span on the next bench would settle it.
+- **The padawan's first boot after flashing** logged `sdmmc_card_init failed (0x102)` (SD mount timeout); the next boot mounted normally. Seen once.
