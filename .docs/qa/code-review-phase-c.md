@@ -3,7 +3,7 @@
 Covers the Phase C code-review remediation work landing on branch `fix/code-review-phase-c`.
 
 **Prerequisites:**
-- A flashed master node and at least one padawan node.
+- A flashed master node and at least one padawan node, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out (for § 2.1's timestamps; § 1's queue-depth smoke test should also pass on a normal build, where the queue tasks run faster).
 - SD card mounted with deployed scripts covering all five channel types (serial, servo/Maestro, I2C, GPIO, NONE).
 - Serial monitor open on both boards, `esp32_exception_decoder` filter active.
 - Web UI accessible for script deploy / panic-stop.
@@ -25,7 +25,7 @@ Covers the Phase C code-review remediation work landing on branch `fix/code-revi
 
 **Goal:** Confirm dispatch cadence, panic-stop responsiveness, and script chaining behave equivalently to the pre-refactor timer-driven implementation, now that dispatch runs from a dedicated FreeRTOS task using `vTaskDelay`.
 
-1. **Cadence timing.** Run a script with known-interval commands (e.g. servo moves every 200 ms for 30 iterations). Timestamp each `ESP_LOGI "Maestro command val"` and compute actual inter-command deltas.
+1. **Cadence timing.** Run a script with known-interval commands (e.g. servo moves every 200 ms for 30 iterations). Timestamp each `Maestro command val` line (verbose build) and compute actual inter-command deltas.
    - **Expected:** 200 ms ± 10 ms per step. No progressive drift across the 30 iterations.
 2. **Long-delay scripted pause.** Run a script with a single command followed by a ≥ 5 second scripted delay, then several commands at 100 ms intervals.
    - **Expected:** First command fires, task sleeps for the 5 s, then the subsequent commands fire at their scripted 100 ms intervals — NOT a catch-up burst where the post-delay commands arrive simultaneously. (This validates the `vTaskDelay` choice over `vTaskDelayUntil`.)

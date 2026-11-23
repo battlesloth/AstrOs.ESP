@@ -15,7 +15,7 @@ The feature lands in three tasks:
   - For bench cases: built from a branch that contains T-009.
 - **Server:** AstrOs.Server with its T-007 and T-008, so a script can carry a span. Until the scripter UI lands, span rows are inserted by hand. AstrOs.Server T-008 adds that SQL to its own `.docs/qa/random-span-events.md`.
 - **Hardware:** a master with a Maestro wired to at least one servo and one digital output (an LED), plus one ESP GPIO with an LED. Bench cases that cover padawans need one padawan with the same wiring.
-- **Logging:** a serial monitor on the master (`pio device monitor -e metro_s3`).
+- **Logging:** a serial monitor on the master (`pio device monitor -e metro_s3`). For bench cases, built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out.
 
 ## Parser (T-007): native coverage
 
@@ -106,7 +106,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 ### Bench preconditions
 
-- Firmware from a branch with T-009 on the master (and on the padawan for case 9). Monitor the master with `pio device monitor -e metro_s3`.
+- Firmware from a branch with T-009 on the master (and on the padawan for case 9), built with `PLATFORMIO_BUILD_FLAGS="-D ASTROS_VERBOSE_COMMANDS"` (T-011): without it the per-command lines (`… command val`, `Sending Command` (GPIO, I2C), `Queueing servo command`, `Setting servo …`, `I2C Command received on queue`) are compiled out. Monitor the master with `pio device monitor -e metro_s3`.
 - AstrOs.Server with its T-007, T-008 and T-009. Insert span rows by hand with the SQL shape in AstrOs.Server `.docs/qa/random-span-events.md` case 8 (GPIO span: `module_type 3`, `module_sub_type 301`; Maestro span: `module_type 1`, `module_sub_type 104`, data JSON with `channel`, gaps, positions, moves, speed and acceleration). Set `scripts.duration_ds` to the latest span end, and keep every span within `0 ≤ time < end_time ≤ 6000`. Deploy the script to the controllers, then run it.
 - Useful log lines (master console):
   - `Random span command val: 6|…` / `7|…`: the dispatch loop handed the span over
@@ -184,7 +184,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 Random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo). A scripted command therefore always finds room, but it can still sit behind up to that many random changes.
 
-Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included. Measured on the master on 2026-11-22 under this case's load, that came to about 20 ms per GPIO message and 40 ms per servo message. A servo message logs `Queueing servo command` and `Setting servo …`, about 240 bytes at 115200 baud, and writes to the Maestro. So a scripted command waits up to about 5 × 20 = 100 ms on the GPIO queue, or 10 × 40 = 400 ms on the servo queue.
+Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included in a verbose build (T-011); the bounds below are for verbose builds, which bench runs need to read the lines. Measured on the master on 2026-11-22 under this case's load, that came to about 20 ms per GPIO message and 40 ms per servo message in a verbose build. In a normal build (T-011 bench, flag-off with throwaway instrumentation, three runs) scripted GPIO took 10–20 ms, the same-time offset fell to +40–50 ms, and the scripted servo took 310 ms: a servo message still costs ~31 ms, because the serial-channel task sends one Maestro frame per 10 ms tick and every servo or digital change is three frames (speed, accel, target), independent of logging (ESP T-012 drains them per tick). A servo message logs `Queueing servo command` and `Setting servo …`, about 240 bytes at 115200 baud, and writes to the Maestro. So a scripted command waits up to about 5 × 20 = 100 ms on the GPIO queue, or 10 × 40 = 400 ms on the servo queue.
 
 1. A 20 s script with three GPIO spans and two Maestro digital spans, every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
 2. Run it with the master console captured (the ESP log prefix carries milliseconds since boot).

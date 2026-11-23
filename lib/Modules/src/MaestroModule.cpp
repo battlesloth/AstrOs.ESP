@@ -1,6 +1,7 @@
 #include "MaestroModule.hpp"
 
 #include <AnimationCommands.hpp>
+#include <AstrOsCommandLog.h>
 #include <AstrOsStorageManager.hpp>
 #include <AstrOsUtility.h>
 
@@ -190,12 +191,13 @@ void MaestroModule::releaseUntrackedServos(uint32_t wasEnergized)
 
 void MaestroModule::QueueCommand(uint8_t *cmd)
 {
-    ESP_LOGI(TAG, "Queueing servo command => %s", cmd);
+    ASTROS_LOG_CMD(TAG, "Queueing servo command => %s", cmd);
     MaestroCommand servoCmd = MaestroCommand(std::string(reinterpret_cast<char *>(cmd)));
 
     if (servoCmd.channel > 23 || servoCmd.channel < 0)
     {
-        ESP_LOGE(TAG, "Invalid channel %d", servoCmd.channel);
+        ESP_LOGE(TAG, "Invalid channel %d on module %d, command: %.64s", servoCmd.channel, this->idx,
+                 reinterpret_cast<char *>(cmd));
         return;
     }
 
@@ -259,11 +261,12 @@ void MaestroModule::QueueCommand(uint8_t *cmd)
 
     xSemaphoreGive(this->stateMutex);
 
-    ESP_LOGI(TAG,
-             "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d. "
-             "lastPos: %d",
-             ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted,
-             lastPos);
+    ASTROS_LOG_CMD(
+        TAG,
+        "Setting servo %d on module %d (min: %d, max: %d) to %d, cmd: %d. speed: %d. accel: %d. inverted: %d. "
+        "lastPos: %d",
+        ch, this->idx, minPos, maxPos, target, servoCmd.position, servoCmd.speed, servoCmd.acceleration, inverted,
+        lastPos);
 
     SendStage stage = this->setServoPosition(ch, target, lastPos, servoCmd.speed, servoCmd.acceleration);
     if (stage == SendStage::Target)
@@ -293,7 +296,7 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     // to uint8_t before this check would wrap 256 to 0 and -1 to 255.
     if (channel < 0 || channel > 23)
     {
-        ESP_LOGE(TAG, "Invalid channel %d", channel);
+        ESP_LOGE(TAG, "Invalid channel %d on module %d (slider, %d us)", channel, this->idx, ms);
         return;
     }
 
