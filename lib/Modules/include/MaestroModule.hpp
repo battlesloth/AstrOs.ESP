@@ -60,6 +60,12 @@ private:
     };
 
     bool loading;
+    // Servos energized when a config reload reset their tracking (T-010). Each
+    // CheckServos tick (not while loading) sends an off to those homing didn't
+    // re-arm (ChannelsToReleaseAfterReload) and clears a bit only once its off is
+    // queued, so a failed enqueue retries instead of leaving the servo powered.
+    // Guarded by stateMutex.
+    uint32_t pendingReloadRelease = 0;
     int idx;
     int baudRate;
 
@@ -115,10 +121,6 @@ private:
     // then ESP_LOGE and false. The command paths return before touching any
     // channel state when this fails.
     bool takeSendMutex();
-    // After a config reload (T-010): send an off to each servo that was energized
-    // before the reload and that homing didn't re-arm (ChannelsToReleaseAfterReload).
-    // Takes stateMutex briefly, then the send mutex.
-    void releaseUntrackedServos(uint32_t wasEnergized);
     // Takes no lock and never logs: mallocs a copy of cmd and xQueueSends it
     // with `wait`. Nothing is left allocated on failure.
     EnqueueResult enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait);

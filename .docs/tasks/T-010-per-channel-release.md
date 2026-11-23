@@ -30,7 +30,7 @@
 - **Unchanged:** panic, digital channels (never released), `MaestroChannelSnapshot` (random spans don't use the release time), `VERSION` (stays 1.3.0).
 
 **Amended 2026-11-22 (Jeff, from the pre-push review):**
-- **A reload releases what it no longer tracks.** `LoadConfig` records which servo channels were energized before the copy (the copy resets `on`). After `HomeServos`, it sends an off to each one that homing didn't re-arm, whether the new config disabled it or homing failed. Enabled digital channels are left alone, because homing set their level. The selection is the pure `ChannelsToReleaseAfterReload` (`AstrOsServoUtils`).
+- **A reload releases what it no longer tracks.** `LoadConfig` records which servo channels were energized before the copy (the copy resets `on`), in `pendingReloadRelease`. `CheckServos` then sends an off to each one that homing didn't re-arm, whether the new config disabled it or homing failed: the next tick after loading ends, within ~300 ms (PR #66 review, below). Enabled digital channels are left alone, because homing set their level. The selection is the pure `ChannelsToReleaseAfterReload` (`AstrOsServoUtils`).
   - Before this, a channel a reload disabled while it was energized stayed powered until a power-cycle. T-010's holds of up to 120 s make that likelier.
 - **`ServoReleaseDeadlineMs` clamps an out-of-range floor.** A floor outside 1000–120000 (for example 0 from a memset struct) uses the default.
   - The rule is still max(floor, travel + 10 %) for every value in range.
@@ -156,3 +156,16 @@ Fresh-context review of the uncommitted diff. 0 Critical, 2 Important, both fixe
   - SD save and read don't check their errors (`fwrite`/`fclose`, `ferror`).
   - A testable `CheckServos` helper.
   - A CI guard for the T-011 grep.
+
+## PR #66 review notes (2026-11-22, Copilot)
+
+Two findings on the reload-release path (the amendment above), both verified against the locking and fixed in one change: **the release moved from `LoadConfig` into `CheckServos`.**
+
+- **A stale-mask race.**
+  - The problem: `releaseUntrackedServos` chose its channels under `stateMutex`, released it, and then took the send mutex. In between, a script command (`QueueCommand` has no `loading` gate) could re-arm a channel and start a move, and the stale off would then cut that move short while tracking said `on`.
+  - The fix: `CheckServos` decides and enqueues under `stateMutex`, with a zero-wait send-mutex take, the same as its normal releases. A command can no longer land between the decision and the off.
+- **A failed off enqueue left the servo powered.**
+  - The problem: the config copy had already cleared `on`, so neither `CheckServos` nor `Panic` (for a newly disabled channel) would ever release it.
+  - The fix: `pendingReloadRelease` keeps each bit until its off is queued. A failure counts in the existing `sendBusy` / `queueFull` / `noMemory` masks ("retry next tick") and retries every 300 ms tick.
+- **Not while `loading`:** a tick between the copy and `HomeServos` would otherwise release servos that homing is about to re-arm.
+- **Testing:** the pure selection is unchanged (native tests). The wiring is on-target: both boards build, and bench case 23 now expects the `CheckServos: … left energized by a reload` line.

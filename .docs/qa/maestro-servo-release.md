@@ -315,7 +315,7 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 
 23. **A reload releases a servo it no longer tracks** (T-010, amended; Jeff)
    - Set ch1 to 30000 and run a move, so ch1 stays energized for 30 s. Within those 30 s, disable ch1 on the server and sync.
-   - Expected: after `Homing Servos`, `LoadConfig: module 1 sent offs to channels 0x000002 left energized by the reload`, and the servo goes limp at once. Before T-010 (and with any channel that was energized when a reload disabled it), it stayed powered until a power-cycle.
+   - Expected: within ~300 ms of `Homing Servos`, `CheckServos: module 1 sent offs to channels 0x000002 left energized by a reload`, and the servo goes limp. Before T-010 (and with any channel that was energized when a reload disabled it), it stayed powered until a power-cycle.
    - Re-enable ch1 and reset it to 5000 afterwards.
 
 ## Edge cases / negative tests

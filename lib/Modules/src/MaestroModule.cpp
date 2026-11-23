@@ -110,10 +110,9 @@ void MaestroModule::LoadConfig()
     // `loading` guard in SetServoPosition; a script command waits up to
     // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN; Panic waits
     // the same and then sends its offs from an unlocked read of `enabled`.
-    // The copy below resets `on` for every parsed channel, so remember which
-    // servos were energized: one the new config disables, or that homing fails
-    // to re-arm, is otherwise never released (T-010).
-    uint32_t wasEnergized = 0;
+    // The copy below resets `on` for every parsed channel, so record which servos
+    // were energized: one the new config disables, or that homing fails to
+    // re-arm, is otherwise never released. CheckServos sends their offs (T-010).
     std::string releaseTimes;
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
@@ -121,7 +120,7 @@ void MaestroModule::LoadConfig()
         {
             if (channels[i].isServo && channels[i].on)
             {
-                wasEnergized |= 1u << i;
+                pendingReloadRelease |= 1u << i;
             }
         }
         AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
@@ -136,57 +135,8 @@ void MaestroModule::LoadConfig()
     }
 
     this->HomeServos();
-    this->releaseUntrackedServos(wasEnergized);
 
     this->loading = false;
-}
-
-void MaestroModule::releaseUntrackedServos(uint32_t wasEnergized)
-{
-    if (wasEnergized == 0)
-    {
-        return;
-    }
-
-    if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) != pdTRUE)
-    {
-        ESP_LOGW(TAG,
-                 "LoadConfig: state mutex timeout on module %d, servos energized before the reload (0x%06lx) may stay "
-                 "powered",
-                 this->idx, static_cast<unsigned long>(wasEnergized));
-        return;
-    }
-    uint32_t release = ChannelsToReleaseAfterReload(wasEnergized, channels, 24);
-    xSemaphoreGive(this->stateMutex);
-
-    if (release == 0)
-    {
-        return;
-    }
-
-    if (!this->takeSendMutex())
-    {
-        ESP_LOGE(TAG, "LoadConfig: send mutex timeout on module %d, channels 0x%06lx left powered", this->idx,
-                 static_cast<unsigned long>(release));
-        return;
-    }
-    int failed = 0;
-    for (size_t i = 0; i < 24; i++)
-    {
-        if ((release & (1u << i)) && this->setServoOff(i, pdMS_TO_TICKS(SEND_QUEUE_WAIT_MS)) != EnqueueResult::Queued)
-        {
-            failed++;
-        }
-    }
-    xSemaphoreGive(this->mutex);
-
-    ESP_LOGI(TAG, "LoadConfig: module %d sent offs to channels 0x%06lx left energized by the reload", this->idx,
-             static_cast<unsigned long>(release));
-    if (failed > 0)
-    {
-        ESP_LOGE(TAG, "LoadConfig: module %d: %d off(s) not queued, those channels may stay powered", this->idx,
-                 failed);
-    }
 }
 
 void MaestroModule::QueueCommand(uint8_t *cmd)
@@ -593,6 +543,45 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     uint32_t sendBusy = 0;
     uint32_t queueFull = 0;
     uint32_t noMemory = 0;
+    uint32_t reloadReleased = 0;
+
+    // Servos a config reload left energized without tracking (T-010). Decided
+    // and enqueued under stateMutex like the releases below, so a new command
+    // can't re-arm a channel between the decision and its off. Not while loading:
+    // homing hasn't re-armed its channels yet. A bit clears only once its off is
+    // queued; re-armed and enabled-digital channels need none.
+    if (pendingReloadRelease != 0 && !this->loading)
+    {
+        pendingReloadRelease = ChannelsToReleaseAfterReload(pendingReloadRelease, channels, 24);
+        for (size_t i = 0; i < 24; i++)
+        {
+            uint32_t bit = 1u << i;
+            if (!(pendingReloadRelease & bit))
+            {
+                continue;
+            }
+            if (xSemaphoreTake(this->mutex, 0) != pdTRUE)
+            {
+                sendBusy |= bit;
+                continue;
+            }
+            EnqueueResult result = this->setServoOff(i, 0);
+            xSemaphoreGive(this->mutex);
+            if (result == EnqueueResult::Queued)
+            {
+                pendingReloadRelease &= ~bit;
+                reloadReleased |= bit;
+            }
+            else if (result == EnqueueResult::QueueFull)
+            {
+                queueFull |= bit;
+            }
+            else
+            {
+                noMemory |= bit;
+            }
+        }
+    }
 
     for (size_t i = 0; i < 24; i++)
     {
@@ -646,6 +635,11 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
         {
             ESP_LOGI(TAG, "Turning off servo %d on module %d", i, this->idx);
         }
+    }
+    if (reloadReleased != 0)
+    {
+        ESP_LOGI(TAG, "CheckServos: module %d sent offs to channels 0x%06X left energized by a reload", this->idx,
+                 (unsigned)reloadReleased);
     }
     if (sendBusy != 0)
     {
