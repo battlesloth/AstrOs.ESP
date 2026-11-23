@@ -119,13 +119,13 @@ int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs)
     return std::max(withMargin, floorMs);
 }
 
-uint32_t ChannelsToReleaseAfterReload(uint32_t wasEnergized, const servo_channel *channels, int count)
+uint32_t ChannelsToReleaseAfterReload(uint32_t pending, const servo_channel *channels, int count)
 {
     uint32_t release = 0;
     for (int i = 0; i < count && i < 32; i++)
     {
         bool enabledDigital = channels[i].enabled && !channels[i].isServo;
-        if ((wasEnergized & (1u << i)) && !channels[i].on && !enabledDigital)
+        if ((pending & (1u << i)) && !channels[i].on && !enabledDigital)
         {
             release |= 1u << i;
         }

@@ -97,8 +97,9 @@
 - [x] `loadMaestroServos` passes `makeEspLogger()`; `MaestroModule::channels` default reads 5000 (native test on the same `{}` form)
 - [x] Comment sweep: `git grep -n "5 s floor\|MAESTRO_RELEASE_FLOOR"`
 - [x] Mutation checks: require 8 fields; no struct default; floor as a cap (`min`); no trailing-colon rule; no whitespace trim — each fails its tests
-- [x] `pio test -e test` 623/623; both boards build; clang-format 18.1.8 clean on touched files
+- [x] `pio test -e test` 623/623; both boards build; clang-format 18.1.8 clean on touched files (now 630/630 after the PR #66 fix)
 - [x] QA plan `maestro-servo-release.md` cases 17–22; code review (see Review notes)
+- [x] PR #66 review fix: the reload release moved into `CheckServos` via the pure `StepReloadRelease` (`astros_servo_utils_tests.cpp`, RED → GREEN; mutations caught: clearing a bit before its outcome, no loading gate, no filter); QA case 23 and the panic / script edge cases; 630/630; both boards build
 - [ ] Bench (joint with AstrOs.Server T-014, human-gated)
 
 ## Review notes (2026-11-22)
@@ -168,4 +169,4 @@ Two findings on the reload-release path (the amendment above), both verified aga
   - The problem: the config copy had already cleared `on`, so neither `CheckServos` nor `Panic` (for a newly disabled channel) would ever release it.
   - The fix: `pendingReloadRelease` keeps each bit until its off is queued. A failure counts in the existing `sendBusy` / `queueFull` / `noMemory` masks ("retry next tick") and retries every 300 ms tick.
 - **Not while `loading`:** a tick between the copy and `HomeServos` would otherwise release servos that homing is about to re-arm.
-- **Testing:** the pure selection is unchanged (native tests). The wiring is on-target: both boards build, and bench case 23 now expects the `CheckServos: … left energized by a reload` line.
+- **Testing:** the per-tick step is the pure `StepReloadRelease` (`AstrOsServoUtils.hpp`), native-tested with an injected try-send: a bit clears only once its off is queued, failures retry, nothing goes out while loading. The send-mutex take and `setServoOff` wiring are on-target only: both boards build, and bench case 23 expects the `CheckServos: … left energized by a reload` line (it can't force an enqueue failure, though homing's frames may cause one QueueFull retry).

@@ -129,16 +129,78 @@ int WorstCaseTravelMs(int speed, int acceleration);
 /// @return deadline in milliseconds
 int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs);
 
-/// @brief After a config reload: which channels to send an off to. A channel
-/// energized before the reload (`wasEnergized` bit set) that homing didn't
-/// re-arm (`on` false) — because the new config disabled it, or homing failed —
-/// is otherwise never released. An enabled digital channel is left alone:
-/// homing already set its level, and an off frame would undo it.
-/// @param wasEnergized bit i set if channel i was an energized servo before the reload
-/// @param channels the channels after the reload and HomeServos
+/// @brief Of the servos a config reload left energized (`pending`), which still
+/// need an off, judged on the live channel state (StepReloadRelease calls it on
+/// each CheckServos tick with a pending bit, outside loading). A channel that is tracked `on` again — re-armed by
+/// homing or by a new command — needs none: its normal release takes over. Neither does an enabled digital channel:
+/// homing set its level, and an off frame would undo it. One the new config disabled, or that homing failed to re-arm,
+/// is otherwise never released.
+/// @param pending bit i set if channel i was energized when a reload reset its tracking
+/// @param channels the live channels
 /// @param count number of channels (at most 32)
 /// @return bit i set for each channel to send an off to
-uint32_t ChannelsToReleaseAfterReload(uint32_t wasEnergized, const servo_channel *channels, int count);
+uint32_t ChannelsToReleaseAfterReload(uint32_t pending, const servo_channel *channels, int count);
+
+/// How an attempt to queue one channel's off went (mirrors MaestroModule's
+/// enqueue results, plus a send-mutex try-take that failed).
+enum class ReloadOffResult
+{
+    Queued,
+    SendBusy,
+    QueueFull,
+    NoMemory
+};
+
+struct ReloadReleaseOutcome
+{
+    uint32_t pending;   // bits still waiting for their off
+    uint32_t released;  // offs queued this tick
+    uint32_t sendBusy;  // retry next tick
+    uint32_t queueFull; // retry next tick
+    uint32_t noMemory;  // retry next tick
+};
+
+/// @brief One CheckServos tick of reload releases (T-010, PR #66 review): drop
+/// the bits ChannelsToReleaseAfterReload says need no off, try each remaining
+/// off with `trySend(channel)`, and clear a bit only once its off is queued, so
+/// a failed enqueue retries next tick instead of leaving the servo powered. Does
+/// nothing while `loading` (homing hasn't re-armed its channels yet).
+template <typename TrySend>
+ReloadReleaseOutcome StepReloadRelease(uint32_t pending, const servo_channel *channels, int count, bool loading,
+                                       TrySend trySend)
+{
+    ReloadReleaseOutcome outcome{pending, 0, 0, 0, 0};
+    if (pending == 0 || loading)
+    {
+        return outcome;
+    }
+    outcome.pending = ChannelsToReleaseAfterReload(pending, channels, count);
+    for (int i = 0; i < count && i < 32; i++)
+    {
+        uint32_t bit = 1u << i;
+        if (!(outcome.pending & bit))
+        {
+            continue;
+        }
+        switch (trySend(i))
+        {
+        case ReloadOffResult::Queued:
+            outcome.pending &= ~bit;
+            outcome.released |= bit;
+            break;
+        case ReloadOffResult::SendBusy:
+            outcome.sendBusy |= bit;
+            break;
+        case ReloadOffResult::QueueFull:
+            outcome.queueFull |= bit;
+            break;
+        case ReloadOffResult::NoMemory:
+            outcome.noMemory |= bit;
+            break;
+        }
+    }
+    return outcome;
+}
 
 /// @brief The release times a module applied, for one INFO line after a config
 /// load: enabled servo channels whose release time isn't the default, e.g.

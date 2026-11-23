@@ -4,7 +4,7 @@ Covers the servo-shutdown dead-reckoning in `MaestroModule::CheckServos` (T-001)
 per-instance channel state that backs it (T-002), the locking between the shutdown timer
 and the command paths (T-003), panic stop reaching the Maestro (T-004), and the other half
 of the lifecycle — re-energizing a released servo where it is so the next scripted move
-honours speed/accel (T-006, cases 12–16), and the per-channel release time (T-010, cases 17–22).
+honours speed/accel (T-006, cases 12–16), and the per-channel release time (T-010, cases 17–23).
 
 Re-energize (T-006): a released servo has no position as far as the Maestro is concerned, so
 it jumps straight to the first target it receives. Every scripted move therefore sends a
@@ -315,7 +315,7 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
 
 23. **A reload releases a servo it no longer tracks** (T-010, amended; Jeff)
    - Set ch1 to 30000 and run a move, so ch1 stays energized for 30 s. Within those 30 s, disable ch1 on the server and sync.
-   - Expected: within ~300 ms of `Homing Servos`, `CheckServos: module 1 sent offs to channels 0x000002 left energized by a reload`, and the servo goes limp. Before T-010 (and with any channel that was energized when a reload disabled it), it stayed powered until a power-cycle.
+   - Expected: soon after `Homing Servos` (homing's frames, plus up to one ~300 ms `CheckServos` tick; homing logs no end line), `CheckServos: module 1 sent offs to channels 0x000002 left energized by a reload`, and the servo goes limp. Homing's frames can fill the 10-frame serial queue, so one `CheckServos: serial queue full on module 1, channels 0x000002 retry next tick` WARN just before the INFO line still passes. Before T-010 (and with any channel that was energized when a reload disabled it), it stayed powered until a power-cycle.
    - Re-enable ch1 and reset it to 5000 afterwards.
 
 ## Edge cases / negative tests
@@ -335,7 +335,18 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   `RELOAD_CONFIG` overlaps the panic within ~1 s, channels may be homed *after* the offs and
   stay energized until their normal release; panic may also miss a module whose config
   was being loaded at that instant. Not a bench case — the servos still release on the normal
-  deadline, and the ordering fix is a Backlog enhancement.
+  deadline, and the ordering fix is a Backlog enhancement. The same goes for a servo a reload
+  disabled while it was energized (T-010): panic doesn't stop it, and `CheckServos` sends its
+  off about one tick after the panic releases the send mutex (later if the panic overlaps the
+  reload itself).
+- **A script keeps commanding a channel the sync just disabled** (T-010): a script still
+  running during the sync moves ch1 again after the reload. Either order passes, since the
+  script's next move races the first `CheckServos` tick after loading (a ch1 command during the
+  SD read is dropped after the 50 ms state wait and doesn't re-arm it):
+  - the move lands first: no `left energized by a reload` line names ch1;
+  - the tick wins: one such line names ch1, and the next move re-energizes it.
+  Either way no move stops early (a reload off never cuts a move short), and ch1 releases on
+  its normal deadline after its last move.
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
   would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
   logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`

@@ -1,6 +1,7 @@
 #include <AstrOsServoUtils.hpp>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <vector>
 
 TEST(ServoUtils, GetMicroSecondsAsStep)
 {
@@ -260,8 +261,8 @@ TEST(ServoUtils, ChannelsToReleaseAfterReloadPicksEnergizedChannelsHomingDidNotR
         channel(false, true, false), // 4: not energized before -> nothing to do
         channel(false, false, false) // 5: was energized, now disabled digital -> release
     };
-    uint32_t wasEnergized = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
-    EXPECT_EQ((1u << 0) | (1u << 2) | (1u << 5), ChannelsToReleaseAfterReload(wasEnergized, channels, 6));
+    uint32_t pending = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
+    EXPECT_EQ((1u << 0) | (1u << 2) | (1u << 5), ChannelsToReleaseAfterReload(pending, channels, 6));
     EXPECT_EQ(0u, ChannelsToReleaseAfterReload(0, channels, 6));
 }
 
@@ -281,4 +282,59 @@ TEST(ServoUtils, FormatReleaseTimesListsEnabledServosOffTheDefault)
 
     servo_channel defaults[2] = {channel(true, true, false), channel(true, true, false)};
     EXPECT_EQ("all 5000 ms (default)", FormatReleaseTimes(defaults, 2));
+}
+
+// T-010 (PR #66 review): CheckServos' per-tick handling of servos a reload left
+// energized. A bit clears only once its off is queued, so a failed enqueue
+// retries next tick instead of leaving the servo powered.
+TEST(ServoUtils, StepReloadReleaseClearsABitOnlyOnceItsOffIsQueued)
+{
+    servo_channel channels[4] = {channel(false, true, false), channel(false, true, false), channel(true, true, true),
+                                 channel(false, true, false)};
+    std::vector<int> tried;
+    auto outcome = StepReloadRelease(0b1111u, channels, 4, false,
+                                     [&](int i)
+                                     {
+                                         tried.push_back(i);
+                                         if (i == 1)
+                                         {
+                                             return ReloadOffResult::QueueFull;
+                                         }
+                                         if (i == 3)
+                                         {
+                                             return ReloadOffResult::SendBusy;
+                                         }
+                                         return ReloadOffResult::Queued;
+                                     });
+    EXPECT_EQ((std::vector<int>{0, 1, 3}), tried); // ch2 was re-armed: no off
+    EXPECT_EQ(0b1010u, outcome.pending);           // ch1 and ch3 retry next tick
+    EXPECT_EQ(0b0001u, outcome.released);
+    EXPECT_EQ(0b0010u, outcome.queueFull);
+    EXPECT_EQ(0b1000u, outcome.sendBusy);
+    EXPECT_EQ(0u, outcome.noMemory);
+}
+
+TEST(ServoUtils, StepReloadReleaseRetriesANoMemoryFailure)
+{
+    servo_channel channels[1] = {channel(false, true, false)};
+    auto outcome = StepReloadRelease(0b1u, channels, 1, false, [](int) { return ReloadOffResult::NoMemory; });
+    EXPECT_EQ(0b1u, outcome.pending);
+    EXPECT_EQ(0b1u, outcome.noMemory);
+    EXPECT_EQ(0u, outcome.released);
+}
+
+TEST(ServoUtils, StepReloadReleaseWaitsWhileLoading)
+{
+    // Homing hasn't re-armed its channels yet: no off may go out.
+    servo_channel channels[1] = {channel(true, true, false)};
+    bool called = false;
+    auto outcome = StepReloadRelease(0b1u, channels, 1, true,
+                                     [&](int)
+                                     {
+                                         called = true;
+                                         return ReloadOffResult::Queued;
+                                     });
+    EXPECT_FALSE(called);
+    EXPECT_EQ(0b1u, outcome.pending);
+    EXPECT_EQ(0u, outcome.released);
 }

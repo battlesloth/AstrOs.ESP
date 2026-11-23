@@ -61,10 +61,10 @@ private:
 
     bool loading;
     // Servos energized when a config reload reset their tracking (T-010). Each
-    // CheckServos tick (not while loading) sends an off to those homing didn't
-    // re-arm (ChannelsToReleaseAfterReload) and clears a bit only once its off is
-    // queued, so a failed enqueue retries instead of leaving the servo powered.
-    // Guarded by stateMutex.
+    // CheckServos tick (not while loading) sends an off, via StepReloadRelease, to
+    // those neither homing nor a new command re-armed, and clears a bit only once
+    // its off is queued, so a failed enqueue retries instead of leaving the servo
+    // powered. Guarded by stateMutex.
     uint32_t pendingReloadRelease = 0;
     int idx;
     int baudRate;

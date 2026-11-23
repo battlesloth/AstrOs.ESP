@@ -521,11 +521,15 @@ void MaestroModule::HomeServos()
 /// worst case for the channel's speed/accel plus 10 %, or the channel's own
 /// release time (releaseMs, 5 s by default), whichever is greater (T-005, T-010).
 ///
+/// It also releases servos a config reload left energized without tracking
+/// (pendingReloadRelease, T-010), via the pure StepReloadRelease.
+///
 /// Runs on the esp_timer task, so nothing here may block: stateMutex and
 /// the send mutex are try-taken with zero wait and the off frame is
-/// enqueued with zero timeout. Any failure leaves the channel on and it
-/// is re-checked next tick. The decision and the enqueue happen under
-/// stateMutex so a new command cannot land its target between them.
+/// enqueued with zero timeout. Any failure is retried next tick: a tracked
+/// channel stays on, and a reload channel keeps its pending bit. The
+/// decision and the enqueue happen under stateMutex so a new command cannot
+/// land its target between them.
 /// Outcomes are logged only after stateMutex is released: a console line
 /// is a multi-ms blocking write, and every channel homed together comes
 /// due on the same tick when they share a release time (all of them, at the default), so logging inside
@@ -543,45 +547,37 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     uint32_t sendBusy = 0;
     uint32_t queueFull = 0;
     uint32_t noMemory = 0;
-    uint32_t reloadReleased = 0;
 
     // Servos a config reload left energized without tracking (T-010). Decided
     // and enqueued under stateMutex like the releases below, so a new command
-    // can't re-arm a channel between the decision and its off. Not while loading:
-    // homing hasn't re-armed its channels yet. A bit clears only once its off is
-    // queued; re-armed and enabled-digital channels need none.
-    if (pendingReloadRelease != 0 && !this->loading)
+    // can't re-arm a channel between the decision and its off; the pure step
+    // keeps a bit until its off is queued and waits while loading.
+    auto trySendOff = [this](int i)
     {
-        pendingReloadRelease = ChannelsToReleaseAfterReload(pendingReloadRelease, channels, 24);
-        for (size_t i = 0; i < 24; i++)
+        if (xSemaphoreTake(this->mutex, 0) != pdTRUE)
         {
-            uint32_t bit = 1u << i;
-            if (!(pendingReloadRelease & bit))
-            {
-                continue;
-            }
-            if (xSemaphoreTake(this->mutex, 0) != pdTRUE)
-            {
-                sendBusy |= bit;
-                continue;
-            }
-            EnqueueResult result = this->setServoOff(i, 0);
-            xSemaphoreGive(this->mutex);
-            if (result == EnqueueResult::Queued)
-            {
-                pendingReloadRelease &= ~bit;
-                reloadReleased |= bit;
-            }
-            else if (result == EnqueueResult::QueueFull)
-            {
-                queueFull |= bit;
-            }
-            else
-            {
-                noMemory |= bit;
-            }
+            return ReloadOffResult::SendBusy;
         }
-    }
+        EnqueueResult result = this->setServoOff(i, 0);
+        xSemaphoreGive(this->mutex);
+        // Exhaustive (no default): a new EnqueueResult fails the -Werror=all build here.
+        switch (result)
+        {
+        case EnqueueResult::Queued:
+            return ReloadOffResult::Queued;
+        case EnqueueResult::QueueFull:
+            return ReloadOffResult::QueueFull;
+        case EnqueueResult::NoMemory:
+            return ReloadOffResult::NoMemory;
+        }
+        return ReloadOffResult::NoMemory;
+    };
+    ReloadReleaseOutcome reload = StepReloadRelease(pendingReloadRelease, channels, 24, this->loading, trySendOff);
+    pendingReloadRelease = reload.pending;
+    uint32_t reloadReleased = reload.released;
+    sendBusy |= reload.sendBusy;
+    queueFull |= reload.queueFull;
+    noMemory |= reload.noMemory;
 
     for (size_t i = 0; i < 24; i++)
     {
