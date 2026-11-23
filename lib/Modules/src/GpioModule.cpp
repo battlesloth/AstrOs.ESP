@@ -1,4 +1,5 @@
 #include <AnimationCommands.hpp>
+#include <AstrOsCommandLog.h>
 #include <AstrOsUtility_ESP.h>
 #include <GpioModule.hpp>
 
@@ -93,17 +94,17 @@ void GpioModule::DefaultGpios()
 void GpioModule::SendCommand(uint8_t *cmd)
 {
     auto command = GpioCommand(std::string(reinterpret_cast<char *>(cmd)));
-    ESP_LOGI(TAG, "Sending Command => %s", cmd);
+    ASTROS_LOG_CMD(TAG, "Sending Command => %s", cmd);
 
     if (command.channel > this->gpioChannels.size())
     {
-        ESP_LOGE(TAG, "invalid GPIO channel");
+        ESP_LOGE(TAG, "invalid GPIO channel %d, command: %.64s", command.channel, reinterpret_cast<char *>(cmd));
         return;
     }
 
     if (this->gpioChannels.at(command.channel) == -1)
     {
-        ESP_LOGE(TAG, "GPIO channel not available");
+        ESP_LOGE(TAG, "GPIO channel %d not available, command: %.64s", command.channel, reinterpret_cast<char *>(cmd));
         return;
     }
 
