@@ -2,6 +2,7 @@
 #define MAESTROMODULE_HPP
 
 #include <AstrOsStructs.h>
+#include <atomic>
 #include <esp_err.h>
 #include <hal/uart_types.h>
 #include <string>
@@ -59,11 +60,14 @@ private:
         Target = 4
     };
 
-    bool loading;
+    // True from the start of LoadConfig until homing is done. Atomic because
+    // LoadConfig writes it outside stateMutex (a store there can't fail, unlike a
+    // timed take) while CheckServos and SetServoPosition read it on other tasks.
+    std::atomic<bool> loading{false};
     // Servos energized when a config reload reset their tracking (T-010). Each
     // CheckServos tick (not while loading) sends an off, via StepReloadRelease, to
-    // those neither homing nor a new command re-armed, and clears a bit only once
-    // its off is queued, so a failed enqueue retries instead of leaving the servo
+    // those that still need one (ChannelsToReleaseAfterReload), and clears a bit only
+    // once its off is queued, so a failed enqueue retries instead of leaving the servo
     // powered. Guarded by stateMutex.
     uint32_t pendingReloadRelease = 0;
     int idx;

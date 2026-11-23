@@ -131,10 +131,11 @@ int ServoReleaseDeadlineMs(int speed, int acceleration, int floorMs);
 
 /// @brief Of the servos a config reload left energized (`pending`), which still
 /// need an off, judged on the live channel state (StepReloadRelease calls it on
-/// each CheckServos tick with a pending bit, outside loading). A channel that is tracked `on` again — re-armed by
+/// each CheckServos tick with a pending bit, outside loading). A servo that is tracked `on` again — re-armed by
 /// homing or by a new command — needs none: its normal release takes over. Neither does an enabled digital channel:
 /// homing set its level, and an off frame would undo it. One the new config disabled, or that homing failed to re-arm,
-/// is otherwise never released.
+/// is otherwise never released. That includes a disabled digital channel a command has just driven: CheckServos never
+/// releases a digital channel, so its `on` promises nothing.
 /// @param pending bit i set if channel i was energized when a reload reset its tracking
 /// @param channels the live channels
 /// @param count number of channels (at most 32)

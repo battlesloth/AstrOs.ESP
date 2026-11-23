@@ -100,6 +100,7 @@
 - [x] `pio test -e test` 623/623; both boards build; clang-format 18.1.8 clean on touched files (now 630/630 after the PR #66 fix)
 - [x] QA plan `maestro-servo-release.md` cases 17–22; code review (see Review notes)
 - [x] PR #66 review fix: the reload release moved into `CheckServos` via the pure `StepReloadRelease` (`astros_servo_utils_tests.cpp`, RED → GREEN; mutations caught: clearing a bit before its outcome, no loading gate, no filter); QA case 23 and the panic / script edge cases; 630/630; both boards build
+- [x] PR #66 second review fix: `loading` is `std::atomic<bool>`; the reload release counts a channel as re-armed only when `isServo && on` (RED → GREEN; four filter mutations caught); 631/631; both boards build
 - [ ] Bench (joint with AstrOs.Server T-014, human-gated)
 
 ## Review notes (2026-11-22)
@@ -170,3 +171,19 @@ Two findings on the reload-release path (the amendment above), both verified aga
   - The fix: `pendingReloadRelease` keeps each bit until its off is queued. A failure counts in the existing `sendBusy` / `queueFull` / `noMemory` masks ("retry next tick") and retries every 300 ms tick.
 - **Not while `loading`:** a tick between the copy and `HomeServos` would otherwise release servos that homing is about to re-arm.
 - **Testing:** the per-tick step is the pure `StepReloadRelease` (`AstrOsServoUtils.hpp`), native-tested with an injected try-send: a bit clears only once its off is queued, failures retry, nothing goes out while loading. The send-mutex take and `setServoOff` wiring are on-target only: both boards build, and bench case 23 expects the `CheckServos: … left energized by a reload` line (it can't force an enqueue failure, though homing's frames may cause one QueueFull retry).
+
+## PR #66 review notes, second round (2026-11-23, Copilot)
+
+Two findings on the first round's fix (32f0bd5), both verified against the code and fixed.
+
+- **`loading` was a plain `bool` read across tasks.**
+  - The problem: `CheckServos` read it under `stateMutex`, but `LoadConfig` writes it with no lock, so the mutex ordered nothing. `SetServoPosition` had the same unlocked read before T-010.
+  - The fix: `std::atomic<bool>`, as elsewhere in the repo (`AnimationController`, `GpioModule`, `OtaReceiver`).
+  - Why not guard it with `stateMutex`: a 50 ms take can fail, and a clear that fails would leave `loading` stuck at true (slider moves dropped, pending offs held forever).
+  - Severity: no failure was reachable in the built firmware. In the plain-`bool` object code the `true` store precedes the `stateMutex` section that sets the pending bits, and the `false` store follows the `HomeServos()` call. Nothing in the source guaranteed that order.
+- **A disabled digital channel could lose its pending off.**
+  - The problem: `QueueCommand` sets `on` on any channel, and the filter dropped a pending bit on `on` alone, because "its normal release takes over". `CheckServos` never releases a digital channel, so nothing took over.
+  - How a once-energized servo gets there: GPIO then disabled in the UI before one sync, or an entry the parser dropped (a `{}` slot). Disabling a servo directly keeps `isServo`, so it doesn't. A script command must also land before the first tick after loading; one that was waiting on homing's send mutex does.
+  - The fix: re-armed means `isServo && on` (`ChannelsToReleaseAfterReload`). An enabled digital channel is still exempt, and a disabled servo a command re-armed still releases on its own deadline.
+  - Limit: a command that arrives after the off still drives a disabled digital channel until something else changes it. The command paths have never checked `enabled`. Backlog.
+- **Backlog** (pre-existing, found while checking the second finding): the missing `enabled` check above, and a module removed from the config is destroyed without offs (deleting and re-adding one does this: the server's `idx` is autoincrement, so it comes back as a new module).

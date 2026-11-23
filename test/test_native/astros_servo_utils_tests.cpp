@@ -266,6 +266,19 @@ TEST(ServoUtils, ChannelsToReleaseAfterReloadPicksEnergizedChannelsHomingDidNotR
     EXPECT_EQ(0u, ChannelsToReleaseAfterReload(0, channels, 6));
 }
 
+// T-010 (PR #66 review): `on` means a release is coming only for a servo.
+// CheckServos never releases a digital channel, so a command that reaches a
+// channel the reload made disabled digital must not discard its pending off.
+TEST(ServoUtils, ChannelsToReleaseAfterReloadIgnoresOnForADisabledDigitalChannel)
+{
+    servo_channel channels[3] = {
+        channel(false, false, true), // 0: disabled digital, then commanded -> release (nothing else would)
+        channel(false, true, true),  // 1: disabled servo, then commanded -> keep (its normal release takes over)
+        channel(true, false, true)   // 2: enabled digital, then commanded -> keep (homing set its level)
+    };
+    EXPECT_EQ(1u << 0, ChannelsToReleaseAfterReload(0b111u, channels, 3));
+}
+
 // T-010: one INFO line per module shows the release times a board applied, so
 // a log-only padawan can prove what it parsed (QA case 21).
 TEST(ServoUtils, FormatReleaseTimesListsEnabledServosOffTheDefault)

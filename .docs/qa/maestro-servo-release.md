@@ -347,6 +347,13 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   - the tick wins: one such line names ch1, and the next move re-energizes it.
   Either way no move stops early (a reload off never cuts a move short), and ch1 releases on
   its normal deadline after its last move.
+- **…and the sync made that channel a disabled digital output** (T-010, PR #66 review): on the
+  server set ch1 to GPIO, then to disabled (disabling keeps the last type), and sync while ch1 is
+  energized and a script keeps commanding it. `CheckServos` never releases a digital channel, so
+  the reload off goes out whichever comes first: a `left energized by a reload` line always names
+  ch1, and it cuts the level a command set just before it. A command after that line drives the
+  output again and it stays driven (pre-existing: the command paths don't check `enabled`;
+  Backlog).
 - **Slider message with channel outside 0–23** (hand-crafted: 24, -1, and 256 — the last two
   would wrap to 255 and 0 if narrowed to a byte before the check): `Invalid channel N` error
   logged with the value as sent, no command sent, no crash. The check runs on the parsed `int`

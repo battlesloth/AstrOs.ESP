@@ -31,7 +31,6 @@ MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
     this->idx = idx;
     this->baudRate = baudRate;
     this->serialQueue = serialQueue;
-    this->loading = false;
 
     // Either handle missing => IsValid() is false and the creator must drop
     // this instance (loadMaestroConfigs does). Nothing else guards the handles.

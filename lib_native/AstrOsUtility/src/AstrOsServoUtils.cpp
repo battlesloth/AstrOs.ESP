@@ -124,8 +124,9 @@ uint32_t ChannelsToReleaseAfterReload(uint32_t pending, const servo_channel *cha
     uint32_t release = 0;
     for (int i = 0; i < count && i < 32; i++)
     {
+        bool rearmed = channels[i].isServo && channels[i].on;
         bool enabledDigital = channels[i].enabled && !channels[i].isServo;
-        if ((pending & (1u << i)) && !channels[i].on && !enabledDigital)
+        if ((pending & (1u << i)) && !rearmed && !enabledDigital)
         {
             release |= 1u << i;
         }
