@@ -7,6 +7,7 @@ It covers these cross-repo wire surfaces:
 - **A.** Server ↔ Master ESP, over serial.
 - **B.** Master ESP ↔ Padawan ESPs, over ESP-NOW.
 - **C.** Animation script commands: the per-controller script string inside `DEPLOY_SCRIPT`, including random-span types 6 and 7.
+- **D.** Module config: the per-controller config string inside `DEPLOY_CONFIG`, including the Maestro channel entry and its release-time field.
 
 The Server ↔ Vue WebSocket contract (`flashJobStarted`, `flashControllerUpdate`, etc.) lives in AstrOs.Server only; see `.docs/plans/20260427-2202-firmware-ota-decomposition.md` § "Server ↔ Vue".
 

@@ -5,9 +5,9 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010; plus T-011 (quieter per-command logs). Random span events' firmware side is done (T-007–T-009)
-Now:     no task in progress. v1.3.0 is held (Jeff, 2026-11-22): it ships random spans together with per-channel release times (T-010), which the v1.2.1 notes promised for 1.3, and T-011. Tasks authored 2026-11-22; protocol § D pinned in both repos
-Next:    T-010 (in parallel with AstrOs.Server T-012 → T-013 → T-014) → joint bench (T-010's cases with server T-014) → T-011 + its bench → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels)
-Blocked: v1.3.0 waits on T-010, T-011 and the joint bench
+Now:     T-010 (PR #66) and T-011 (PR #67) in review; T-011's bench ran 2026-11-22 (closed on measured numbers; its servo residual became T-012). v1.3.0 is held (Jeff, 2026-11-22) for T-010, T-011 and T-012
+Next:    merge T-010 and T-011 → T-012 (serial-channel drain) + its bench → joint bench (T-010's cases with AstrOs.Server T-014; that waits on server T-012 → T-016 → T-013 → T-014) → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels)
+Blocked: v1.3.0 waits on T-010, T-011, T-012 and the joint bench
 Last:    2026-11-22 — T-009 complete, bench passed; v1.3.0 held for T-010 + T-011; 2026-10-31 — T-009 merged (PR #65)
 
 ## Random span events
@@ -28,7 +28,7 @@ Spec: AstrOs.Server `.docs/specs/20261122-0847-per-channel-servo-release-design.
 
 **History:** this is the "per-channel release-time setting" that the 2026-09 Log entries and the T-001/T-005 task files point to. Its Backlog bullet was never written.
 
-- [ ] **T-010** — Release each Maestro servo channel on its own minimum time (`.docs/tasks/T-010-per-channel-release.md`) — bench joint with AstrOs.Server T-014
+- [ ] **T-010** — Release each Maestro servo channel on its own minimum time (`.docs/tasks/T-010-per-channel-release.md`) — PR #66; bench joint with AstrOs.Server T-014
 
 ## main.cpp decomposition
 
@@ -50,7 +50,8 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
 - [x] **T-004** — Make panic stop de-energize every configured Maestro channel (`.docs/tasks/completed/T-004-panic-stop-maestro-deenergize.md`) — done 2026-09-07 (servo channels only: panic is a stop, GPIO holds)
 - [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
 - [x] **T-006** — Re-energize released Maestro servos at their last commanded position (`.docs/tasks/completed/T-006-maestro-reenergize-at-last-position.md`) — done 2026-09-14
-- [ ] **T-011** — Log per-command lines only in verbose bench builds (`.docs/tasks/T-011-verbose-command-logs.md`) — before v1.3.0 (Jeff, 2026-11-22)
+- [ ] **T-011** — Log per-command lines only in verbose bench builds (`.docs/tasks/T-011-verbose-command-logs.md`) — before v1.3.0 (Jeff, 2026-11-22); PR #67, bench done
+- [ ] **T-012** — Send every queued frame per tick in the serial-channel tasks (`.docs/tasks/T-012-serial-channel-drain.md`) — before v1.3.0 (Jeff, 2026-11-22; found by the T-011 bench)
 
 ## Backlog (unscheduled candidates)
 
@@ -88,6 +89,16 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
   - Suspects: the `RUN_SCRIPT` handling, `AnimationController`'s load, the ESP-NOW run relay.
   - Measure between runs of the same script: the last-loaded script stays resident, so switching scripts moves the baseline by their size difference.
   - Pre-existing; found 2026-11-22 (T-009 bench).
+
+- **From the T-010 / T-011 reviews (2026-11-22)**, all pre-existing except where noted:
+  - **SD save and read don't check their errors.** `saveFileSd` ignores `fwrite`/`fclose`, and `readFileSd` never checks `ferror`. A short write still logs "Saved"; a read error can truncate a config so its last entries silently vanish.
+  - **`CheckServos` isn't native-testable.** A pure `ServoReleaseDue(channel, msSinceLastCheck)` helper would pin which channel's release time it uses (today only bench case 18 does).
+  - **No CI guard keeps per-command INFO lines out of the hot path.** T-011's acceptance grep could become a `pr-validation.yml` step.
+  - **INFO lines left on frequent paths:**
+    - `NONE command queued, assume buffer?` (per NONE command)
+    - `AstrOs RX: Read N bytes` (per server message)
+    - `i2cQueueTask` silently drops a `message_id` other than 0 or 1.
+  - **Fewer serial messages per change.** Coalescing a change's frames into one message, or skipping an unchanged speed/accel frame, is the next step if T-012's bench shows the servo path still needs it.
 
 Cross-repo: measured 2026-09-07 — ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike. The 2026-09 note blamed the server's serial pipeline. The 2026-11-22 bench found the master's own serial read holds each command 1 s (Backlog above), which covers all but ~0.1 s of it, so it is firmware. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 
