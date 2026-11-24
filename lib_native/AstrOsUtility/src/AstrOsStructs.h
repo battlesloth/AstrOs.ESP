@@ -49,9 +49,13 @@ extern "C"
         size_t dataSize;
     } queue_msg_t;
 
+#define SERIAL_MSG_BYTES 1
+#define SERIAL_MSG_BYTES_THEN_HOLD 2
+
     typedef struct
     {
-        // 0 = send command, 1 = send bytes
+        // 0 = send command, 1 = send bytes, SERIAL_MSG_BYTES_THEN_HOLD = send
+        // bytes, then hold the channel before its next message (T-012)
         int message_id;
         int baudrate;
         uint8_t *data;

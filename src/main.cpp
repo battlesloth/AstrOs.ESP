@@ -116,6 +116,7 @@ static std::atomic<uint32_t> dispatchMallocFailureCount{0};
  **********************************/
 #define QUEUE_LENGTH 5
 #define SERIAL_CHANNEL_QUEUE_LENGTH 10
+#define SERIAL_HOLD_MS 30 // after a SERIAL_MSG_BYTES_THEN_HOLD message
 
 /**********************************
  * Reset Button
@@ -1431,7 +1432,7 @@ static void serialChannelQueueLoop(QueueHandle_t queue, SerialModule &channel, c
             {
                 channel.SendCommand(msg.data);
             }
-            else if (msg.message_id == 1)
+            else if (msg.message_id == SERIAL_MSG_BYTES || msg.message_id == SERIAL_MSG_BYTES_THEN_HOLD)
             {
                 std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
 
@@ -1442,6 +1443,12 @@ static void serialChannelQueueLoop(QueueHandle_t queue, SerialModule &channel, c
 
             free(msg.data);
             handled++;
+
+            if (msg.message_id == SERIAL_MSG_BYTES_THEN_HOLD)
+            {
+                // One tick more: vTaskDelay(n) can end up to a tick short of n.
+                vTaskDelay(pdMS_TO_TICKS(SERIAL_HOLD_MS) + 1);
+            }
         }
 
         if (handled > 0)

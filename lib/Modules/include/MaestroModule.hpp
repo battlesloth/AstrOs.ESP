@@ -126,8 +126,9 @@ private:
     // channel state when this fails.
     bool takeSendMutex();
     // Takes no lock and never logs: mallocs a copy of cmd and xQueueSends it
-    // with `wait`. Nothing is left allocated on failure.
-    EnqueueResult enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait);
+    // with `wait`. Nothing is left allocated on failure. messageId is the
+    // queue_serial_msg_t kind: bytes, or bytes then a hold (pre-position frames).
+    EnqueueResult enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait, int messageId = SERIAL_MSG_BYTES);
     // Single-frame convenience: takeSendMutex -> enqueueFrame(500 ms) -> give.
     void sendQueueMsg(uint8_t cmd[], size_t size);
 
