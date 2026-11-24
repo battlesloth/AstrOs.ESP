@@ -65,7 +65,13 @@ extern "C"
         int baudrate;
     } maestro_config;
 
-    typedef struct
+// Default per-channel release time in ms (T-010, .docs/protocol.md § D).
+// A macro so this C-visible header can use it; MAESTRO_RELEASE_DEFAULT_MS
+// (AstrOsServoUtils.hpp) is defined from it.
+#define ASTROS_MAESTRO_RELEASE_DEFAULT_MS 5000
+
+    // Tagged so the C++-only member default below is valid for a typedef'd struct.
+    typedef struct servo_channel
     {
         int id;
         bool enabled;
@@ -80,6 +86,15 @@ extern "C"
         int acceleration;
         bool inverted;
         bool on;
+        // Minimum ms the channel stays powered after a move (T-010). C++ code
+        // (every user of this struct) gets the default for any `{}`- or
+        // default-initialized channel, never 0 ms (a memset one reads 0, and
+        // ServoReleaseDeadlineMs then clamps it to the default); C sees the same layout.
+        int releaseMs
+#ifdef __cplusplus
+            = ASTROS_MAESTRO_RELEASE_DEFAULT_MS
+#endif
+            ;
     } servo_channel;
 
 #ifdef __cplusplus

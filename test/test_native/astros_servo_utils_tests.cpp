@@ -1,6 +1,7 @@
 #include <AstrOsServoUtils.hpp>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <vector>
 
 TEST(ServoUtils, GetMicroSecondsAsStep)
 {
@@ -139,31 +140,48 @@ TEST(ServoUtils, WorstCaseTravelMsClampsOutOfRangeInputs)
     EXPECT_EQ(551, WorstCaseTravelMs(999, 300)); // (255,255): 471 + 80
 }
 
-// Policy layer: the deadline CheckServos actually uses (T-005): the greater
-// of a 5 s floor and the physical model plus 10 % (ceiling).
+// Policy layer: the deadline CheckServos actually uses: the greater of the
+// channel's release floor (T-010; MAESTRO_RELEASE_DEFAULT_MS = 5 s, T-005's
+// floor) and the physical model plus 10 % (ceiling).
 TEST(ServoUtils, ServoReleaseDeadlineMsAppliesFloorWhenModelIsFaster)
 {
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0));    // model 471  -> 519
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(255, 44)); // model 935  -> 1029
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 5));    // model 2772 -> 3050
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, MAESTRO_RELEASE_DEFAULT_MS));    // model 471  -> 519
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(255, 44, MAESTRO_RELEASE_DEFAULT_MS)); // model 935  -> 1029
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 5, MAESTRO_RELEASE_DEFAULT_MS));    // model 2772 -> 3050
 }
 
 TEST(ServoUtils, ServoReleaseDeadlineMsAddsTenPercentWhenModelIsSlower)
 {
-    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0));  // 6000 + 600
-    EXPECT_EQ(7480, ServoReleaseDeadlineMs(20, 2));  // 6800 + 680 (the reported bug case)
-    EXPECT_EQ(13640, ServoReleaseDeadlineMs(10, 2)); // 12400 + 1240
-    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0));  // 24000 + 2400
-    EXPECT_EQ(26840, ServoReleaseDeadlineMs(5, 1));  // 24400 + 2440
-    EXPECT_EQ(132000, ServoReleaseDeadlineMs(1, 0)); // 120000 + 12000
+    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0, MAESTRO_RELEASE_DEFAULT_MS));  // 6000 + 600
+    EXPECT_EQ(7480, ServoReleaseDeadlineMs(20, 2, MAESTRO_RELEASE_DEFAULT_MS));  // 6800 + 680 (the reported bug case)
+    EXPECT_EQ(13640, ServoReleaseDeadlineMs(10, 2, MAESTRO_RELEASE_DEFAULT_MS)); // 12400 + 1240
+    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0, MAESTRO_RELEASE_DEFAULT_MS));  // 24000 + 2400
+    EXPECT_EQ(26840, ServoReleaseDeadlineMs(5, 1, MAESTRO_RELEASE_DEFAULT_MS));  // 24400 + 2440
+    EXPECT_EQ(132000, ServoReleaseDeadlineMs(1, 0, MAESTRO_RELEASE_DEFAULT_MS)); // 120000 + 12000
 }
 
 TEST(ServoUtils, ServoReleaseDeadlineMsMarginCeilsAndCrossesFloorNearFourAndAHalfSeconds)
 {
     // 10 % of 4382 is 438.2 -> 439; 4821 < 5000 so the floor wins
-    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 2)); // model 4382
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 2, MAESTRO_RELEASE_DEFAULT_MS)); // model 4382
     // speed 26 -> cruise ceil(120000/26) = 4616; +462 = 5078 > 5000 so the model wins
-    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0));
+    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0, MAESTRO_RELEASE_DEFAULT_MS));
+}
+
+// T-010: the floor is the channel's own release time. It is a floor, never a
+// cap: a slow move still gets its modeled travel plus 10 %.
+TEST(ServoUtils, ServoReleaseDeadlineMsUsesTheChannelFloorWhenItExceedsTheModel)
+{
+    EXPECT_EQ(15000, ServoReleaseDeadlineMs(0, 0, 15000)); // model 519: an actuator's 15 s wins
+    EXPECT_EQ(30000, ServoReleaseDeadlineMs(5, 0, 30000)); // model 26400 < 30000
+    EXPECT_EQ(1000, ServoReleaseDeadlineMs(0, 0, 1000));   // a floor below 5 s releases sooner
+}
+
+TEST(ServoUtils, ServoReleaseDeadlineMsKeepsTheModelWhenItExceedsTheChannelFloor)
+{
+    EXPECT_EQ(26400, ServoReleaseDeadlineMs(5, 0, 10000)); // 24000 + 2400 > 10000
+    EXPECT_EQ(6600, ServoReleaseDeadlineMs(20, 0, 6000));  // 6000 + 600 > 6000
+    EXPECT_EQ(5078, ServoReleaseDeadlineMs(26, 0, 1000));  // 4616 + 462 > 1000
 }
 
 // Maestro Set Target payload (T-006): the target is in quarter-microseconds,
@@ -193,4 +211,143 @@ TEST(ServoUtils, EncodeMaestroTargetScalesToQuarterMicroseconds)
     EncodeMaestroTarget(2500, lo, hi); // 10000
     EXPECT_EQ(0x10, lo);
     EXPECT_EQ(0x4E, hi);
+}
+
+// T-010: MaestroModule holds `servo_channel channels[24] = {};`. A
+// `{}`-initialized channel must release on the 5 s default, never on a 0 ms floor.
+TEST(ServoUtils, ABraceInitializedChannelArrayReadsTheDefaultReleaseTime)
+{
+    servo_channel channels[3] = {};
+    for (const auto &ch : channels)
+    {
+        EXPECT_EQ(MAESTRO_RELEASE_DEFAULT_MS, ch.releaseMs);
+        EXPECT_EQ(5000, ch.releaseMs);
+    }
+}
+
+// T-010 amendment (Jeff): an out-of-range floor (a memset struct, a future
+// writer) falls back to the default instead of releasing at the model alone.
+TEST(ServoUtils, ServoReleaseDeadlineMsClampsAnOutOfRangeFloorToTheDefault)
+{
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 0));      // model 519: would release at ~0.5 s
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 999));    // just below MIN
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, 120001)); // just above MAX
+    EXPECT_EQ(5000, ServoReleaseDeadlineMs(0, 0, -1));
+    EXPECT_EQ(120000, ServoReleaseDeadlineMs(0, 0, 120000)); // MAX itself is in range
+}
+
+namespace
+{
+    servo_channel channel(bool enabled, bool isServo, bool on)
+    {
+        servo_channel ch = {};
+        ch.enabled = enabled;
+        ch.isServo = isServo;
+        ch.on = on;
+        return ch;
+    }
+} // namespace
+
+// T-010 amendment (Jeff): after a reload, a servo left energized but no longer
+// tracked (disabled by the new config, or not re-armed because homing failed)
+// must be sent an off, or it stays powered until power-cycle.
+TEST(ServoUtils, ChannelsToReleaseAfterReloadPicksEnergizedChannelsHomingDidNotRearm)
+{
+    servo_channel channels[6] = {
+        channel(false, true, false), // 0: was energized, now disabled -> release
+        channel(true, true, true),   // 1: was energized, homing re-armed it -> keep
+        channel(true, true, false),  // 2: was energized, homing failed to re-arm -> release
+        channel(true, false, false), // 3: was energized, now an enabled digital output -> keep (homing set its level)
+        channel(false, true, false), // 4: not energized before -> nothing to do
+        channel(false, false, false) // 5: was energized, now disabled digital -> release
+    };
+    uint32_t pending = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
+    EXPECT_EQ((1u << 0) | (1u << 2) | (1u << 5), ChannelsToReleaseAfterReload(pending, channels, 6));
+    EXPECT_EQ(0u, ChannelsToReleaseAfterReload(0, channels, 6));
+}
+
+// T-010 (PR #66 review): `on` means a release is coming only for a servo.
+// CheckServos never releases a digital channel, so a command that reaches a
+// channel the reload made disabled digital must not discard its pending off.
+TEST(ServoUtils, ChannelsToReleaseAfterReloadIgnoresOnForADisabledDigitalChannel)
+{
+    servo_channel channels[3] = {
+        channel(false, false, true), // 0: disabled digital, then commanded -> release (nothing else would)
+        channel(false, true, true),  // 1: disabled servo, then commanded -> keep (its normal release takes over)
+        channel(true, false, true)   // 2: enabled digital, then commanded -> keep (homing set its level)
+    };
+    EXPECT_EQ(1u << 0, ChannelsToReleaseAfterReload(0b111u, channels, 3));
+}
+
+// T-010: one INFO line per module shows the release times a board applied, so
+// a log-only padawan can prove what it parsed (QA case 21).
+TEST(ServoUtils, FormatReleaseTimesListsEnabledServosOffTheDefault)
+{
+    servo_channel channels[4] = {};
+    channels[0] = channel(true, true, false);
+    channels[1] = channel(true, true, false);
+    channels[1].releaseMs = 15000;
+    channels[2] = channel(true, false, false); // digital: never released, not listed
+    channels[2].releaseMs = 30000;
+    channels[3] = channel(false, true, false); // disabled: not listed
+    channels[3].releaseMs = 30000;
+    EXPECT_EQ("ch1 15000 ms; others 5000 ms", FormatReleaseTimes(channels, 4));
+
+    servo_channel defaults[2] = {channel(true, true, false), channel(true, true, false)};
+    EXPECT_EQ("all 5000 ms (default)", FormatReleaseTimes(defaults, 2));
+}
+
+// T-010 (PR #66 review): CheckServos' per-tick handling of servos a reload left
+// energized. A bit clears only once its off is queued, so a failed enqueue
+// retries next tick instead of leaving the servo powered.
+TEST(ServoUtils, StepReloadReleaseClearsABitOnlyOnceItsOffIsQueued)
+{
+    servo_channel channels[4] = {channel(false, true, false), channel(false, true, false), channel(true, true, true),
+                                 channel(false, true, false)};
+    std::vector<int> tried;
+    auto outcome = StepReloadRelease(0b1111u, channels, 4, false,
+                                     [&](int i)
+                                     {
+                                         tried.push_back(i);
+                                         if (i == 1)
+                                         {
+                                             return ReloadOffResult::QueueFull;
+                                         }
+                                         if (i == 3)
+                                         {
+                                             return ReloadOffResult::SendBusy;
+                                         }
+                                         return ReloadOffResult::Queued;
+                                     });
+    EXPECT_EQ((std::vector<int>{0, 1, 3}), tried); // ch2 was re-armed: no off
+    EXPECT_EQ(0b1010u, outcome.pending);           // ch1 and ch3 retry next tick
+    EXPECT_EQ(0b0001u, outcome.released);
+    EXPECT_EQ(0b0010u, outcome.queueFull);
+    EXPECT_EQ(0b1000u, outcome.sendBusy);
+    EXPECT_EQ(0u, outcome.noMemory);
+}
+
+TEST(ServoUtils, StepReloadReleaseRetriesANoMemoryFailure)
+{
+    servo_channel channels[1] = {channel(false, true, false)};
+    auto outcome = StepReloadRelease(0b1u, channels, 1, false, [](int) { return ReloadOffResult::NoMemory; });
+    EXPECT_EQ(0b1u, outcome.pending);
+    EXPECT_EQ(0b1u, outcome.noMemory);
+    EXPECT_EQ(0u, outcome.released);
+}
+
+TEST(ServoUtils, StepReloadReleaseWaitsWhileLoading)
+{
+    // Homing hasn't re-armed its channels yet: no off may go out.
+    servo_channel channels[1] = {channel(true, true, false)};
+    bool called = false;
+    auto outcome = StepReloadRelease(0b1u, channels, 1, true,
+                                     [&](int)
+                                     {
+                                         called = true;
+                                         return ReloadOffResult::Queued;
+                                     });
+    EXPECT_FALSE(called);
+    EXPECT_EQ(0b1u, outcome.pending);
+    EXPECT_EQ(0u, outcome.released);
 }

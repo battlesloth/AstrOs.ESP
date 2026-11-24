@@ -31,7 +31,6 @@ MaestroModule::MaestroModule(QueueHandle_t serialQueue, int idx, int baudRate)
     this->idx = idx;
     this->baudRate = baudRate;
     this->serialQueue = serialQueue;
-    this->loading = false;
 
     // Either handle missing => IsValid() is false and the creator must drop
     // this instance (loadMaestroConfigs does). Nothing else guards the handles.
@@ -110,10 +109,23 @@ void MaestroModule::LoadConfig()
     // `loading` guard in SetServoPosition; a script command waits up to
     // STATE_MUTEX_WAIT_MS and then applies or drops with a WARN; Panic waits
     // the same and then sends its offs from an unlocked read of `enabled`.
+    // The copy below resets `on` for every parsed channel, so record which servos
+    // were energized: one the new config disables, or that homing fails to
+    // re-arm, is otherwise never released. CheckServos sends their offs (T-010).
+    std::string releaseTimes;
     if (xSemaphoreTake(this->stateMutex, pdMS_TO_TICKS(STATE_MUTEX_WAIT_MS)) == pdTRUE)
     {
+        for (size_t i = 0; i < 24; i++)
+        {
+            if (channels[i].isServo && channels[i].on)
+            {
+                pendingReloadRelease |= 1u << i;
+            }
+        }
         AstrOs_Storage.loadMaestroServos(this->idx, channels, 24);
+        releaseTimes = FormatReleaseTimes(channels, 24);
         xSemaphoreGive(this->stateMutex);
+        ESP_LOGI(TAG, "Maestro module %d release times: %s", this->idx, releaseTimes.c_str());
     }
     else
     {
@@ -254,8 +266,8 @@ void MaestroModule::SetServoPosition(int channel, int ms)
     // Direct (slider) moves arrive as a stream at full speed. Arm release
     // tracking on every one, exactly as QueueCommand does: each re-arm just
     // resets the clock, so CheckServos turns the servo off one deadline (the
-    // 5 s floor at full speed) after the *last* message and never mid-drag. Deliberately no INFO log
-    // here -- it would spam the monitor at drag rate.
+    // channel's release time at full speed, 5 s by default) after the *last* message and never mid-drag. Deliberately
+    // no INFO log here -- it would spam the monitor at drag rate.
     int oldSpeed = channels[channel].speed;
     int oldAccel = channels[channel].acceleration;
 
@@ -504,18 +516,22 @@ void MaestroModule::HomeServos()
 /// enough time to cover its entire range (worst case, with slack).
 /// While a move is active, currentPos serves as the elapsed-ms
 /// accumulator; the deadline comes from ServoReleaseDeadlineMs
-/// (lib_native/AstrOsUtility/AstrOsServoUtils.hpp): the physical
-/// worst case for the channel's speed/accel plus 10 %, or a 5 s floor,
-/// whichever is greater (T-005).
+/// (lib_native/AstrOsUtility/src/AstrOsServoUtils.hpp): the physical
+/// worst case for the channel's speed/accel plus 10 %, or the channel's own
+/// release time (releaseMs, 5 s by default), whichever is greater (T-005, T-010).
+///
+/// It also releases servos a config reload left energized without tracking
+/// (pendingReloadRelease, T-010), via the pure StepReloadRelease.
 ///
 /// Runs on the esp_timer task, so nothing here may block: stateMutex and
 /// the send mutex are try-taken with zero wait and the off frame is
-/// enqueued with zero timeout. Any failure leaves the channel on and it
-/// is re-checked next tick. The decision and the enqueue happen under
-/// stateMutex so a new command cannot land its target between them.
+/// enqueued with zero timeout. Any failure is retried next tick: a tracked
+/// channel stays on, and a reload channel keeps its pending bit. The
+/// decision and the enqueue happen under stateMutex so a new command cannot
+/// land its target between them.
 /// Outcomes are logged only after stateMutex is released: a console line
 /// is a multi-ms blocking write, and every channel homed together comes
-/// due on the same tick (they all hit the 5 s floor), so logging inside
+/// due on the same tick when they share a release time (all of them, at the default), so logging inside
 /// the lock would hold it past the command paths' 50 ms wait.
 /// @param msSinceLastCheck The time since the last check in milliseconds
 void MaestroModule::CheckServos(int msSinceLastCheck)
@@ -531,6 +547,37 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
     uint32_t queueFull = 0;
     uint32_t noMemory = 0;
 
+    // Servos a config reload left energized without tracking (T-010). Decided
+    // and enqueued under stateMutex like the releases below, so a new command
+    // can't re-arm a channel between the decision and its off; the pure step
+    // keeps a bit until its off is queued and waits while loading.
+    auto trySendOff = [this](int i)
+    {
+        if (xSemaphoreTake(this->mutex, 0) != pdTRUE)
+        {
+            return ReloadOffResult::SendBusy;
+        }
+        EnqueueResult result = this->setServoOff(i, 0);
+        xSemaphoreGive(this->mutex);
+        // Exhaustive (no default): a new EnqueueResult fails the -Werror=all build here.
+        switch (result)
+        {
+        case EnqueueResult::Queued:
+            return ReloadOffResult::Queued;
+        case EnqueueResult::QueueFull:
+            return ReloadOffResult::QueueFull;
+        case EnqueueResult::NoMemory:
+            return ReloadOffResult::NoMemory;
+        }
+        return ReloadOffResult::NoMemory;
+    };
+    ReloadReleaseOutcome reload = StepReloadRelease(pendingReloadRelease, channels, 24, this->loading, trySendOff);
+    pendingReloadRelease = reload.pending;
+    uint32_t reloadReleased = reload.released;
+    sendBusy |= reload.sendBusy;
+    queueFull |= reload.queueFull;
+    noMemory |= reload.noMemory;
+
     for (size_t i = 0; i < 24; i++)
     {
         if (!channels[i].isServo || !channels[i].on)
@@ -538,7 +585,7 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
             continue;
         }
 
-        int deadline = ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration);
+        int deadline = ServoReleaseDeadlineMs(channels[i].speed, channels[i].acceleration, channels[i].releaseMs);
 
         // Stop accumulating once due, so a wedged send path cannot overflow it.
         if (channels[i].currentPos < deadline)
@@ -583,6 +630,11 @@ void MaestroModule::CheckServos(int msSinceLastCheck)
         {
             ESP_LOGI(TAG, "Turning off servo %d on module %d", i, this->idx);
         }
+    }
+    if (reloadReleased != 0)
+    {
+        ESP_LOGI(TAG, "CheckServos: module %d sent offs to channels 0x%06X left energized by a reload", this->idx,
+                 (unsigned)reloadReleased);
     }
     if (sendBusy != 0)
     {

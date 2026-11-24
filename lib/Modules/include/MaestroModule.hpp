@@ -2,6 +2,7 @@
 #define MAESTROMODULE_HPP
 
 #include <AstrOsStructs.h>
+#include <atomic>
 #include <esp_err.h>
 #include <hal/uart_types.h>
 #include <string>
@@ -59,19 +60,25 @@ private:
         Target = 4
     };
 
-    bool loading;
+    // True from the start of LoadConfig until homing is done. Atomic because
+    // LoadConfig writes it outside stateMutex (a store there can't fail, unlike a
+    // timed take) while CheckServos and SetServoPosition read it on other tasks.
+    std::atomic<bool> loading{false};
+    // Servos energized when a config reload reset their tracking (T-010). Each
+    // CheckServos tick (not while loading) sends an off, via StepReloadRelease, to
+    // those that still need one (ChannelsToReleaseAfterReload), and clears a bit only
+    // once its off is queued, so a failed enqueue retries instead of leaving the servo
+    // powered. Guarded by stateMutex.
+    uint32_t pendingReloadRelease = 0;
     int idx;
     int baudRate;
 
-    // Per-instance channel state (config + release tracking). Zero-initialized
-    // at construction. LoadConfig() copies the parsed file over entries
-    // 0..maxId as whole structs (release tracking there is reset, then
-    // HomeServos() re-arms it); entries above the file's highest id -- and all
-    // entries if the file is missing or unparseable -- keep prior state on
-    // reload. Both run on the boot / RELOAD_CONFIG path. Written by
-    // QueueCommand and SetServoPosition on task context and by Panic() on
-    // interfaceResponseQueueTask (T-004); read-modify-written by
-    // CheckServos() on the esp_timer task.
+    // Per-instance channel state (config + release tracking). `{}`-initialized
+    // at construction (zeros, except releaseMs, which takes its 5 s default). LoadConfig() copies the parsed file over
+    // entries 0..maxId as whole structs (release tracking there is reset, then HomeServos() re-arms it); entries above
+    // the file's highest id -- and all entries if the file is missing or unparseable -- keep prior state on reload.
+    // Both run on the boot / RELOAD_CONFIG path. Written by QueueCommand and SetServoPosition on task context and by
+    // Panic() on interfaceResponseQueueTask (T-004); read-modify-written by CheckServos() on the esp_timer task.
     //
     // Locking (T-003): every access is under stateMutex. QueueCommand,
     // SetServoPosition and HomeServos each hold `mutex` (the send mutex) once

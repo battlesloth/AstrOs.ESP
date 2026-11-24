@@ -12,9 +12,11 @@
 //
 // On-target code obtains a populated logger from
 // lib/AstrOsUtility_ESP/include/AstrOsLoggerEsp.h (makeEspLogger), which
-// wires each pointer to esp_log_writev() at the matching level.
+// formats each message into a 256 B buffer (longer ones are truncated) and logs
+// it through the matching ESP_LOGx macro, so lines get the standard framing.
 //
-// Signature matches esp_log_writev so the ESP adapter is a direct forward.
+// The signature takes a va_list so an adapter can format it (vsnprintf) or
+// forward it to another sink.
 struct AstrOsLogger
 {
     using LogFn = void (*)(const char *tag, const char *fmt, va_list args);
