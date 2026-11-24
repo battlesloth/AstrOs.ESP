@@ -102,6 +102,14 @@
 
 **Ruling 2: the high-water-mark check runs once per loop that handled a message,** after the drain. An idle loop doesn't check, as today, so a low stack can't log at 100 Hz.
 
+**Ruling 3 (2026-11-24, Jeff's policy, after the mixed-baud bench): a short quiet gap when a port changes speed, best effort, one try.**
+- **Policy (Jeff):** several devices on one serial channel are allowed but discouraged, at the user's own risk. The firmware makes a best effort; serial was never designed for this on one pair of wires. If a fix isn't quick and easy, it isn't worth the effort.
+- **What happened:** 2 of 8 HCR sounds (9600) were lost while slider frames (115200) streamed on the same channel. See Bench results.
+- **Likely cause, not proven:** a device at one speed hears the other speed's bytes as noise, and needs the line idle for about a character (1 ms at 9600) to find the next start bit. The old loop left about 10 ms between any two messages. The drain can send them back to back.
+- **The change:** in `SendData`'s speed-change branch, wait at least 10 ms (the old spacing) after TX is done, before changing. A port that stays at one speed never waits.
+- **If it doesn't fix it:** revert it and record the limit. No second try.
+- **Cost:** 10–20 ms per speed change, with the shared mutex held, so latency only. A panic's offs behind a sound wait for at most two of them.
+
 ## Found while reading (not in this task)
 
 - **Both channels share one mutex.** `serialMutex` in `SerialModule.cpp` is file-static, and the second `Init` overwrites (leaks) the first. While channel 1 waits for FIFO space it holds off channel 2. The drain makes that up to ten messages instead of one; it is still bounded, and `SendData` retries, so it costs latency only. Backlog.
@@ -161,6 +169,19 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 
 - **Option A in all: 28 moves from released, none fast** (16 + 8 + 4).
 - Case 14: `lastPos: 1700` in all four rounds, exactly the last slider value. Slider moves were sent over the server's websocket as the web page does (20 values, 100 ms apart).
+
+### Mixed baud (2026-11-24, option A `5817749`): 2 of 8 sounds lost under a slider stream
+
+HCR (9600) and Maestro (115200) on the body's channel 2. Jeff counted the sounds; every one was logged as sent, with no warnings. The first try played nothing: a bad power connector, fixed, and not the firmware.
+
+| Run | Sounds heard | Servos |
+|---|---|---|
+| Sounds alone (m2) | 8 of 8 | none moved |
+| Sounds between two scripted servo moves (m1) | 8 of 8 | 16 of 16 moves good |
+| Sounds during a 40/s slider stream (left pan, 32 s, 1,272 messages) | **6 of 8** (6 and 8 lost) | good throughout; one release, after the end |
+
+- Slider messages reach the Maestro in bursts of about 12, with 150–190 ms of quiet between bursts. Sounds 1–4 went out 40–120 ms after the last one, and all played. Sounds 5–8 went out in the same tick or so as one, and two of the four were lost.
+- Not run on develop, so whether the drain caused it isn't proven. Ruling 3.
 
 ### To resume (bench continued 2026-11-24)
 
