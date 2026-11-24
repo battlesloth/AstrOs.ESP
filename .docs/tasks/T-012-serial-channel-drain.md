@@ -72,4 +72,28 @@
 
 ## Implementation checklist
 
-<!-- Added when work starts. -->
+- [ ] `SerialModule`: track the baud last applied, and wait for TX to finish before changing it (Ruling 1; its own commit, before the drain)
+- [ ] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
+- [ ] `pio test -e test`; both boards build; clang-format clean
+- [ ] Fresh-context code review
+- [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
+- [ ] Bench: verbose build, case 11
+- [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
+- [ ] Case 11 and the drain comment updated with the measured numbers
+
+## Rulings (2026-11-23, before implementation)
+
+**Ruling 1: `SerialModule::SendData` changes too, although it isn't in the Task list.** The drain isn't safe without it, so it ships in this task, as its own commit.
+- **What the 10 ms tick was hiding.** On every port but the master's server link, `SendData` compares the requested baud with `uart_get_baudrate`, which returns the divider's rounded rate. By the IDF 5.5.3 formulas (80 MHz APB, both chips), 115200 reads back as 115201, as do 76800 and 230400 (76803, 230423). So it calls `uart_set_baudrate` before **every** Maestro frame. From source, not yet observed on a board.
+- `uart_set_baudrate` doesn't wait for TX. The port has no TX ring buffer (`uart_driver_install(…, 0, …)`), so `uart_write_bytes` returns with the bytes still in the 128-byte hardware FIFO. A 4-byte frame needs 347 µs at 115200.
+- With the drain, each frame of a burst would reprogram the divider while the previous frame is on the wire. Whether rewriting the same value corrupts a byte isn't documented. Two modules at different rates on one channel (the UI allows it) would corrupt for certain.
+- **The change:** remember the baud last applied, and compare with that. When it really changes, `uart_wait_tx_done` first (bounded, WARN on timeout, then change it anyway, as today). `message_id` handling, formats and the master's server link are unchanged.
+- **Check:** after bench case 11, the Maestro's Errors tab (Maestro Control Center) shows no serial framing, overrun or protocol error.
+- **Cost if wrong:** one extra int per port, and a short wait on a real baud change. Dropping the commit restores today's behavior.
+
+**Ruling 2: the high-water-mark check runs once per loop that handled a message,** after the drain. An idle loop doesn't check, as today, so a low stack can't log at 100 Hz.
+
+## Found while reading (not in this task)
+
+- **Both channels share one mutex.** `serialMutex` in `SerialModule.cpp` is file-static, and the second `Init` overwrites (leaks) the first. While channel 1 waits for FIFO space it holds off channel 2. The drain makes that up to ten messages instead of one; it is still bounded, and `SendData` retries, so it costs latency only. Backlog.
+- **`ASTROS_INTERFACE_MESSAGE` sends the wrong struct.** It queues a `queue_msg_t` to `serialCh1Queue`, whose items are the larger `queue_serial_msg_t`. Nothing posts that command today. Backlog.
