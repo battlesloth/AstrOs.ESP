@@ -108,6 +108,7 @@
 - **Likely cause, not proven:** a device at one speed hears the other speed's bytes as noise, and needs the line idle for about a character (1 ms at 9600) to find the next start bit. The old loop left about 10 ms between any two messages. The drain can send them back to back.
 - **The change:** in `SendData`'s speed-change branch, wait at least 10 ms (the old spacing) after TX is done, before changing. A port that stays at one speed never waits.
 - **If it doesn't fix it:** revert it and record the limit. No second try.
+- **Outcome (2026-11-24): it didn't fix it** (still 6 of 8, see Bench results). **Kept anyway (Jeff):** it does no harm, and it gives back the spacing the old loop had around a speed change. No second try.
 - **Cost:** 10–20 ms per speed change, with the shared mutex held, so latency only. A panic's offs behind a sound wait for at most two of them.
 
 ## Found while reading (not in this task)
@@ -147,7 +148,7 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 - **Not covered:** the Maestro's Errors tab (no Maestro Control Center available). The servos were already home at both boots, so homing put no load on the supply (M3 open).
 - Homing took 90 ms on T-012, against 860 ms on develop, and all seven servos released on time. The droid's SD config has all 24 channels enabled (left over from an earlier bench; the server's database has 8), so homing is 96 frames.
 - **Stopped here, per the checklist.** The fix changes frame pacing, which the Contract pins: Jeff's decision. The other bench cases were not run. The master is on develop (`4c0fd65`, verbose).
-- Noticed, not investigated: the T-012 image logged `App version: 1.3.0-dev.154` in `esp_app_desc` but `1.3.0-dev.156` from the firmware, after an incremental build. Those must match for an OTA version confirm; check before using a local incremental build for OTA.
+- Noticed: the T-012 image logged `App version: 1.3.0-dev.154` in `esp_app_desc` but `1.3.0-dev.156` from the firmware, after an incremental build. A clean build (2026-11-24) has the same version in both, so it's incremental builds only. They must match for an OTA version confirm: use a clean build for a local OTA.
 
 ### Option A (`5817749`, verbose): passes the jump check
 
@@ -170,18 +171,22 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 - **Option A in all: 28 moves from released, none fast** (16 + 8 + 4).
 - Case 14: `lastPos: 1700` in all four rounds, exactly the last slider value. Slider moves were sent over the server's websocket as the web page does (20 values, 100 ms apart).
 
-### Mixed baud (2026-11-24, option A `5817749`): 2 of 8 sounds lost under a slider stream
+### Mixed baud (2026-11-24): sounds lost under a slider stream, with and without the gap
 
 HCR (9600) and Maestro (115200) on the body's channel 2. Jeff counted the sounds; every one was logged as sent, with no warnings. The first try played nothing: a bad power connector, fixed, and not the firmware.
 
 | Run | Sounds heard | Servos |
 |---|---|---|
-| Sounds alone (m2) | 8 of 8 | none moved |
-| Sounds between two scripted servo moves (m1) | 8 of 8 | 16 of 16 moves good |
-| Sounds during a 40/s slider stream (left pan, 32 s, 1,272 messages) | **6 of 8** (6 and 8 lost) | good throughout; one release, after the end |
+| Sounds alone (m2), `5817749` | 8 of 8 | none moved |
+| Sounds between two scripted servo moves (m1), `5817749` | 8 of 8 | 16 of 16 moves good |
+| Sounds during a 40/s slider stream (left pan, 32 s, 1,272 messages), `5817749` | **6 of 8** (6 and 8 lost) | good throughout; one release, after the end |
+| The same, with the gap (`c1f1143`) | **6 of 8** (3 and 4 lost) | good throughout; one release, after the end |
+| Sounds alone (m2) twice, `c1f1143` | 16 of 16 | none moved |
 
 - Slider messages reach the Maestro in bursts of about 12, with 150–190 ms of quiet between bursts. Sounds 1–4 went out 40–120 ms after the last one, and all played. Sounds 5–8 went out in the same tick or so as one, and two of the four were lost.
-- Not run on develop, so whether the drain caused it isn't proven. Ruling 3.
+- In the gap run all 8 sounds went out in the middle of a burst, and still 2 were lost. The gap leaves at least 10 ms quiet on both sides of a sound, so a collision with the Maestro's bytes doesn't explain these.
+- **What the numbers say:** no slider traffic, 32 of 32; slider traffic, 12 of 16. A speed change alone isn't enough (m1 made 16). Cause not found.
+- **Known limit:** an HCR sharing a channel with a Maestro can miss sounds while a slider is dragged. Not run on develop, so whether the drain makes it worse isn't known. Ruling 3's policy applies.
 
 ### To resume (bench continued 2026-11-24)
 
@@ -197,7 +202,7 @@ HCR (9600) and Maestro (115200) on the body's channel 2. Jeff counted the sounds
 
 **Left to run, in order:**
 1. ~~Cases 13, 14 and 15~~ (pass, 2026-11-24).
-2. Mixed baud: an HCR sound while servos move on channel 2, repeated (Review I2).
+2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
 3. Panic, `maestro-servo-release.md` case 7.
 4. Cases 9–11 (slider hammering, release races).
 5. Case 11 of `random-span-events.md`: verbose, then flag-off with the timing lines (`tmp/t012-instrumentation`, rebase onto this branch) ×3. Use four Maestro digital spans on outputs 8–11, so the queue really fills (Review I1), and settle the expected number with Jeff.
