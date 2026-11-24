@@ -188,9 +188,17 @@ HCR (9600) and Maestro (115200) on the body's channel 2. Jeff counted the sounds
 - **What the numbers say:** no slider traffic, 32 of 32; slider traffic, 12 of 16. A speed change alone isn't enough (m1 made 16). Cause not found.
 - **Known limit:** an HCR sharing a channel with a Maestro can miss sounds while a slider is dragged. Not run on develop, so whether the drain makes it worse isn't known. Ruling 3's policy applies.
 
+### Panic (2026-11-24, `c1f1143`, verbose): pass
+
+Panic sent with `POST /api/panicStop`, as the panic button does.
+
+- **Case 7:** both pans and both tilts moving at speed 5, panic 1.7 s in. All four stopped partway. `7 off(s) queued, 0 failed` within 20 ms; no release in the next 30 s.
+- **Panic during the holds (7c's shape, 4 tries):** panic 110, 150 and 220 ms after the first of four servo commands (one try landed before them). In the closest, 30 ms after the last command, with frames still behind the holds, the offs took 40 ms to queue. 7 queued, 0 failed every time; nothing moved after. `dropped` was 0 each time, so no servo command was still in `servoQueue`: that part of 7c isn't covered.
+- **Case 7d, recovery:** each servo snapped to the interrupted move's target, then went home at its speed. `lastPos` is the last commanded target, and panic doesn't change it, so the pre-position frame jumps there. T-006 left `Panic` out of scope; not from T-012. Added to the existing `lastPos` item in the Backlog.
+
 ### To resume (bench continued 2026-11-24)
 
-**State.** The master runs option A (`5817749`, verbose). It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5`, `sT012m1` and `sT012m2` on the SD card. Nothing on this branch is pushed.
+**State.** The master runs option A plus the gap (`c1f1143`, verbose). It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5`, `sT012m1`–`sT012m2` and `sT012p1`–`sT012p3` on the SD card. **Ports swapped** when the droid was power-cycled: the master's console is now `/dev/ttyACM0`. Find it by its ID (`80:65:99:BB:32:EC`), and give PlatformIO the resolved `/dev/ttyACM*` path (it can't use the by-id one). Nothing on this branch is pushed.
 
 **Setup, confirmed with Jeff:**
 - The master's server link is on this laptop (`/dev/ttyUSB0`); its console is `/dev/ttyACM1`.
@@ -203,7 +211,7 @@ HCR (9600) and Maestro (115200) on the body's channel 2. Jeff counted the sounds
 **Left to run, in order:**
 1. ~~Cases 13, 14 and 15~~ (pass, 2026-11-24).
 2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
-3. Panic, `maestro-servo-release.md` case 7.
+3. ~~Panic, `maestro-servo-release.md` case 7~~ (pass, 2026-11-24).
 4. Cases 9–11 (slider hammering, release races).
 5. Case 11 of `random-span-events.md`: verbose, then flag-off with the timing lines (`tmp/t012-instrumentation`, rebase onto this branch) ×3. Use four Maestro digital spans on outputs 8–11, so the queue really fills (Review I1), and settle the expected number with Jeff.
 6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
