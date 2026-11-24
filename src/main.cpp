@@ -115,6 +115,7 @@ static std::atomic<uint32_t> dispatchMallocFailureCount{0};
  * animation
  **********************************/
 #define QUEUE_LENGTH 5
+#define SERIAL_CHANNEL_QUEUE_LENGTH 10
 
 /**********************************
  * Reset Button
@@ -295,8 +296,8 @@ void init(void)
     animationQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_ani_cmd_t));
     serviceQueue = xQueueCreate(QUEUE_LENGTH, sizeof(queue_svc_cmd_t));
     interfaceResponseQueue = xQueueCreate(QUEUE_LENGTH, sizeof(astros_interface_response_t));
-    serialCh1Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
-    serialCh2Queue = xQueueCreate(10, sizeof(queue_serial_msg_t));
+    serialCh1Queue = xQueueCreate(SERIAL_CHANNEL_QUEUE_LENGTH, sizeof(queue_serial_msg_t));
+    serialCh2Queue = xQueueCreate(SERIAL_CHANNEL_QUEUE_LENGTH, sizeof(queue_serial_msg_t));
     servoQueue = xQueueCreate(20, sizeof(queue_msg_t));
     i2cQueue = xQueueCreate(16, sizeof(queue_msg_t));
     gpioQueue = xQueueCreate(10, sizeof(queue_msg_t));
@@ -1412,26 +1413,23 @@ void animationQueueTask(void *arg)
 }
 */
 
-void serialCh1QueueTask(void *arg)
+// Both serial channels run this loop, so they can't drift. It handles every
+// message already queued, then waits a tick: a Maestro change is three or four
+// messages, and one per tick would make each change cost 30-40 ms. Capped at one queue
+// length, so a producer refilling the queue can't keep the task from yielding.
+static void serialChannelQueueLoop(QueueHandle_t queue, SerialModule &channel, const char *name)
 {
-    QueueHandle_t serialCh1Queue;
-
-    serialCh1Queue = (QueueHandle_t)arg;
     queue_serial_msg_t msg;
 
     while (1)
     {
-        if (xQueueReceive(serialCh1Queue, &(msg), 0))
-        {
-            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
-            if (highWaterMark < 500)
-            {
-                ESP_LOGW(TAG, "Serial CH1 Queue Stack HWM: %d", highWaterMark);
-            }
+        int handled = 0;
 
+        while (handled < SERIAL_CHANNEL_QUEUE_LENGTH && xQueueReceive(queue, &(msg), 0))
+        {
             if (msg.message_id == 0)
             {
-                SerialChannel1.SendCommand(msg.data);
+                channel.SendCommand(msg.data);
             }
             else if (msg.message_id == 1)
             {
@@ -1439,48 +1437,34 @@ void serialCh1QueueTask(void *arg)
 
                 ESP_LOGD(TAG, "Serial message: %s", str.c_str());
 
-                SerialChannel1.SendBytes(msg.baudrate, msg.data, msg.dataSize);
+                channel.SendBytes(msg.baudrate, msg.data, msg.dataSize);
             }
 
             free(msg.data);
+            handled++;
         }
+
+        if (handled > 0)
+        {
+            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+            if (highWaterMark < 500)
+            {
+                ESP_LOGW(TAG, "Serial %s Queue Stack HWM: %d", name, highWaterMark);
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
+void serialCh1QueueTask(void *arg)
+{
+    serialChannelQueueLoop((QueueHandle_t)arg, SerialChannel1, "CH1");
+}
+
 void serialCh2QueueTask(void *arg)
 {
-    QueueHandle_t serialCh2Queue;
-
-    serialCh2Queue = (QueueHandle_t)arg;
-    queue_serial_msg_t msg;
-
-    while (1)
-    {
-        if (xQueueReceive(serialCh2Queue, &(msg), 0))
-        {
-            auto highWaterMark = uxTaskGetStackHighWaterMark(NULL);
-            if (highWaterMark < 500)
-            {
-                ESP_LOGW(TAG, "Serial CH2 Queue Stack HWM: %d", highWaterMark);
-            }
-
-            if (msg.message_id == 0)
-            {
-                SerialChannel2.SendCommand(msg.data);
-            }
-            else if (msg.message_id == 1)
-            {
-                std::string str(reinterpret_cast<char *>(msg.data), msg.dataSize);
-
-                ESP_LOGD(TAG, "Serial message: %s", str.c_str());
-                SerialChannel2.SendBytes(msg.baudrate, msg.data, msg.dataSize);
-            }
-
-            free(msg.data);
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    serialChannelQueueLoop((QueueHandle_t)arg, SerialChannel2, "CH2");
 }
 
 void servoQueueTask(void *arg)

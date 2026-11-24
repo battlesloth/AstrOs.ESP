@@ -72,9 +72,9 @@
 
 ## Implementation checklist
 
-- [ ] `SerialModule`: track the baud last applied, and wait for TX to finish before changing it (Ruling 1; its own commit, before the drain)
-- [ ] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
-- [ ] `pio test -e test`; both boards build; clang-format clean
+- [x] `SerialModule`: track the baud last applied, and wait for TX to finish before changing it (Ruling 1; its own commit, before the drain)
+- [x] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
+- [x] `pio test -e test` 631/631; both boards build; clang-format clean
 - [ ] Fresh-context code review
 - [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
 - [ ] Bench: verbose build, case 11
