@@ -150,3 +150,25 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 - Same servo, scripts and method as above; each move from released, no warnings, released on time after every move. At the drain's 4-in-8 rate, 16 slow moves would happen about once in 65,000.
 - Homing took 970 ms: every channel's first frame is a pre-position frame, so the servos start about 40 ms apart, as on develop. That closes M3 for homing.
 - This covers case 12 (inverted). Cases 13–15 and the rest of the bench are still to run.
+
+### To resume (stopped 2026-11-23 evening, Jeff: finish in the morning)
+
+**State.** The master runs option A (`5817749`, verbose), left pan home and limp. It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5` on the SD card. Nothing on this branch is pushed.
+
+**Setup, confirmed with Jeff:**
+- The master's server link is on this laptop (`/dev/ttyUSB0`); its console is `/dev/ttyACM1`.
+- Server: a throwaway build of AstrOs.Server `develop` (2cb15025) against a copy of `.data/database.sqlite3` (`DATABASE_PATH` override, port 3000), approved. The real database and the T-016 checkout aren't touched. It was in the session scratchpad, so rebuild it if `/tmp` was cleared.
+- No web page on the throwaway server, so no panic button: Jeff cuts servo power by hand.
+- The HCR is connected on channel 2 (9600) and plays sounds. Maestro outputs 8–11 are empty. Maestro Control Center isn't available, so the Errors tab can't be checked.
+
+**Jump-check scripts** (one event at 0 unless noted, `speed` 10, `acceleration` 0): j1 ch4 → 0, j2 ch4 → 100, j3 ch2 → 100, j4 ch2 → 0, j5 ch2 → 0 then 100 at 2 s.
+
+**Left to run, in order:**
+1. Cases 13 (j3 then j4, right tilt, from limp), 14 (slider then a script move) and 15 (j5, the control).
+2. Mixed baud: an HCR sound while servos move on channel 2, repeated (Review I2).
+3. Panic, `maestro-servo-release.md` case 7.
+4. Cases 9–11 (slider hammering, release races).
+5. Case 11 of `random-span-events.md`: verbose, then flag-off with the timing lines (`tmp/t012-instrumentation`, rebase onto this branch) ×3. Use four Maestro digital spans on outputs 8–11, so the queue really fills (Review I1), and settle the expected number with Jeff.
+6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
+
+**Then:** case 11 and the drain comment with the measured numbers, a review of the option A change, and the PR.
