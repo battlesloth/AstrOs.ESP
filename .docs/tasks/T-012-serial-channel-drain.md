@@ -83,6 +83,7 @@
 - [x] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
 - [x] `pio test -e test` 631/631; both boards build; clang-format clean
 - [x] Fresh-context code review (see Review notes)
+- [x] Option A (Contract amendment): hold after a pre-position frame; jump check 16 of 16 slow
 - [ ] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23: see Bench results.**
 - [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
 - [ ] Bench: verbose build, case 11
@@ -136,6 +137,16 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 - **The speed varies move to move, in both directions,** for the same command. That fits the mechanism in C1: the target now follows the pre-position frame by ~1 ms, and whether the Maestro acts on the pre-position frame first is a matter of timing. The gap on develop is at least 30 ms.
 - **Small sample** (one-tailed p ≈ 0.04), but predicted before the run, and it also matches the v1.2.2 bug's symptom.
 - **Not covered:** the Maestro's Errors tab (no Maestro Control Center available). The servos were already home at both boots, so homing put no load on the supply (M3 open).
-- Homing on T-012 took 90 ms for eight channels, against ~320 ms by the old pacing, and all seven servos released on time.
+- Homing took 90 ms on T-012, against 860 ms on develop, and all seven servos released on time. The droid's SD config has all 24 channels enabled (left over from an earlier bench; the server's database has 8), so homing is 96 frames.
 - **Stopped here, per the checklist.** The fix changes frame pacing, which the Contract pins: Jeff's decision. The other bench cases were not run. The master is on develop (`4c0fd65`, verbose).
 - Noticed, not investigated: the T-012 image logged `App version: 1.3.0-dev.154` in `esp_app_desc` but `1.3.0-dev.156` from the firmware, after an incremental build. Those must match for an OTA version confirm; check before using a local incremental build for OTA.
+
+### Option A (`5817749`, verbose): passes the jump check
+
+| Firmware | Moves, alternating out / back | Fast |
+|---|---|---|
+| Option A (`5817749`) | slow × 16 | 0 of 16 |
+
+- Same servo, scripts and method as above; each move from released, no warnings, released on time after every move. At the drain's 4-in-8 rate, 16 slow moves would happen about once in 65,000.
+- Homing took 970 ms: every channel's first frame is a pre-position frame, so the servos start about 40 ms apart, as on develop. That closes M3 for homing.
+- This covers case 12 (inverted). Cases 13–15 and the rest of the bench are still to run.
