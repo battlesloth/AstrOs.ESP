@@ -109,7 +109,9 @@ No defect found in the loop or the baud tracking beyond M2. Checked against the 
   - The acceptance criteria would pass with the bug present: case 11's servo runs at speed 0. Hence cases 12–15 above, first.
 - **I1 (Important): case 11's load no longer fills the queue.** Two 20–40 ms spans ask for ~60 changes/s and `servoQueueTask` now serves 100/s, so "expected ~100 ms" and the servo half-full lines won't appear. The load or the expected number must change before the number goes into case 11. Open: Jeff's call.
 - **I2 (Important): the baud-change branch gets little coverage** with only a Maestro on the channel. The droid's body has an HCR at 9600 on the Maestro's channel 2, or a USB-serial adapter can read the bytes. Don't judge that run by the Maestro's Errors tab.
-- **M2, fixed:** `baud <= 0` is refused with an ERROR. The HAL accepts −1 as divider 0; the old code then divided by it on readback (a reboot), and Ruling 1's version could have stalled both channels.
+- **M2, fixed:** a rate outside 300–5000000 is refused with an ERROR, and the message goes out at the current rate.
+  - The HAL accepts −1 and anything above 80 MHz as divider 0. The old code then divided by it on readback (a reboot), and Ruling 1's version could have stalled both channels. The first fix (54f0beb) caught only `baud <= 0`; the commit security review found the upper end.
+  - Not dropped: `SendData` carries Maestro frames too, so a drop would lose a panic's offs on a Maestro with a bad configured baud.
 - **M3 (watch):** homing and multi-servo events now start servos ~10 ms apart or less, where the old loop spread them 40 ms apart. Watch the supply on the first homing.
 - **M4:** take a baseline of the Maestro's Errors tab after boot, and re-read it after a sync and a panic, not only after case 11.
 - **Corrects the Context:** every scripted servo move is four frames, since `lastPos` is sent whether or not the servo is released. Three is digital channels and sliders.

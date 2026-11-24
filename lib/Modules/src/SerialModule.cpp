@@ -15,6 +15,9 @@ static SemaphoreHandle_t serialMutex;
 static const int RX_BUF_SIZE = 1024;
 // A full 128-byte TX FIFO takes 133 ms at 9600 baud, the slowest rate the server offers.
 static const int TX_DONE_WAIT_MS = 500;
+// Rates a port may be set to. The server offers 9600-115200; the UART does 5 Mbaud.
+static const int MIN_BAUD = 300;
+static const int MAX_BAUD = 5000000;
 
 SerialModule SerialMod;
 
@@ -108,10 +111,12 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
     {
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
-            if (!this->isMaster && baud <= 0)
+            if (!this->isMaster && (baud < MIN_BAUD || baud > MAX_BAUD))
             {
-                // The HAL takes -1 (a malformed command) as divider 0, which would
-                // stall TX while this task holds the mutex both channels share.
+                // The HAL accepts some bad rates (-1 from a malformed command, or
+                // anything above its 80 MHz clock) as divider 0, which would stall
+                // TX while this task holds the mutex both channels share. Send at
+                // the current rate: a drop here could lose a panic's servo offs.
                 ESP_LOGE(TAG, "Serial port %d - Invalid baudrate %d, keeping %d", this->port, baud, this->currentBaud);
             }
             // don't change the baud rate if this is the master node
