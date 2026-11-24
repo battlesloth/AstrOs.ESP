@@ -29,6 +29,13 @@
 - **Both channels share one loop body.** `serialCh1QueueTask` and `serialCh2QueueTask` call it with their queue and `SerialModule`, so the two can't drift.
 - **Unchanged:** queue lengths, task priorities and stacks, `MaestroModule`'s frames and `enqueueFrame` waits, the generic-serial and Kangaroo message formats, and every other queue task.
 
+**Amended 2026-11-23 (Jeff, option A, after the first bench):** the drain holds after a pre-position frame.
+- `MaestroModule` sends its pre-position frame (`lastPosUs != -1` in `setServoPosition`: every scripted servo move, and homing's explicit off) as `message_id` 2: send the bytes, then hold the channel for **at least 30 ms** before its next message. 30 ms is the gap the one-frame-per-tick loop gave, and the one T-006's bench passed with.
+- Everything else drains at full speed: digital channels and slider moves have no pre-position frame. A servo move therefore costs about what it does today (30–40 ms), so a queue of servo changes drains no faster than before; on/off changes do.
+- `queue_serial_msg_t` keeps its fields. Ids 0 and 1, the frames themselves, their order and `enqueueFrame`'s waits are unchanged.
+- A hold yields (`vTaskDelay`), so the cap and the yield rules above still stand. Up to three holds can sit ahead of a panic's offs in a full queue (~120 ms, against 100 ms today).
+- **Acceptance, added:** the jump check (Bench results), 16 moves from released on this build, none fast.
+
 ## Task
 
 - **The shared loop body:** e.g. `static void serialChannelQueueLoop(QueueHandle_t queue, SerialModule &channel, const char *name)` in `src/main.cpp`. It's the task loop, so it stays in `main.cpp`, consistent with the "thin consumer loops" item in § main.cpp decomposition. Both task entry points call it.
