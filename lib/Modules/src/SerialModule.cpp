@@ -15,6 +15,9 @@ static SemaphoreHandle_t serialMutex;
 static const int RX_BUF_SIZE = 1024;
 // A full 128-byte TX FIFO takes 133 ms at 9600 baud, the slowest rate the server offers.
 static const int TX_DONE_WAIT_MS = 500;
+// Quiet time on the line before a speed change. A character at 9600, the slowest rate
+// the server offers, takes about 1 ms.
+static const int BAUD_CHANGE_GAP_MS = 10;
 // Rates a port may be set to. The server offers 9600-115200; the UART does 5 Mbaud.
 static const int MIN_BAUD = 300;
 static const int MAX_BAUD = 5000000;
@@ -132,6 +135,11 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
                     ESP_LOGW(TAG, "Serial port %d - TX not done after %d ms, changing baudrate to %d anyway",
                              this->port, TX_DONE_WAIT_MS, baud);
                 }
+
+                // Devices sharing the line hear each other's rate as noise, and need
+                // it quiet to find the next start bit. Best effort (T-012).
+                // One tick more: vTaskDelay(n) can end up to a tick short of n.
+                vTaskDelay(pdMS_TO_TICKS(BAUD_CHANGE_GAP_MS) + 1);
 
                 err = uart_set_baudrate(port, (uint32_t)baud);
 
