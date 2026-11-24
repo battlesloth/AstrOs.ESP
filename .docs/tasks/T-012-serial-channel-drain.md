@@ -84,7 +84,7 @@
 - [x] `pio test -e test` 631/631; both boards build; clang-format clean
 - [x] Fresh-context code review (see Review notes)
 - [x] Option A (Contract amendment): hold after a pre-position frame; jump check 16 of 16 slow
-- [ ] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23: see Bench results.**
+- [x] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23 on the plain drain; passes on option A (2026-11-24): see Bench results.**
 - [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
 - [ ] Bench: verbose build, case 11
 - [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
@@ -149,11 +149,22 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 
 - Same servo, scripts and method as above; each move from released, no warnings, released on time after every move. At the drain's 4-in-8 rate, 16 slow moves would happen about once in 65,000.
 - Homing took 970 ms: every channel's first frame is a pre-position frame, so the servos start about 40 ms apart, as on develop. That closes M3 for homing.
-- This covers case 12 (inverted). Cases 13–15 and the rest of the bench are still to run.
+- This covers case 12 (inverted).
 
-### To resume (stopped 2026-11-23 evening, Jeff: finish in the morning)
+**Cases 13–15, 2026-11-24, same build** (the master hadn't restarted: up 9.9 h). Right tilt (ch2, not inverted, 1105–2300; position 0 is up), speed 10, accel 0. Jeff judged each move by eye; no warnings in the log.
 
-**State.** The master runs option A (`5817749`, verbose), left pan home and limp. It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5` on the SD card. Nothing on this branch is pushed.
+| Case | Moves | Fast |
+|---|---|---|
+| 13, scripted end to end from released | 8 | 0 |
+| 14, slider to 1700, released, then scripted to 2300 | 4 | 0 |
+| 15, reversed while energized (the control) | 2 | 0 (both smooth) |
+
+- **Option A in all: 28 moves from released, none fast** (16 + 8 + 4).
+- Case 14: `lastPos: 1700` in all four rounds, exactly the last slider value. Slider moves were sent over the server's websocket as the web page does (20 values, 100 ms apart).
+
+### To resume (bench continued 2026-11-24)
+
+**State.** The master runs option A (`5817749`, verbose). It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5`, `sT012m1` and `sT012m2` on the SD card. Nothing on this branch is pushed.
 
 **Setup, confirmed with Jeff:**
 - The master's server link is on this laptop (`/dev/ttyUSB0`); its console is `/dev/ttyACM1`.
@@ -161,10 +172,10 @@ Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved 
 - No web page on the throwaway server, so no panic button: Jeff cuts servo power by hand.
 - The HCR is connected on channel 2 (9600) and plays sounds. Maestro outputs 8–11 are empty. Maestro Control Center isn't available, so the Errors tab can't be checked.
 
-**Jump-check scripts** (one event at 0 unless noted, `speed` 10, `acceleration` 0): j1 ch4 → 0, j2 ch4 → 100, j3 ch2 → 100, j4 ch2 → 0, j5 ch2 → 0 then 100 at 2 s.
+**Jump-check scripts** (one event at 0 unless noted, `speed` 10, `acceleration` 0): j1 ch4 → 0, j2 ch4 → 100, j3 ch2 → 100, j4 ch2 → 0, j5 ch2 → 0 then 100 at 2 s. **Mixed-baud scripts:** m1 eight rounds 4 s apart (ch2 move, HCR sound, ch4 move at the same time), m2 the eight sounds alone (the baseline).
 
 **Left to run, in order:**
-1. Cases 13 (j3 then j4, right tilt, from limp), 14 (slider then a script move) and 15 (j5, the control).
+1. ~~Cases 13, 14 and 15~~ (pass, 2026-11-24).
 2. Mixed baud: an HCR sound while servos move on channel 2, repeated (Review I2).
 3. Panic, `maestro-servo-release.md` case 7.
 4. Cases 9–11 (slider hammering, release races).
