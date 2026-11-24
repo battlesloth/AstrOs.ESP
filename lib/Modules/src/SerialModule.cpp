@@ -108,8 +108,14 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
     {
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
+            if (!this->isMaster && baud <= 0)
+            {
+                // The HAL takes -1 (a malformed command) as divider 0, which would
+                // stall TX while this task holds the mutex both channels share.
+                ESP_LOGE(TAG, "Serial port %d - Invalid baudrate %d, keeping %d", this->port, baud, this->currentBaud);
+            }
             // don't change the baud rate if this is the master node
-            if (!this->isMaster && this->currentBaud != baud)
+            else if (!this->isMaster && this->currentBaud != baud)
             {
                 // uart_write_bytes returns with the last message still in the TX
                 // FIFO, and uart_set_baudrate doesn't wait for it: let it finish,

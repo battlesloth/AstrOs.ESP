@@ -28,7 +28,7 @@ private:
     int defaultBaudrate;
     // The rate last applied to the port, as requested. uart_get_baudrate returns
     // the divider's rounded rate instead (115200 reads back as 115201), so
-    // comparing with that would reprogram the UART before every message.
+    // comparing with that would reprogram the UART before every Maestro frame.
     int currentBaud = 0;
     bool isMaster;
 

@@ -75,7 +75,8 @@
 - [x] `SerialModule`: track the baud last applied, and wait for TX to finish before changing it (Ruling 1; its own commit, before the drain)
 - [x] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
 - [x] `pio test -e test` 631/631; both boards build; clang-format clean
-- [ ] Fresh-context code review
+- [x] Fresh-context code review (see Review notes)
+- [ ] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins.
 - [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
 - [ ] Bench: verbose build, case 11
 - [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
@@ -97,3 +98,19 @@
 
 - **Both channels share one mutex.** `serialMutex` in `SerialModule.cpp` is file-static, and the second `Init` overwrites (leaks) the first. While channel 1 waits for FIFO space it holds off channel 2. The drain makes that up to ten messages instead of one; it is still bounded, and `SendData` retries, so it costs latency only. Backlog.
 - **`ASTROS_INTERFACE_MESSAGE` sends the wrong struct.** It queues a `queue_msg_t` to `serialCh1Queue`, whose items are the larger `queue_serial_msg_t`. Nothing posts that command today. Backlog.
+
+## Review notes (2026-11-23, fresh context, before the bench)
+
+No defect found in the loop or the baud tracking beyond M2. Checked against the code before acting:
+
+- **C1 (Critical, unproven): the drain removes the gap T-006's pre-position frame may rely on.**
+  - `QueueCommand` queues pre-position, speed, accel and target together. The old loop put 10 ms between frames, so the target followed the pre-position frame by at least 30 ms; now it follows by about 1 ms (16 bytes contiguous at 115200).
+  - If the Maestro applies a released channel's target only on its own update, the pre-position frame is overwritten before it acts, and the move jumps as before v1.2.2. The Maestro firmware is closed, and the reviewer's forum sources disagree.
+  - The acceptance criteria would pass with the bug present: case 11's servo runs at speed 0. Hence cases 12–15 above, first.
+- **I1 (Important): case 11's load no longer fills the queue.** Two 20–40 ms spans ask for ~60 changes/s and `servoQueueTask` now serves 100/s, so "expected ~100 ms" and the servo half-full lines won't appear. The load or the expected number must change before the number goes into case 11. Open: Jeff's call.
+- **I2 (Important): the baud-change branch gets little coverage** with only a Maestro on the channel. The droid's body has an HCR at 9600 on the Maestro's channel 2, or a USB-serial adapter can read the bytes. Don't judge that run by the Maestro's Errors tab.
+- **M2, fixed:** `baud <= 0` is refused with an ERROR. The HAL accepts −1 as divider 0; the old code then divided by it on readback (a reboot), and Ruling 1's version could have stalled both channels.
+- **M3 (watch):** homing and multi-servo events now start servos ~10 ms apart or less, where the old loop spread them 40 ms apart. Watch the supply on the first homing.
+- **M4:** take a baseline of the Maestro's Errors tab after boot, and re-read it after a sync and a panic, not only after case 11.
+- **Corrects the Context:** every scripted servo move is four frames, since `lastPos` is sent whether or not the servo is released. Three is digital channels and sliders.
+- **M1 (note):** a Maestro at 9600 can now fill the TX FIFO, so a channel can hold the shared mutex for up to ~123 ms. Latency only; same Backlog item.
