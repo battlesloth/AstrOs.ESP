@@ -13,6 +13,8 @@ static const char *TAG = "SerialModule";
 static SemaphoreHandle_t serialMutex;
 
 static const int RX_BUF_SIZE = 1024;
+// A full 128-byte TX FIFO takes 133 ms at 9600 baud, the slowest rate the server offers.
+static const int TX_DONE_WAIT_MS = 500;
 
 SerialModule SerialMod;
 
@@ -68,6 +70,8 @@ esp_err_t SerialModule::InstallSerial(uart_port_t port, int tx, int rx, int baud
         return err;
     }
 
+    this->currentBaud = baud;
+
     err = uart_set_pin(port, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))
@@ -105,33 +109,28 @@ void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
             // don't change the baud rate if this is the master node
-            if (!this->isMaster)
+            if (!this->isMaster && this->currentBaud != baud)
             {
-
-                uint32_t currentBaud = 0;
-
-                auto err = uart_get_baudrate(port, &currentBaud);
+                // uart_write_bytes returns with the last message still in the TX
+                // FIFO, and uart_set_baudrate doesn't wait for it: let it finish,
+                // or it goes out at the new rate.
+                auto err = uart_wait_tx_done(port, pdMS_TO_TICKS(TX_DONE_WAIT_MS));
 
                 if (logError(TAG, __FUNCTION__, __LINE__, err))
                 {
-                    ESP_LOGE(TAG, "Serial port %d - Failed to get baudrate!", this->port);
+                    ESP_LOGW(TAG, "Serial port %d - TX not done after %d ms, changing baudrate to %d anyway",
+                             this->port, TX_DONE_WAIT_MS, baud);
                 }
-                else if (currentBaud != (uint32_t)baud)
-                {
-                    err = uart_set_baudrate(port, (uint32_t)baud);
 
-                    if (logError(TAG, __FUNCTION__, __LINE__, err))
-                    {
-                        ESP_LOGE(TAG, "Serial port %d - Failed to set baudrate %d!", this->port, baud);
-                    }
-                    else
-                    {
-                        auto err = uart_get_baudrate(port, &currentBaud);
-                        if (logError(TAG, __FUNCTION__, __LINE__, err))
-                        {
-                            ESP_LOGE(TAG, "Serial port %d - Failed to get baudrate after setting it!", this->port);
-                        }
-                    }
+                err = uart_set_baudrate(port, (uint32_t)baud);
+
+                if (logError(TAG, __FUNCTION__, __LINE__, err))
+                {
+                    ESP_LOGE(TAG, "Serial port %d - Failed to set baudrate %d!", this->port, baud);
+                }
+                else
+                {
+                    this->currentBaud = baud;
                 }
             }
 
