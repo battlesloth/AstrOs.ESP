@@ -76,7 +76,7 @@
 - [x] `serialChannelQueueLoop` in `src/main.cpp`; both task entry points call it; one constant for the queue length and the per-loop cap
 - [x] `pio test -e test` 631/631; both boards build; clang-format clean
 - [x] Fresh-context code review (see Review notes)
-- [ ] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins.
+- [ ] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23: see Bench results.**
 - [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
 - [ ] Bench: verbose build, case 11
 - [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
@@ -116,3 +116,19 @@ No defect found in the loop or the baud tracking beyond M2. Checked against the 
 - **M4:** take a baseline of the Maestro's Errors tab after boot, and re-read it after a sync and a panic, not only after case 11.
 - **Corrects the Context:** every scripted servo move is four frames, since `lastPos` is sent whether or not the servo is released. Three is digital channels and sliders.
 - **M1 (note):** a Maestro at 9600 can now fill the TX FIFO, so a channel can hold the shared mutex for up to ~123 ms. Latency only; same Backlog item.
+
+## Bench results (2026-11-23): the drain brings the jump back (C1 confirmed)
+
+Master (metro_s3), verbose builds, left pan (ch4: inverted, 1300–1830), moved by one-event scripts at speed 10, accel 0, each from released. A 530 µs move should take ~2.1 s. Jeff judged each move by eye; commands were logged with identical speed, accel and `lastPos`, and no warnings.
+
+| Firmware | Moves, alternating out / back | Fast |
+|---|---|---|
+| T-012 (`ccabfd6`) | slow, fast, slow, slow, slow, fast, fast, fast | 4 of 8 |
+| develop (`4c0fd65`, no drain) | slow × 8 | 0 of 8 |
+
+- **The speed varies move to move, in both directions,** for the same command. That fits the mechanism in C1: the target now follows the pre-position frame by ~1 ms, and whether the Maestro acts on the pre-position frame first is a matter of timing. The gap on develop is at least 30 ms.
+- **Small sample** (one-tailed p ≈ 0.04), but predicted before the run, and it also matches the v1.2.2 bug's symptom.
+- **Not covered:** the Maestro's Errors tab (no Maestro Control Center available). The servos were already home at both boots, so homing put no load on the supply (M3 open).
+- Homing on T-012 took 90 ms for eight channels, against ~320 ms by the old pacing, and all seven servos released on time.
+- **Stopped here, per the checklist.** The fix changes frame pacing, which the Contract pins: Jeff's decision. The other bench cases were not run. The master is on develop (`4c0fd65`, verbose).
+- Noticed, not investigated: the T-012 image logged `App version: 1.3.0-dev.154` in `esp_app_desc` but `1.3.0-dev.156` from the firmware, after an incremental build. Those must match for an OTA version confirm; check before using a local incremental build for OTA.
