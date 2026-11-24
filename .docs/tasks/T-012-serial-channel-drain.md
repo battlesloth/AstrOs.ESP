@@ -196,6 +196,29 @@ Panic sent with `POST /api/panicStop`, as the panic button does.
 - **Panic during the holds (7c's shape, 4 tries):** panic 110, 150 and 220 ms after the first of four servo commands (one try landed before them). In the closest, 30 ms after the last command, with frames still behind the holds, the offs took 40 ms to queue. 7 queued, 0 failed every time; nothing moved after. `dropped` was 0 each time, so no servo command was still in `servoQueue`: that part of 7c isn't covered.
 - **Case 7d, recovery:** each servo snapped to the interrupted move's target, then went home at its speed. `lastPos` is the last commanded target, and panic doesn't change it, so the pre-position frame jumps there. T-006 left `Panic` out of scope; not from T-012. Added to the existing `lastPos` item in the Backlog.
 
+### Cases 9 and 10 (2026-11-24, `c1f1143`, verbose): pass
+
+- **Case 9 (slider hammering):** left pan at 60 messages/s, 1,908 messages. No warnings, no mutex timeout; one release, 5.04 s after the last message. Jeff: "twitchy but mostly smooth" (the server link is read in batches, so a drag arrives in bursts).
+- **Case 10 (release races):** Jeff's T-005 QA script, 40 moves. No warnings, all moves completed, every release at least 4.85 s after its move. The release timer counts in 300 ms steps, so a release can come up to 0.3 s before the 5 s floor; develop is the same.
+- **Case 11 (reload during a drag)** is still to run, with the config restore.
+
+### Case 11 of `random-span-events.md` (2026-11-24)
+
+Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or four (so `servoQueue` really fills, Review I1). Dispatch → execution, scripted commands only.
+
+| Runs | Build | Maestro spans | Scripted GPIO | Scripted servo | Same-time offset | Queue fails | Half-full lines |
+|---|---|---|---|---|---|---|---|
+| 3 | flag-off + timing lines (`d6af758`, never merged) | 2 | 10–20 ms | **10, 20, 20 ms** (T-011: 310) | +50 ms | 0 | 0 |
+| 3 | same | 4 | 10–20 ms, one 30 ms | **100, 110, 110 ms** | +70 ms | 0 | 3 (servo) per run |
+| 1 | verbose (`c1f1143`) | 2 | **160 / 210 ms** (bound 120) | 310 ms (bound 450; T-011: 410) | +420 ms | 0 | 4 |
+| 1 | verbose | 4 | **130 / 190 ms** (bound 120) | 260 ms; Home 10 ms | +560 ms | 0 | 7 |
+
+- **Normal build: passes.** The servo is ≤ 150 ms in all six runs. GPIO and the offset match T-011's at T-011's load. No warnings apart from the half-full lines; releases follow every Home.
+- The offset is 10 ms per same-time span start (five spans +50, seven +70), so it isn't from this change.
+- With four spans the queue is full and the servo waits ~100 ms: ten changes at one 10 ms tick each, as the Contract expected. With two, `servoQueueTask` keeps up and nothing queues.
+- **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Open: what the verbose bound should be (Jeff).
+- The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
+
 ### To resume (bench continued 2026-11-24)
 
 **State.** The master runs option A plus the gap (`c1f1143`, verbose). It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5`, `sT012m1`–`sT012m2` and `sT012p1`–`sT012p3` on the SD card. **Ports swapped** when the droid was power-cycled: the master's console is now `/dev/ttyACM0`. Find it by its ID (`80:65:99:BB:32:EC`), and give PlatformIO the resolved `/dev/ttyACM*` path (it can't use the by-id one). Nothing on this branch is pushed.
@@ -212,8 +235,8 @@ Panic sent with `POST /api/panicStop`, as the panic button does.
 1. ~~Cases 13, 14 and 15~~ (pass, 2026-11-24).
 2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
 3. ~~Panic, `maestro-servo-release.md` case 7~~ (pass, 2026-11-24).
-4. Cases 9–11 (slider hammering, release races).
-5. Case 11 of `random-span-events.md`: verbose, then flag-off with the timing lines (`tmp/t012-instrumentation`, rebase onto this branch) ×3. Use four Maestro digital spans on outputs 8–11, so the queue really fills (Review I1), and settle the expected number with Jeff.
+4. ~~Cases 9 and 10~~ (pass, 2026-11-24). Case 11 (reload during a drag): with the config restore.
+5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). Still to settle with Jeff: the verbose GPIO bound, and the load in the QA case (Review I1).
 6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
 
 **Then:** case 11 and the drain comment with the measured numbers, a review of the option A change, and the PR.
