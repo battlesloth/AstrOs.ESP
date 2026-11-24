@@ -1,6 +1,6 @@
 # T-011: Log per-command lines only in verbose bench builds
 
-<!-- File: .docs/tasks/T-011-verbose-command-logs.md. Branch: feature/T-011-verbose-command-logs. PR title: "T-011: Log per-command lines only in verbose bench builds". -->
+<!-- File: .docs/tasks/completed/T-011-verbose-command-logs.md (completed 2026-11-22; PR #67). Branch: feature/T-011-verbose-command-logs. PR title: "T-011: Log per-command lines only in verbose bench builds". -->
 
 ## Context
 
