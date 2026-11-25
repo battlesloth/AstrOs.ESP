@@ -49,7 +49,7 @@
   - The scripted servo's dispatch → execution is **≤ 150 ms in every run** (expected ~100 ms: ten changes × (10 ms tick + ~1 ms)).
   - GPIO and the same-time offset are no worse than T-011's (10–20 ms, +40–50 ms).
   - 0 queue fails.
-- [ ] **Bench, verbose build:** case 11 still meets its verbose bounds (GPIO ≤ 120, servo ≤ 450).
+- [ ] **Bench, verbose build:** case 11 still meets its verbose bounds (GPIO ≤ ~~120~~ **250, Ruling 4**; servo ≤ 450).
 - [ ] **Regression:**
   - `maestro-servo-release.md` case 7 (panic) and cases 9–11 (T-003 slider hammering and release races) pass on the master.
   - A generic-serial or Kangaroo script command on a serial channel still goes out, if one is configured on the bench; otherwise noted as not covered.
@@ -110,6 +110,11 @@
 - **If it doesn't fix it:** revert it and record the limit. No second try.
 - **Outcome (2026-11-24): it didn't fix it** (still 6 of 8, see Bench results). **Kept anyway (Jeff):** it does no harm, and it gives back the spacing the old loop had around a speed change. No second try.
 - **Cost:** 10–20 ms per speed change, with the shared mutex held, so latency only. A panic's offs behind a sound wait for at most two of them.
+
+**Ruling 4 (2026-11-25, Jeff): the verbose GPIO bound in case 11 goes from 120 to 250 ms.**
+- **Why:** the drain lets Maestro changes run and log ~39/s, which fills the 115200 console (11,517 of 11,520 B/s), so each GPIO message waits for log bytes. Measured 130–210 ms. The same load takes 10–30 ms with logging off.
+- **What the case still catches:** lost commands, failed queue sends, drifting script timing. The servo bound (450) and the normal-build criteria are unchanged.
+- **Cost if wrong:** a GPIO slowdown under 250 ms that shows only in a verbose build would pass.
 
 ## Found while reading (not in this task)
 
@@ -216,7 +221,7 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 - **Normal build: passes.** The servo is ≤ 150 ms in all six runs. GPIO and the offset match T-011's at T-011's load. No warnings apart from the half-full lines; releases follow every Home.
 - The offset is 10 ms per same-time span start (five spans +50, seven +70), so it isn't from this change.
 - With four spans the queue is full and the servo waits ~100 ms: ten changes at one 10 ms tick each, as the Contract expected. With two, `servoQueueTask` keeps up and nothing queues.
-- **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Open: what the verbose bound should be (Jeff).
+- **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Settled by Ruling 4 (250 ms): both runs meet it.
 - The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
 
 ### To resume (bench continued 2026-11-24)
@@ -236,7 +241,7 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
 3. ~~Panic, `maestro-servo-release.md` case 7~~ (pass, 2026-11-24).
 4. ~~Cases 9 and 10~~ (pass, 2026-11-24). Case 11 (reload during a drag): with the config restore.
-5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). Still to settle with Jeff: the verbose GPIO bound, and the load in the QA case (Review I1).
+5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). The verbose GPIO bound is settled (Ruling 4). Still to settle with Jeff: the load in the QA case (Review I1).
 6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
 
 **Then:** case 11 and the drain comment with the measured numbers, a review of the option A change, and the PR.
