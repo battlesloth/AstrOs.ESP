@@ -398,3 +398,7 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
   the first scripted move after boot shows `lastPos: <home>` and departs from home. A home
   target frame that fails to queue (`HomeServos: frames not queued …`) leaves `lastPos` claiming
   home while the servo sits released wherever it was — pre-existing, boot/reload only.
+- **A slower serial device on the Maestro's channel** (T-012, known limit, not a failure): an HCR at
+  9600 sharing the channel can miss sounds while a slider is dragged (12 of 16 played; 32 of 32
+  without one, scripted moves included). Several devices on one channel are best effort, at the
+  user's own risk (Jeff). The servos must still move and release normally.

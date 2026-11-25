@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010; plus T-012 (serial-channel drain). Random span events' firmware side is done (T-007–T-009)
-Now:     T-012 on the bench (branch `feature/T-012-serial-channel-drain`): the plain drain brought back the released-servo jump (T-006), so it now holds 30 ms after a pre-position frame (Jeff, option A); jump check passed 16 of 16, rest of the bench 2026-11-24 (task file, To resume). T-010 merged (PR #66, 2026-11-23), its bench pending; T-011 complete (PR #67). v1.3.0 is held (Jeff, 2026-11-22) for T-012 and the release regression
+Now:     T-012's bench is complete (branch `feature/T-012-serial-channel-drain`, 2026-11-25): option A holds 30 ms after a pre-position frame (Jeff), no jumps in 28 moves; scripted servo 310 → 10–20 ms; review and PR next. T-010 merged (PR #66, 2026-11-23), its bench pending; T-011 complete (PR #67). v1.3.0 is held (Jeff, 2026-11-22) for T-012 and the release regression
 Next:    T-012 (serial-channel drain) + its bench, in parallel with AstrOs.Server T-016 → T-013 → T-014 → v1.3.0-RC.1 (`develop` → `main`) → release regression (`.docs/qa/release-regression.md`; includes T-010's joint bench) → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels), and the untested hardware (`lolin_d32_pro`, linear actuators, Kangaroo)
 Blocked: v1.3.0 waits on T-012, AstrOs.Server T-014 and the release regression
 Last:    2026-11-23 — T-010 merged (PR #66); 2026-11-22 — T-011 complete (PR #67); T-009 complete, bench passed
@@ -101,7 +101,7 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
     - `i2cQueueTask` silently drops a `message_id` other than 0 or 1.
   - **The serial channels share one mutex** (found 2026-11-23, T-012): `serialMutex` in `SerialModule.cpp` is file-static and the second `Init` leaks the first. A channel waiting for FIFO space holds off the other, up to ten messages since T-012. Make it a member.
   - **`ASTROS_INTERFACE_MESSAGE` queues the wrong struct** (found 2026-11-23, T-012): a `queue_msg_t` to `serialCh1Queue`, whose items are `queue_serial_msg_t`, so `xQueueSend` reads past it and the fields shift. Nothing posts the command today; fix or delete it.
-  - **Fewer serial messages per change.** Coalescing a change's frames into one message, or skipping an unchanged speed/accel frame, is the next step if T-012's bench shows the servo path still needs it.
+  - **Fewer serial messages per change.** Coalescing a change's frames into one message, or skipping an unchanged speed/accel frame, was the next step if T-012's bench needed it; it doesn't (scripted servo 100–110 ms behind a full queue). The limit is now `servoQueueTask`, one change per 10 ms tick.
 
 Cross-repo: measured 2026-09-07 — ~1.0 s (±30 ms) between an HTTP call and the master receiving it, for `scripts/run` and `panicStop` alike. The 2026-09 note blamed the server's serial pipeline. The 2026-11-22 bench found the master's own serial read holds each command 1 s (Backlog above), which covers all but ~0.1 s of it, so it is firmware. AstrOs.Server's `PLAN.md` Backlog holds the server-side serial findings from the 2026-08-06 bench log (e.g., server discards master-emitted POLL_NAK). Wire-format changes, if any come out of that, pin their contract in both repos first.
 

@@ -87,7 +87,7 @@
 - [x] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23 on the plain drain; passes on option A (2026-11-24): see Bench results.**
 - [x] Bench: normal build, case 11 ×3. The Maestro Control Center Errors check (Ruling 1) wasn't run: not available on this bench
 - [x] Bench: verbose build, case 11 (Ruling 4's bound)
-- [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
+- [x] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial: the HCR sounds; Kangaroo: none connected)
 - [x] Case 11 and the drain comment updated with the measured numbers
 
 ## Rulings (2026-11-23, before implementation)
@@ -203,11 +203,13 @@ Panic sent with `POST /api/panicStop`, as the panic button does.
 - **Panic during the holds (7c's shape, 4 tries):** panic 110, 150 and 220 ms after the first of four servo commands (one try landed before them). In the closest, 30 ms after the last command, with frames still behind the holds, the offs took 40 ms to queue. 7 queued, 0 failed every time; nothing moved after. `dropped` was 0 each time, so no servo command was still in `servoQueue`: that part of 7c isn't covered.
 - **Case 7d, recovery:** each servo snapped to the interrupted move's target, then went home at its speed. `lastPos` is the last commanded target, and panic doesn't change it, so the pre-position frame jumps there. T-006 left `Panic` out of scope; not from T-012. Added to the existing `lastPos` item in the Backlog.
 
-### Cases 9 and 10 (2026-11-24, `c1f1143`, verbose): pass
+### Cases 9–11 (2026-11-24 and 2026-11-25): pass
+
+Cases 9 and 10 on `c1f1143`, verbose; case 11 on `8e93448`, logging off.
 
 - **Case 9 (slider hammering):** left pan at 60 messages/s, 1,908 messages. No warnings, no mutex timeout; one release, 5.04 s after the last message. Jeff: "twitchy but mostly smooth" (the server link is read in batches, so a drag arrives in bursts).
 - **Case 10 (release races):** Jeff's T-005 QA script, 40 moves. No warnings, all moves completed, every release at least 4.85 s after its move. The release timer counts in 300 ms steps, so a release can come up to 0.3 s before the 5 s floor; develop is the same.
-- **Case 11 (reload during a drag)** is still to run, with the config restore.
+- **Case 11 (all channels due on one tick, slider active):** run on the config sync that put Jeff's config back. Left pan dragged for 9 s from 1.5 s after homing, 208 messages, all received. The six other servos released within 20 ms of each other, 4.93 s after homing, mid-drag. Left pan stayed on and released once, 4.97 s after the last message. No warnings, no mutex timeout. Jeff: "moved correctly".
 
 ### Case 11 of `random-span-events.md` (2026-11-24)
 
@@ -227,24 +229,14 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 - **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Settled by Ruling 4 (250 ms): both runs meet it.
 - The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
 
-### To resume (bench continued 2026-11-24)
+### Bench complete (2026-11-25)
 
-**State.** The master runs option A plus the gap (`c1f1143`, verbose). It still has bench leftovers: the earlier bench's Maestro config (24 channels enabled) and scripts `sT012j1`–`sT012j5`, `sT012m1`–`sT012m2` and `sT012p1`–`sT012p3` on the SD card. **Ports swapped** when the droid was power-cycled: the master's console is now `/dev/ttyACM0`. Find it by its ID (`80:65:99:BB:32:EC`), and give PlatformIO the resolved `/dev/ttyACM*` path (it can't use the by-id one). Nothing on this branch is pushed.
+**State of the droid.** The master runs `8e93448` (`1.3.0-dev.169`, logging off, no timing lines). Jeff's real config is back on the master and Ashoka: 8 Maestro channels enabled, 16 off, all GPIO off. The sync's fingerprints are only in the bench copy of the database, so the real server shows body and core out of date until its next sync.
 
-**Setup, confirmed with Jeff:**
-- The master's server link is on this laptop (`/dev/ttyUSB0`); its console is `/dev/ttyACM1`.
-- Server: a throwaway build of AstrOs.Server `develop` (2cb15025) against a copy of `.data/database.sqlite3` (`DATABASE_PATH` override, port 3000), approved. The real database and the T-016 checkout aren't touched. It was in the session scratchpad, so rebuild it if `/tmp` was cleared.
-- No web page on the throwaway server, so no panic button: Jeff cuts servo power by hand.
-- The HCR is connected on channel 2 (9600) and plays sounds. Maestro outputs 8–11 are empty. Maestro Control Center isn't available, so the Errors tab can't be checked.
+**Left behind:** the `sT012*` scripts on the master's SD card (j1–j5, h, m1, m2, p1–p3, s2, s4). The firmware can't delete one script, only format the card. The real server doesn't have them.
 
-**Jump-check scripts** (one event at 0 unless noted, `speed` 10, `acceleration` 0): j1 ch4 → 0, j2 ch4 → 100, j3 ch2 → 100, j4 ch2 → 0, j5 ch2 → 0 then 100 at 2 s. **Mixed-baud scripts:** m1 eight rounds 4 s apart (ch2 move, HCR sound, ch4 move at the same time), m2 the eight sounds alone (the baseline).
+**For the next bench:**
+- USB names move (the droid's power, the laptop sleeping). Use the by-id paths: master console `80:65:99:BB:32:EC`, server link `FT232R … A10JW5Z8`. PlatformIO needs the resolved `/dev/ttyACM*` path.
+- The bench server was a throwaway build of AstrOs.Server `develop` (2cb15025) against a copy of the database (`DATABASE_PATH`, port 3000), with no web page, so no panic button.
 
-**Left to run, in order:**
-1. ~~Cases 13, 14 and 15~~ (pass, 2026-11-24).
-2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
-3. ~~Panic, `maestro-servo-release.md` case 7~~ (pass, 2026-11-24).
-4. ~~Cases 9 and 10~~ (pass, 2026-11-24). Case 11 (reload during a drag): with the config restore.
-5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). The verbose GPIO bound and the load are settled (Rulings 4 and 5).
-6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
-
-**Then:** case 11 and the drain comment with the measured numbers, a review of the option A change, and the PR.
+**Not covered:** the Maestro Errors tab (no Maestro Control Center), Kangaroo (none connected), and channel 1's queue (the Maestro and the HCR are both on channel 2; the two channels run the same loop). The HCR sounds cover a generic-serial command on a serial channel.
