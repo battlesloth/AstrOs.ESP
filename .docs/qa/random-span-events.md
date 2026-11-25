@@ -184,7 +184,7 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 Random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo). A scripted command therefore always finds room, but it can still sit behind up to that many random changes.
 
-Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included in a verbose build (T-011). The serial-channel tasks send everything queued on each tick (T-012), so a change's three Maestro frames don't cost extra ticks. Measured on the master on 2026-11-24, dispatch → execution of the scripted commands:
+Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included in a verbose build (T-011). The serial-channel tasks send everything queued on each tick (T-012), so an on/off change's three Maestro frames don't cost extra ticks. A servo change still takes ~40 ms, for the hold after its pre-position frame, so a scripted command behind ten random **servo** changes waits ~400 ms, as before T-012; this case doesn't cover that. Measured on the master on 2026-11-24, dispatch → execution of the scripted commands:
 
 | Load | Build | Scripted GPIO | Scripted servo | Same-time offset | Half-full lines |
 |---|---|---|---|---|---|

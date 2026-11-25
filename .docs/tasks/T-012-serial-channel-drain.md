@@ -118,6 +118,12 @@
 
 **Ruling 5 (2026-11-25, Jeff): QA case 11 runs four Maestro digital spans, not two** (settles Review I1). With two, the new firmware keeps up and the case no longer tests a full queue. The normal-build criterion stays ≤ 150 ms. The two-span numbers are recorded next to it.
 
+**Ruling 6 (2026-11-25, second review, I1): the hold starts when the pre-position frame is on the wire, not when it's written to the FIFO.**
+- **Why:** a send returns with its bytes still in the 128-byte TX FIFO. The old loop's one 4-byte frame per tick never backed up; the drain can put over 100 ms of bytes ahead of the frame at 9600, the server's default for a new Maestro. The hold could then end before the frame left the board, so the gap the Contract asks for wasn't there. From the code and arithmetic; the bench runs at 115200, where it can't happen.
+- **The change:** `SerialModule::WaitTxDone` (bounded, 500 ms), called before the hold's delay and outside the shared mutex. The speed-change branch uses it too.
+- **Also, from the same review (M3):** the invalid-rate line is logged outside the shared mutex, and a serial command with a bad rate is named.
+- **Cost:** under 1 ms per hold at 115200. At 9600, up to 133 ms once for a full FIFO, bytes that had to go out first anyway.
+
 ## Found while reading (not in this task)
 
 - **Both channels share one mutex.** `serialMutex` in `SerialModule.cpp` is file-static, and the second `Init` overwrites (leaks) the first. While channel 1 waits for FIFO space it holds off channel 2. The drain makes that up to ten messages instead of one; it is still bounded, and `SendData` retries, so it costs latency only. Backlog.
@@ -140,6 +146,19 @@ No defect found in the loop or the baud tracking beyond M2. Checked against the 
 - **M4:** take a baseline of the Maestro's Errors tab after boot, and re-read it after a sync and a panic, not only after case 11.
 - **Corrects the Context:** every scripted servo move is four frames, since `lastPos` is sent whether or not the servo is released. Three is digital channels and sliders.
 - **M1 (note):** a Maestro at 9600 can now fill the TX FIFO, so a channel can hold the shared mutex for up to ~123 ms. Latency only; same Backlog item.
+
+## Second review (2026-11-25, fresh context, whole branch at `deebba4`)
+
+No critical findings: ownership, ids, `currentBaud` and the hold's place outside the shared mutex hold up. Checked against the code before acting:
+
+- **I1, fixed (Ruling 6):** the hold could end while the pre-position frame was still in the FIFO at 9600 or 19200.
+- **I2, fixed:** "~10 ms per servo message" and "`servoQueueTask` is the limit" are true only for on/off outputs. Corrected in the drain comment, case 11, PLAN and above.
+- **M1, fixed:** `maestro-servo-release.md` cases 12–14 now ask for at least 8 moves, since the bug shows in about half.
+- **M2:** the jump checks so far were on verbose builds. Re-run on the final flag-off build (see Bench).
+- **M3, M4, fixed:** the invalid-rate and TX-wait lines (Ruling 6).
+- **M5, fixed:** the shared-mutex Backlog bullet covers the speed-change gap.
+- **M6:** the bookkeeping is done at close-out. Both boards built at `30a476c`, 631/631.
+- **Deferred:** a name for message id 0 (M7), and `code-review.md`, which CLAUDE.md cites but the repo doesn't have (M8, pre-existing).
 
 ## Bench results (2026-11-23): the drain brings the jump back (C1 confirmed)
 
@@ -225,7 +244,7 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 - **Normal build: passes.** The servo is ≤ 150 ms in all six runs. GPIO and the offset match T-011's at T-011's load. No warnings apart from the half-full lines; releases follow every Home.
 - The offset is 10 ms per same-time span start (five spans +50, seven +70), so it isn't from this change.
 - With four spans the queue is full and the servo waits ~100 ms: ten changes at one 10 ms tick each, as the Contract expected. With two, `servoQueueTask` keeps up and nothing queues.
-- **`servoQueueTask` is now the limit,** at one change per tick (100/s). A full queue costs the scripted servo ~100 ms, inside the criterion, so nothing more is needed here (Out of scope asked for this note).
+- **For on/off outputs `servoQueueTask` is now the limit,** at one change per tick (100/s). A full queue of them costs the scripted servo ~100 ms, inside the criterion (Out of scope asked for this note). Servo changes aren't covered by this case: each takes ~40 ms for its hold, so a full queue of random servo changes costs ~400 ms, as before (Contract amendment).
 - **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Settled by Ruling 4 (250 ms): both runs meet it.
 - The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
 

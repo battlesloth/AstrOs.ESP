@@ -248,6 +248,9 @@ speed 5 → 26.25 s (26.4 s), speed 5 / accel 1 → 26.89 s (26.84 s) — pass.
      `minPos` over ~4 s per 1000 µs of range, with no initial jump. Pre-T-006 the servo
      slammed to its low end the instant the command arrived and the "move" was over before the
      speed frame mattered.
+   - Run at least 8 moves from released across cases 12–14; one fast move fails. Without the
+     30 ms hold after the pre-position frame (T-012) about half of them jump, so a single move
+     can pass by luck.
 
 13. **Non-inverted mirror: 100 → 0 after a release** (T-006)
    - Same as case 12 on a non-inverted channel: park it at 100 (`maxPos`), wait for the
