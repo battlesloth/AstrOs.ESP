@@ -1,6 +1,6 @@
 # T-012: Send every queued frame per tick in the serial-channel tasks
 
-<!-- File: .docs/tasks/T-012-serial-channel-drain.md. Branch: feature/T-012-serial-channel-drain. PR title: "T-012: Send every queued frame per tick in the serial-channel tasks". -->
+<!-- File: .docs/tasks/completed/T-012-serial-channel-drain.md (completed 2026-11-25; PR #68). Branch: feature/T-012-serial-channel-drain. PR title: "T-012: Send every queued frame per tick in the serial-channel tasks". -->
 
 ## Context
 

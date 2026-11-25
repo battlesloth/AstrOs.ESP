@@ -4,11 +4,11 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 
 ## Status
 
-Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010; plus T-012 (serial-channel drain). Random span events' firmware side is done (T-007–T-009)
-Now:     T-012's bench is complete (branch `feature/T-012-serial-channel-drain`, 2026-11-25): option A holds 30 ms after a pre-position frame (Jeff), no jumps in 36 moves; a scripted servo behind on/off spans 310 → 10–20 ms; reviewed, PR next. T-010 merged (PR #66, 2026-11-23), its bench pending; T-011 complete (PR #67). v1.3.0 is held (Jeff, 2026-11-22) for T-012 and the release regression
-Next:    T-012 (serial-channel drain) + its bench, in parallel with AstrOs.Server T-016 → T-013 → T-014 → v1.3.0-RC.1 (`develop` → `main`) → release regression (`.docs/qa/release-regression.md`; includes T-010's joint bench) → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels), and the untested hardware (`lolin_d32_pro`, linear actuators, Kangaroo)
-Blocked: v1.3.0 waits on T-012, AstrOs.Server T-014 and the release regression
-Last:    2026-11-23 — T-010 merged (PR #66); 2026-11-22 — T-011 complete (PR #67); T-009 complete, bench passed
+Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010. Random span events' firmware side is done (T-007–T-009)
+Now:     no firmware task in progress. T-012 complete (PR #68, 2026-11-25). T-010 merged (PR #66, 2026-11-23), its bench pending (joint with AstrOs.Server T-014). v1.3.0 is held (Jeff, 2026-11-22) for the release regression
+Next:    AstrOs.Server T-016 → T-013 → T-014 → v1.3.0-RC.1 (`develop` → `main`) → release regression (`.docs/qa/release-regression.md`; includes T-010's joint bench) → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels), that a second device on a Maestro's serial channel is best effort (T-012: an HCR there can miss sounds while a slider is dragged), and the untested hardware (`lolin_d32_pro`, linear actuators, Kangaroo)
+Blocked: v1.3.0 waits on AstrOs.Server T-014 and the release regression
+Last:    2026-11-25 — T-012 complete (PR #68); 2026-11-23 — T-010 merged (PR #66); 2026-11-22 — T-011 complete (PR #67)
 
 ## Random span events
 
@@ -51,8 +51,8 @@ Goal (Jeff, 2026-10-30): `main.cpp` keeps `app_main`, `init` and one-line touchp
 - [x] **T-005** — Servo release deadline: 5 s floor or estimated travel + 10 %, whichever is greater (`.docs/tasks/completed/T-005-release-floor-5s-margin.md`) — done 2026-09-07
 - [x] **T-006** — Re-energize released Maestro servos at their last commanded position (`.docs/tasks/completed/T-006-maestro-reenergize-at-last-position.md`) — done 2026-09-14
 - [x] **T-011** — Log per-command lines only in verbose bench builds (`.docs/tasks/completed/T-011-verbose-command-logs.md`) — done 2026-11-22 (merged PR #67; bench 2026-11-22)
-- [ ] **T-012** — Send every queued frame per tick in the serial-channel tasks (`.docs/tasks/T-012-serial-channel-drain.md`) — before v1.3.0 (Jeff, 2026-11-22; found by the T-011 bench)
-- [ ] **v1.3.0 gate** — Release regression on an RC build (`.docs/qa/release-regression.md` § v1.3.0), after T-012 and AstrOs.Server T-014 (Jeff, 2026-11-23)
+- [x] **T-012** — Send every queued frame per tick in the serial-channel tasks (`.docs/tasks/completed/T-012-serial-channel-drain.md`) — done 2026-11-25 (merged PR #68; bench 2026-11-23 → 2026-11-25)
+- [ ] **v1.3.0 gate** — Release regression on an RC build (`.docs/qa/release-regression.md` § v1.3.0), after AstrOs.Server T-014 (Jeff, 2026-11-23)
 
 ## Backlog (unscheduled candidates)
 
@@ -110,6 +110,16 @@ Cross-repo: measured 2026-09-07 — ~1.0 s (±30 ms) between an HTTP call and th
 - **OTA upgrade pipeline** (2026-04 → 2026-08) — padawan + master OTA over ESP-NOW/serial, recovery via USB, receiver watchdog, master self-flash (stack overflow fixed in PR #47), progress reporting (PR #49). Shipped in rel_1.2. Plans archive: `.docs/completed-plans/`.
 
 ## Log
+
+- 2026-11-25 T-012 complete — the serial-channel tasks send everything queued each tick (PR #68 → develop; bench 2026-11-23 → 2026-11-25)
+  - `serialChannelQueueLoop` (`src/main.cpp`): one loop for both channels, up to one queue length per 10 ms tick; FIFO order, queue ownership and the yield unchanged
+  - Contract amendment (Jeff, option A): the plain drain brought back T-006's jump (4 of 8 moves from released ran fast), so `MaestroModule` sends the pre-position frame as message id 2 and the loop holds the channel ≥ 30 ms once it's on the wire (`SerialModule::WaitTxDone`, bounded by the port's rate after the PR #68 review)
+  - `SerialModule`: remembers the rate it applied (115200 reads back as 115201, so the old check reprogrammed the UART before every Maestro frame); a real rate change waits for TX, then ≥ 10 ms quiet (Ruling 3, kept although it didn't fix the mixed-baud loss); a rate outside 300–5000000 is refused and named, and the message goes out at the current rate
+  - bench, `random-span-events.md` case 11 (master, flag-off + timing lines): a scripted servo behind two Maestro on/off spans 310 → 10–20 ms; behind four (queue full) 100–110 ms; GPIO 10–20 ms; 0 queue fails. The case now runs four spans (Ruling 5), and its verbose GPIO bound is 250 ms (Ruling 4)
+  - jump check: 36 moves from released since the hold, none fast; panic during the holds, cases 7, 7d, 9–11 pass; final build `55caa36` (flag-off) 8 of 8 slow, 8 of 8 sounds
+  - known limit: an HCR on the Maestro's channel missed sounds while a slider was dragged (12 of 16; 40 of 40 without); several devices on one channel are best effort (Jeff). Not covered: the Maestro's Errors tab, Kangaroo, channel 1's queue
+  - verification re-run on develop caf9a96: 631/631; both boards build
+  - found (Backlog): the two serial channels share one file-static mutex; `ASTROS_INTERFACE_MESSAGE` queues the wrong struct; skipping the pre-position frame and its hold for a servo already on would cut ~30 ms per servo change
 
 - 2026-11-22 T-011 complete — per-command log lines only in verbose bench builds (PR #67 → develop)
   - `ASTROS_LOG_CMD` (`lib/AstrOsUtility_ESP/include/AstrOsCommandLog.h`): ten per-command lines are INFO with `-D ASTROS_VERBOSE_COMMANDS` and compiled out otherwise; a boot line says which build it is; failure lines name their command (both Jeff's amendments)
