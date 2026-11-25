@@ -184,17 +184,26 @@ T-008 adds no bench cases either: nothing on the controller calls the table unti
 
 Random changes may fill at most half of each change queue (5 of 10 GPIO, 10 of 20 servo). A scripted command therefore always finds room, but it can still sit behind up to that many random changes.
 
-Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included in a verbose build (T-011); the bounds below are for verbose builds, which bench runs need to read the lines. Measured on the master on 2026-11-22 under this case's load, that came to about 20 ms per GPIO message and 40 ms per servo message in a verbose build. In a normal build (T-011 bench, flag-off with throwaway instrumentation, three runs) scripted GPIO took 10–20 ms, the same-time offset fell to +40–50 ms, and the scripted servo took 310 ms: a servo message still costs ~31 ms, because the serial-channel task sends one Maestro frame per 10 ms tick and every servo or digital change is three frames (speed, accel, target), independent of logging (ESP T-012 drains them per tick). A servo message logs `Queueing servo command` and `Setting servo …`, about 240 bytes at 115200 baud, and writes to the Maestro. So a scripted command waits up to about 5 × 20 = 100 ms on the GPIO queue, or 10 × 40 = 400 ms on the servo queue.
+Each queue task handles one message per loop: a 10 ms tick, plus the message's own work, INFO logging included in a verbose build (T-011). The serial-channel tasks send everything queued on each tick (T-012), so an on/off change's three Maestro frames don't cost extra ticks. A servo change still takes ~40 ms, for the hold after its pre-position frame, so a scripted command behind ten random **servo** changes waits ~400 ms, as before T-012; this case doesn't cover that. Measured on the master on 2026-11-24, dispatch → execution of the scripted commands:
 
-1. A 20 s script with three GPIO spans and two Maestro digital spans, every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
+| Load | Build | Scripted GPIO | Scripted servo | Same-time offset | Half-full lines |
+|---|---|---|---|---|---|
+| this case (four Maestro spans) | normal, throwaway timing lines (T-011), 3 runs | 10–20 ms, 30 ms once | 100–110 ms | +70 ms | 3, all servo |
+| this case | verbose, 1 run | 130–190 ms | 260 ms | +560 ms | 7 (one per span) |
+| two Maestro spans (the load until 2026-11-25) | normal, 3 runs | 10–20 ms | 10–20 ms (310 ms before T-012) | +50 ms | 0 |
+| two Maestro spans | verbose, 1 run | 160–210 ms | 310 ms | +420 ms | 4 |
+
+Since T-012 two Maestro spans no longer fill the servo queue in a normal build, so the case uses four. The bounds below are for verbose builds, which bench runs need to read the lines. There the console is the limit: a servo message logs `Queueing servo command` and `Setting servo …`, about 240 bytes, and this load fills 115200 baud. So a scripted command waits up to about 5 × 40 = 200 ms on the GPIO queue, or 10 × 30 = 300 ms on the servo queue. A normal build needs the throwaway timing lines to measure; there the scripted servo must run within 150 ms.
+
+1. A 20 s script with three GPIO spans and four Maestro digital spans (outputs with nothing connected), every one with gaps 20–40 ms, plus scripted point events during the spans: a GPIO channel set high at 5 s and low at 10 s, a servo move at 7 s, and a servo Home at the end time.
 2. Run it with the master console captured (the ESP log prefix carries milliseconds since boot).
 3. **Pass:**
-   - each scripted event's dispatch line is followed by its execution line within about 120 ms for GPIO and 450 ms for servo
+   - each scripted event's dispatch line is followed by its execution line within about 250 ms for GPIO and 450 ms for servo
      - dispatch lines are `GPIO command val: …` / `Maestro command val: …`, carrying the command as the script holds it, delay field included, e.g. `5|2000|0|1`
      - execution lines are `Sending Command => …` / `Queueing servo command => …`, with the same string
    - no `Send gpio queue fail` or `Send servo queue fail`
    - the scripted events keep the script's spacing (within ~20 ms), and the end-time Home is the last scripted event
-     - Every event after the same-time span starts is dispatched late by one fixed offset, about 290 ms with five spans at t=0, and the offset doesn't grow.
+     - Every event after the same-time span starts is dispatched late by one fixed offset, about 560 ms with seven spans at t=0, and the offset doesn't grow.
      - The offset exists because the dispatcher waits each delay from when the previous command finished (`vTaskDelay`, at least 10 ms per command), and the span starts took that long with the console busy.
    - one `Random change dropped, … half full` line per span (each span logs only its first drop): the spans are asking for more than the queue tasks can run
 4. **Fail:** a scripted event 2 s late, a `Send … queue fail`, or a script that ends later than its end time plus the fixed offset.

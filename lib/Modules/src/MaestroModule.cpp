@@ -678,7 +678,10 @@ MaestroModule::SendStage MaestroModule::setServoPosition(uint8_t channel, int ta
         cmd[0] = SET_SERVO_COMMAND;
         EncodeMaestroTarget(lastPosUs, cmd[2], cmd[3]);
 
-        if (this->enqueueFrame(cmd, 4, wait) != EnqueueResult::Queued)
+        // The Maestro needs time to act on this frame before the target replaces
+        // it: sent back to back, about half of the moves from released jumped at
+        // full speed (T-012 bench). The serial task holds the channel after it.
+        if (this->enqueueFrame(cmd, 4, wait, SERIAL_MSG_BYTES_THEN_HOLD) != EnqueueResult::Queued)
         {
             return stage;
         }
@@ -799,14 +802,15 @@ bool MaestroModule::takeSendMutex()
     return false;
 }
 
-MaestroModule::EnqueueResult MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait)
+MaestroModule::EnqueueResult MaestroModule::enqueueFrame(const uint8_t *cmd, size_t size, TickType_t wait,
+                                                         int messageId)
 {
     // Never logs: CheckServos calls this under stateMutex on the esp_timer
     // task. Callers report the result with channel/module identity, outside
     // any lock.
     queue_serial_msg_t msg;
 
-    msg.message_id = 1;
+    msg.message_id = messageId;
     msg.baudrate = this->baudRate;
     msg.data = (uint8_t *)malloc(size);
     if (msg.data == NULL)
