@@ -5,7 +5,7 @@ Workflow rules: `CLAUDE.md` (Workflow section). Rationale and templates: `.docs/
 ## Status
 
 Active:  Per-channel servo release time (cross-repo with AstrOs.Server) — T-010; plus T-012 (serial-channel drain). Random span events' firmware side is done (T-007–T-009)
-Now:     T-012's bench is complete (branch `feature/T-012-serial-channel-drain`, 2026-11-25): option A holds 30 ms after a pre-position frame (Jeff), no jumps in 28 moves; a scripted servo behind on/off spans 310 → 10–20 ms; reviewed, PR next. T-010 merged (PR #66, 2026-11-23), its bench pending; T-011 complete (PR #67). v1.3.0 is held (Jeff, 2026-11-22) for T-012 and the release regression
+Now:     T-012's bench is complete (branch `feature/T-012-serial-channel-drain`, 2026-11-25): option A holds 30 ms after a pre-position frame (Jeff), no jumps in 36 moves; a scripted servo behind on/off spans 310 → 10–20 ms; reviewed, PR next. T-010 merged (PR #66, 2026-11-23), its bench pending; T-011 complete (PR #67). v1.3.0 is held (Jeff, 2026-11-22) for T-012 and the release regression
 Next:    T-012 (serial-channel drain) + its bench, in parallel with AstrOs.Server T-016 → T-013 → T-014 → v1.3.0-RC.1 (`develop` → `main`) → release regression (`.docs/qa/release-regression.md`; includes T-010's joint bench) → release v1.3.0. Release notes must cover the setting, the upgrade order (server → flash 1.3.0 → sync) and the rollback hazard (a 1.3.0-synced board rolled back to 1.2.x drops its Maestro channels), and the untested hardware (`lolin_d32_pro`, linear actuators, Kangaroo)
 Blocked: v1.3.0 waits on T-012, AstrOs.Server T-014 and the release regression
 Last:    2026-11-23 — T-010 merged (PR #66); 2026-11-22 — T-011 complete (PR #67); T-009 complete, bench passed

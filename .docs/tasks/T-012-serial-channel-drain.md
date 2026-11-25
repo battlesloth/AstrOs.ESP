@@ -44,16 +44,16 @@
 
 ## Acceptance criteria
 
-- [ ] Both boards build; `pio test -e test` green; clang-format clean on touched files.
-- [ ] **Bench, normal build:** case 11 ×3 with the T-011 throwaway instrumentation (the scripted-only WARN lines, rebased onto this branch and never merged).
+- [x] Both boards build; `pio test -e test` green; clang-format clean on touched files.
+- [x] **Bench, normal build:** case 11 ×3 with the T-011 throwaway instrumentation (the scripted-only WARN lines, rebased onto this branch and never merged).
   - The scripted servo's dispatch → execution is **≤ 150 ms in every run** (expected ~100 ms: ten changes × (10 ms tick + ~1 ms)).
   - GPIO and the same-time offset are no worse than T-011's (10–20 ms, +40–50 ms).
   - 0 queue fails.
-- [ ] **Bench, verbose build:** case 11 still meets its verbose bounds (GPIO ≤ ~~120~~ **250, Ruling 4**; servo ≤ 450).
-- [ ] **Regression:**
+- [x] **Bench, verbose build:** case 11 still meets its verbose bounds (GPIO ≤ ~~120~~ **250, Ruling 4**; servo ≤ 450).
+- [x] **Regression:**
   - `maestro-servo-release.md` case 7 (panic) and cases 9–11 (T-003 slider hammering and release races) pass on the master.
   - A generic-serial or Kangaroo script command on a serial channel still goes out, if one is configured on the bench; otherwise noted as not covered.
-- [ ] Case 11 and the drain comment are updated.
+- [x] Case 11 and the drain comment are updated.
 
 ## Out of scope
 
@@ -154,7 +154,7 @@ No critical findings: ownership, ids, `currentBaud` and the hold's place outside
 - **I1, fixed (Ruling 6):** the hold could end while the pre-position frame was still in the FIFO at 9600 or 19200.
 - **I2, fixed:** "~10 ms per servo message" and "`servoQueueTask` is the limit" are true only for on/off outputs. Corrected in the drain comment, case 11, PLAN and above.
 - **M1, fixed:** `maestro-servo-release.md` cases 12–14 now ask for at least 8 moves, since the bug shows in about half.
-- **M2:** the jump checks so far were on verbose builds. Re-run on the final flag-off build (see Bench).
+- **M2, done:** the jump checks so far were on verbose builds. Re-run on the final flag-off build: 8 of 8 slow (see Bench complete).
 - **M3, M4, fixed:** the invalid-rate and TX-wait lines (Ruling 6).
 - **M5, fixed:** the shared-mutex Backlog bullet covers the speed-change gap.
 - **M6:** the bookkeeping is done at close-out. Both boards built at `30a476c`, 631/631.
@@ -248,9 +248,17 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 - **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Settled by Ruling 4 (250 ms): both runs meet it.
 - The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
 
+### Final build, `55caa36` (2026-11-25, logging off): pass
+
+After the second review's fixes (Ruling 6), on the flag-off build that goes in the PR:
+
+- **Boot and homing:** normal; seven releases 5.0 s after homing; no new warning.
+- **Jump check:** left pan end to end, 8 moves, each from released. 8 of 8 slow. Option A total: 36 moves, none fast. The bench is at 115200; Ruling 6's fix for 9600 rests on the code and arithmetic.
+- **Sounds and moves (m1):** 8 of 8 sounds, moves normal, no warnings.
+
 ### Bench complete (2026-11-25)
 
-**State of the droid.** The master runs `8e93448` (`1.3.0-dev.169`, logging off, no timing lines). Jeff's real config is back on the master and Ashoka: 8 Maestro channels enabled, 16 off, all GPIO off. The sync's fingerprints are only in the bench copy of the database, so the real server shows body and core out of date until its next sync.
+**State of the droid.** The master runs `55caa36` (`1.3.0-dev.172`, logging off, no timing lines). Jeff's real config is back on the master and Ashoka: 8 Maestro channels enabled, 16 off, all GPIO off. The sync's fingerprints are only in the bench copy of the database, so the real server shows body and core out of date until its next sync.
 
 **Left behind:** the `sT012*` scripts on the master's SD card (j1–j5, h, m1, m2, p1–p3, s2, s4). The firmware can't delete one script, only format the card. The real server doesn't have them.
 
