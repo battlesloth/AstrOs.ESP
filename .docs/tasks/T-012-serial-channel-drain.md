@@ -120,7 +120,7 @@
 
 **Ruling 6 (2026-11-25, second review, I1): the hold starts when the pre-position frame is on the wire, not when it's written to the FIFO.**
 - **Why:** a send returns with its bytes still in the 128-byte TX FIFO. The old loop's one 4-byte frame per tick never backed up; the drain can put over 100 ms of bytes ahead of the frame at 9600, the server's default for a new Maestro. The hold could then end before the frame left the board, so the gap the Contract asks for wasn't there. From the code and arithmetic; the bench runs at 115200, where it can't happen.
-- **The change:** `SerialModule::WaitTxDone` (bounded, 500 ms), called before the hold's delay and outside the shared mutex. The speed-change branch uses it too.
+- **The change:** `SerialModule::WaitTxDone`, called before the hold's delay and outside the shared mutex. The speed-change branch uses it too. Bounded by the port's rate: the time a full FIFO takes, plus 100 ms. (PR #68 review: it was 500 ms, which below ~2560 baud ends before a full FIFO is out, while rates down to 300 are accepted. The server offers 9600 and up. Raising the minimum instead would have sent a 1200 or 2400 device's bytes at the wrong rate.)
 - **Also, from the same review (M3):** the invalid-rate line is logged outside the shared mutex, and a serial command with a bad rate is named.
 - **Cost:** under 1 ms per hold at 115200. At 9600, up to 133 ms once for a full FIFO, bytes that had to go out first anyway.
 

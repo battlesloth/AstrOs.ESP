@@ -3,9 +3,11 @@
 #include <AstrOsUtility_ESP.h>
 #include <SerialModule.hpp>
 
+#include <algorithm>
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <soc/soc_caps.h>
 #include <string.h>
 #include <string>
 
@@ -13,8 +15,8 @@ static const char *TAG = "SerialModule";
 static SemaphoreHandle_t serialMutex;
 
 static const int RX_BUF_SIZE = 1024;
-// A full 128-byte TX FIFO takes 133 ms at 9600 baud, the slowest rate the server offers.
-static const int TX_DONE_WAIT_MS = 500;
+// On top of the time a full TX FIFO takes to go out (txDoneWaitMs).
+static const int TX_DONE_SLACK_MS = 100;
 // Quiet time on the line before a speed change. A character at 9600, the slowest rate
 // the server offers, takes about 1 ms.
 static const int BAUD_CHANGE_GAP_MS = 10;
@@ -25,6 +27,13 @@ static const int MAX_BAUD = 5000000;
 static bool isValidBaud(int baud)
 {
     return baud >= MIN_BAUD && baud <= MAX_BAUD;
+}
+
+// The longest a wait for TX can normally take: a full FIFO at 10 bits a byte (8N1),
+// 133 ms at 9600 and 4.3 s at MIN_BAUD. currentBaud is 0 until the port is set up.
+static int txDoneWaitMs(int baud)
+{
+    return SOC_UART_FIFO_LEN * 10 * 1000 / std::max(baud, MIN_BAUD) + TX_DONE_SLACK_MS;
 }
 
 SerialModule SerialMod;
@@ -118,7 +127,7 @@ void SerialModule::SendBytes(int baud, uint8_t *data, size_t size)
 
 void SerialModule::WaitTxDone()
 {
-    auto err = uart_wait_tx_done(this->port, pdMS_TO_TICKS(TX_DONE_WAIT_MS));
+    auto err = uart_wait_tx_done(this->port, pdMS_TO_TICKS(txDoneWaitMs(this->currentBaud)));
 
     if (logError(TAG, __FUNCTION__, __LINE__, err))
     {
