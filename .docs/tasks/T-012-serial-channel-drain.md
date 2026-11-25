@@ -85,10 +85,10 @@
 - [x] Fresh-context code review (see Review notes)
 - [x] Option A (Contract amendment): hold after a pre-position frame; jump check 16 of 16 slow
 - [x] **Bench, before anything else:** `maestro-servo-release.md` cases 12, 13 and 14, with 15 as the control, show no jump (Review C1). If one jumps, stop: the fix changes frame pacing, which the Contract pins. **Failed 2026-11-23 on the plain drain; passes on option A (2026-11-24): see Bench results.**
-- [ ] Bench: normal build, case 11 ×3, plus the Maestro Control Center Errors check (Ruling 1)
-- [ ] Bench: verbose build, case 11
+- [x] Bench: normal build, case 11 ×3. The Maestro Control Center Errors check (Ruling 1) wasn't run: not available on this bench
+- [x] Bench: verbose build, case 11 (Ruling 4's bound)
 - [ ] Bench: regression (`maestro-servo-release.md` 7, 9–11; generic serial or Kangaroo if configured)
-- [ ] Case 11 and the drain comment updated with the measured numbers
+- [x] Case 11 and the drain comment updated with the measured numbers
 
 ## Rulings (2026-11-23, before implementation)
 
@@ -116,6 +116,8 @@
 - **What the case still catches:** lost commands, failed queue sends, drifting script timing. The servo bound (450) and the normal-build criteria are unchanged.
 - **Cost if wrong:** a GPIO slowdown under 250 ms that shows only in a verbose build would pass.
 
+**Ruling 5 (2026-11-25, Jeff): QA case 11 runs four Maestro digital spans, not two** (settles Review I1). With two, the new firmware keeps up and the case no longer tests a full queue. The normal-build criterion stays ≤ 150 ms. The two-span numbers are recorded next to it.
+
 ## Found while reading (not in this task)
 
 - **Both channels share one mutex.** `serialMutex` in `SerialModule.cpp` is file-static, and the second `Init` overwrites (leaks) the first. While channel 1 waits for FIFO space it holds off channel 2. The drain makes that up to ten messages instead of one; it is still bounded, and `SendData` retries, so it costs latency only. Backlog.
@@ -129,7 +131,7 @@ No defect found in the loop or the baud tracking beyond M2. Checked against the 
   - `QueueCommand` queues pre-position, speed, accel and target together. The old loop put 10 ms between frames, so the target followed the pre-position frame by at least 30 ms; now it follows by about 1 ms (16 bytes contiguous at 115200).
   - If the Maestro applies a released channel's target only on its own update, the pre-position frame is overwritten before it acts, and the move jumps as before v1.2.2. The Maestro firmware is closed, and the reviewer's forum sources disagree.
   - The acceptance criteria would pass with the bug present: case 11's servo runs at speed 0. Hence cases 12–15 above, first.
-- **I1 (Important): case 11's load no longer fills the queue.** Two 20–40 ms spans ask for ~60 changes/s and `servoQueueTask` now serves 100/s, so "expected ~100 ms" and the servo half-full lines won't appear. The load or the expected number must change before the number goes into case 11. Open: Jeff's call.
+- **I1 (Important): case 11's load no longer fills the queue.** Two 20–40 ms spans ask for ~60 changes/s and `servoQueueTask` now serves 100/s, so "expected ~100 ms" and the servo half-full lines won't appear. The load or the expected number must change before the number goes into case 11. Settled by Ruling 5: four spans.
 - **I2 (Important): the baud-change branch gets little coverage** with only a Maestro on the channel. The droid's body has an HCR at 9600 on the Maestro's channel 2, or a USB-serial adapter can read the bytes. Don't judge that run by the Maestro's Errors tab.
 - **M2, fixed:** a rate outside 300–5000000 is refused with an ERROR, and the message goes out at the current rate.
   - The HAL accepts −1 and anything above 80 MHz as divider 0. The old code then divided by it on readback (a reboot), and Ruling 1's version could have stalled both channels. The first fix (54f0beb) caught only `baud <= 0`; the commit security review found the upper end.
@@ -221,6 +223,7 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 - **Normal build: passes.** The servo is ≤ 150 ms in all six runs. GPIO and the offset match T-011's at T-011's load. No warnings apart from the half-full lines; releases follow every Home.
 - The offset is 10 ms per same-time span start (five spans +50, seven +70), so it isn't from this change.
 - With four spans the queue is full and the servo waits ~100 ms: ten changes at one 10 ms tick each, as the Contract expected. With two, `servoQueueTask` keeps up and nothing queues.
+- **`servoQueueTask` is now the limit,** at one change per tick (100/s). A full queue costs the scripted servo ~100 ms, inside the criterion, so nothing more is needed here (Out of scope asked for this note).
 - **Verbose build: the GPIO bound fails.** The console is the limit: case 11 fills it (11,517 of 11,520 B/s), because Maestro changes now run and log ~39/s, so each GPIO message waits for log bytes. Nothing was lost or reordered, and the same load is 10–30 ms with logging off. Settled by Ruling 4 (250 ms): both runs meet it.
 - The boot line wasn't caught on the flag-off build (the capture opened late). The per-command strings aren't in the flashed binary, and its hash was verified.
 
@@ -241,7 +244,7 @@ Three GPIO spans on every run, plus two Maestro digital spans (T-011's load) or 
 2. ~~Mixed baud~~ (done, 2026-11-24: Ruling 3).
 3. ~~Panic, `maestro-servo-release.md` case 7~~ (pass, 2026-11-24).
 4. ~~Cases 9 and 10~~ (pass, 2026-11-24). Case 11 (reload during a drag): with the config restore.
-5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). The verbose GPIO bound is settled (Ruling 4). Still to settle with Jeff: the load in the QA case (Review I1).
+5. ~~Case 11 of `random-span-events.md`~~ (run 2026-11-24, see above). The verbose GPIO bound and the load are settled (Rulings 4 and 5).
 6. Put back Jeff's real config by syncing it, confirm 8 enabled channels, and remove the test scripts.
 
 **Then:** case 11 and the drain comment with the measured numbers, a review of the option A change, and the PR.

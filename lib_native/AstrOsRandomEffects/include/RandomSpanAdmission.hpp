@@ -131,14 +131,13 @@ private:
 // Random changes may fill at most half of a change queue (servoQueue, gpioQueue);
 // the other half stays free for the script's own commands. The queue tasks wait
 // one 10 ms tick between messages, and each message's own work comes on top:
-// measured under fast spans (QA random-span-events.md case 11, 2026-11-22), a
-// GPIO message took ~20 ms and a servo message ~40 ms in a verbose build
-// (T-011), and in a normal build GPIO kept up while a servo message took ~31 ms,
-// because the serial-channel task sends one Maestro frame per tick and a change
-// is three frames. The random task outranks the dispatch loop, so spans changing
-// faster than that would otherwise keep a queue full: the dispatch loop then
-// waits 2 s on its send and drops the scripted command. True while waiting <
-// spaces (fewer than half the slots in use).
+// measured under fast spans (QA random-span-events.md case 11, 2026-11-24), in a
+// normal build GPIO kept up and a servo message took ~10 ms, so a scripted servo
+// waited ~100 ms behind a half-full queue; in a verbose build (T-011) the console
+// made that ~30 ms a message. The random task outranks the dispatch loop, so
+// spans changing faster than that would otherwise keep a queue full: the dispatch
+// loop then waits 2 s on its send and drops the scripted command. True while
+// waiting < spaces (fewer than half the slots in use).
 bool RandomChangeHasRoom(size_t waiting, size_t spaces);
 
 // Ticks for an RTOS wait of ms, rounded up so a 1-9 ms wait at 100 Hz is 1 tick,
