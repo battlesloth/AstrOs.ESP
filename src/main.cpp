@@ -1446,6 +1446,9 @@ static void serialChannelQueueLoop(QueueHandle_t queue, SerialModule &channel, c
 
             if (msg.message_id == SERIAL_MSG_BYTES_THEN_HOLD)
             {
+                // The hold starts when the frame is on the wire: at 9600 baud the
+                // TX FIFO can still have over 100 ms of bytes ahead of it.
+                channel.WaitTxDone();
                 // One tick more: vTaskDelay(n) can end up to a tick short of n.
                 vTaskDelay(pdMS_TO_TICKS(SERIAL_HOLD_MS) + 1);
             }

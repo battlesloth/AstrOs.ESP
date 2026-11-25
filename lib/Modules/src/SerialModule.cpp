@@ -22,6 +22,11 @@ static const int BAUD_CHANGE_GAP_MS = 10;
 static const int MIN_BAUD = 300;
 static const int MAX_BAUD = 5000000;
 
+static bool isValidBaud(int baud)
+{
+    return baud >= MIN_BAUD && baud <= MAX_BAUD;
+}
+
 SerialModule SerialMod;
 
 SerialModule::SerialModule() {}
@@ -97,6 +102,11 @@ void SerialModule::SendCommand(uint8_t *cmd)
 
     auto command = SerialCommand(std::string(reinterpret_cast<char *>(cmd)));
 
+    if (!isValidBaud(command.baudRate))
+    {
+        ESP_LOGE(TAG, "Invalid baudrate %d in serial command => %s", command.baudRate, cmd);
+    }
+
     SerialModule::SendData(command.baudRate, reinterpret_cast<const uint8_t *>(command.GetValue().c_str()),
                            command.GetValue().size());
 }
@@ -106,42 +116,48 @@ void SerialModule::SendBytes(int baud, uint8_t *data, size_t size)
     SerialModule::SendData(baud, reinterpret_cast<const uint8_t *>(data), size);
 }
 
+void SerialModule::WaitTxDone()
+{
+    auto err = uart_wait_tx_done(this->port, pdMS_TO_TICKS(TX_DONE_WAIT_MS));
+
+    if (logError(TAG, __FUNCTION__, __LINE__, err))
+    {
+        ESP_LOGW(TAG, "Serial port %d - Waiting for TX to finish failed, going on anyway", this->port);
+    }
+}
+
 void SerialModule::SendData(int baud, const uint8_t *data, size_t size)
 {
     bool sent = false;
+
+    if (!this->isMaster && !isValidBaud(baud))
+    {
+        // The HAL accepts some bad rates (-1 from a malformed command, or
+        // anything above its 80 MHz clock) as divider 0, which would stall TX
+        // while this task holds the mutex both channels share. Send at the
+        // current rate: a drop here could lose a panic's servo offs.
+        ESP_LOGE(TAG, "Serial port %d - Invalid baudrate %d, keeping %d", this->port, baud, this->currentBaud);
+        baud = this->currentBaud;
+    }
 
     while (!sent)
     {
         if (xSemaphoreTake(serialMutex, 100 / portTICK_PERIOD_MS))
         {
-            if (!this->isMaster && (baud < MIN_BAUD || baud > MAX_BAUD))
-            {
-                // The HAL accepts some bad rates (-1 from a malformed command, or
-                // anything above its 80 MHz clock) as divider 0, which would stall
-                // TX while this task holds the mutex both channels share. Send at
-                // the current rate: a drop here could lose a panic's servo offs.
-                ESP_LOGE(TAG, "Serial port %d - Invalid baudrate %d, keeping %d", this->port, baud, this->currentBaud);
-            }
             // don't change the baud rate if this is the master node
-            else if (!this->isMaster && this->currentBaud != baud)
+            if (!this->isMaster && this->currentBaud != baud)
             {
                 // uart_write_bytes returns with the last message still in the TX
                 // FIFO, and uart_set_baudrate doesn't wait for it: let it finish,
                 // or it goes out at the new rate.
-                auto err = uart_wait_tx_done(port, pdMS_TO_TICKS(TX_DONE_WAIT_MS));
-
-                if (logError(TAG, __FUNCTION__, __LINE__, err))
-                {
-                    ESP_LOGW(TAG, "Serial port %d - TX not done after %d ms, changing baudrate to %d anyway",
-                             this->port, TX_DONE_WAIT_MS, baud);
-                }
+                this->WaitTxDone();
 
                 // Devices sharing the line hear each other's rate as noise, and need
                 // it quiet to find the next start bit. Best effort (T-012).
                 // One tick more: vTaskDelay(n) can end up to a tick short of n.
                 vTaskDelay(pdMS_TO_TICKS(BAUD_CHANGE_GAP_MS) + 1);
 
-                err = uart_set_baudrate(port, (uint32_t)baud);
+                auto err = uart_set_baudrate(port, (uint32_t)baud);
 
                 if (logError(TAG, __FUNCTION__, __LINE__, err))
                 {

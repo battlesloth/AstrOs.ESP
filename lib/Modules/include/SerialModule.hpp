@@ -38,6 +38,10 @@ public:
     esp_err_t Init(serial_config_t cfig);
     void SendCommand(uint8_t *cmd);
     void SendBytes(int baud, uint8_t *data, size_t size);
+    // Waits (bounded) until everything written is out on the wire: a send returns
+    // with its bytes still in the TX FIFO. Takes no lock; only the channel's own
+    // queue task, its one writer, may call it.
+    void WaitTxDone();
 };
 
 #endif
